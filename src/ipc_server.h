@@ -118,11 +118,8 @@ bool ipc_server_cli_datagram(ipc_server_t *server, ipc_cli_id_t id, const ipc_ur
 /* IPC server set on datagram callback */
 void ipc_server_on_datagram(ipc_server_t *server, ipc_server_dat_func_t callback, void *arg);
 
-/* IPC server checking event */
-int ipc_server_fds(ipc_server_t *server, fd_set *rfds);
-
-/* IPC server input event */
-void ipc_server_input_fds(ipc_server_t *server, const fd_set *rfds);
+/* IPC poll */
+void ipc_server_poll(ipc_server_t *server, int timeout_ms);
 
 #ifdef __cplusplus
 }

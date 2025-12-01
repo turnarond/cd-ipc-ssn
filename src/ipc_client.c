@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include "ipc_list.h"
@@ -129,8 +130,7 @@ static void *ipc_client_timer_handle (void *arg)
                 } else {
                     pendq->alive = 0;
                     emit = true;
-                    // break; // Exit the loop early if we found a pending that has expired
-                    ;; // Continue looping, set all timeouts client to expire
+                    break; // only deal with one timeout pend of a client;
                 }
             }
 
@@ -325,6 +325,24 @@ static bool ipc_client_sendmsg (ipc_client_t *client, ipc_header_t *ipc_hdr,
     const ipc_url_t *url, const ipc_payload_t *payload)
 {
     ssize_t len;
+    if (url->url_len > IPC_MAX_DATA_LENGTH) {
+        return  (false);
+    }
+
+    ipc_hdr->url_len = htons((uint16_t)url->url_len);
+
+    if (payload->data_len) {
+        ipc_hdr->data_len = htonl(payload->data_len);
+    } else {
+        ipc_hdr->data_len = 0;
+    }
+
+    uint64_t total = (uint64_t)IPC_HDR_LENGTH + ipc_hdr->url_len + ipc_hdr->data_len; // 防溢出
+
+    if (total > IPC_MAX_PACKET_LENGTH || total < IPC_HDR_LENGTH) {
+        return false;
+    }
+
     struct iovec iov[4] = {
         {
             .iov_base = (void*)ipc_hdr,
@@ -457,10 +475,6 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     server.sun_family = AF_UNIX;
     ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_SERVINFO, 0, 0);
 
-    if (!ipc_parser_validate_header(ipc_hdr, &len)) {
-        return  (false);
-    }
-
     ret = connect(client->sock, (struct sockaddr*)&server, sizeof(struct sockaddr_un));
     if (ret) {
         errcode = errno;
@@ -474,7 +488,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     FD_ZERO(&fds);
     FD_SET(client->sock, &fds);
 
-    ret = ipc_select(client->sock + 1, NULL, &fds, NULL, timeout);
+    ret = pselect(client->sock + 1, NULL, &fds, NULL, timeout, NULL);
     if (ret <= 0 || !FD_ISSET(client->sock, &fds)) {
         return  (false);
     }
@@ -483,7 +497,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
         return  (false);
     }
 
-    ret = ipc_select(client->sock + 1, &fds, NULL, NULL, timeout);
+    ret = pselect(client->sock + 1, &fds, NULL, NULL, timeout, NULL);
     if (ret <= 0 || !FD_ISSET(client->sock, &fds)) {
         return  (false);
     }
@@ -673,7 +687,7 @@ out:
 /*
 * IPC client input event
 */
-bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
+static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
 {
     bool pkt_e;
     ssize_t num;
@@ -774,7 +788,7 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
             ipc_mutex_lock(&client->lock);
             pendq = client->free;
             DELETE_FROM_LIST(pendq, client->free);
-            ipc_mutex_lock(&client->lock);
+            ipc_mutex_unlock(&client->lock);
         }
     }
 
@@ -852,14 +866,6 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
     ipc_mutex_lock(&client->lock);
 
     ipc_hdr = ipc_parser_init_header(client->sendbuf, type, 0, seqno);
-
-     if (url && !ipc_parser_set_url(ipc_hdr, url)) {
-         goto    error;
-     }
- 
-     if (payload && !ipc_parser_set_payload(ipc_hdr, payload)) {
-         goto    error;
-     }
 
     if (!ipc_client_sendmsg(client, ipc_hdr, url, payload)) {
         goto    error;
@@ -945,14 +951,6 @@ bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_t *url, const ipc_p
 
     ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_RPC, 0, seqno);
 
-    if (!ipc_parser_set_url(ipc_hdr, url)) {
-        goto    error;
-    }
-
-    if (payload && !ipc_parser_set_payload(ipc_hdr, payload)) {
-        goto    error;
-    }
-
     if (!ipc_client_sendmsg(client, ipc_hdr, url, payload)) {
         goto    error;
     }
@@ -1008,14 +1006,6 @@ bool ipc_client_datagram (ipc_client_t *client, const ipc_url_t *url, const ipc_
 
     ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_DATAGRAM, 0, 0);
 
-    if (!ipc_parser_set_url(ipc_hdr, url)) {
-        goto    error;
-    }
-
-    if (!ipc_parser_set_payload(ipc_hdr, payload)) {
-        goto    error;
-    }
-
     if (!ipc_parser_validate_header(ipc_hdr, &len)) {
         goto    error;
     }
@@ -1037,6 +1027,24 @@ void ipc_client_set_on_datagram (ipc_client_t *client, ipc_client_dat_func_t cal
     if (client) {
         client->ondat = callback;
         client->darg  = arg;
+    }
+}
+
+bool ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms)
+{
+    int max_fd, cnt;
+    fd_set fds;
+    struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
+
+    FD_ZERO(&fds);
+    max_fd = ipc_client_fds(client, &fds);
+
+    cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, NULL);
+    if (cnt > 0) {
+        if (!ipc_client_process_events(client, &fds)) {
+            ipc_client_close(client);
+            fprintf(stderr, "Connection lost!\n");
+        }
     }
 }
 

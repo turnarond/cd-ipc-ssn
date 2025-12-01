@@ -41,12 +41,13 @@
 /* Headers */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 /* IPC header (multibyte members use network byte order) */
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t magic;          // 魔数
     uint8_t version;        // 协议版本号
     uint8_t type;           // 消息类型
@@ -84,15 +85,6 @@ ipc_header_t *ipc_parser_init_header(void *outb, uint8_t type, uint8_t status, u
 /* Initialize IPC receiver */
 void ipc_parser_init_recv(ipc_recv_t *recv);
 
-/* Set correctly `Pad` before data packet transmission return packet size include pad */
-bool ipc_parser_validate_header(const ipc_header_t *ipc_hdr, size_t *total_len);
-
-/* Set IPC url */
-bool ipc_parser_set_url(ipc_header_t *ipc_hdr, const ipc_url_t *url);
-
-/* Set IPC payload */
-bool ipc_parser_set_payload(ipc_header_t *ipc_hdr, const ipc_payload_t *payload);
-
 /* Get IPC url */
 bool ipc_parser_get_url(const ipc_header_t *ipc_hdr, ipc_url_t *url);
 
@@ -121,7 +113,7 @@ ipc_header_t *ipc_parser_packet_input(void *buf, size_t buf_len);
 /* IPC header get url length */
 #define ipc_parser_get_url_len(ipc_hdr)  ntohs((ipc_hdr)->url_len)
 
-/* IPC header get url length */
+/* IPC header get data length */
 #define ipc_parser_get_data_len(ipc_hdr)  ntohl((ipc_hdr)->data_len)
 
 #ifdef __cplusplus

@@ -4,8 +4,6 @@ project(lwipcssn)
 
 set(CMAKE_CXX_STANDARD 11)
 
-include(../CMakeCommonLib)
-
 include_directories(
     ${LW_INCLUDE_DIR}
     ${LW_INCLUDE_DIR}/libevent
@@ -17,12 +15,10 @@ link_directories(
 )
 
 add_library(${PROJECT_NAME} SHARED
-    ipc_client.c
-    ipc_server.c
-    ipc_parser.c
-    ipc_cliauto.c
+    src/ipc_client.c
+    src/ipc_server.c
+    src/ipc_parser.c
 )
-
 
 install(TARGETS ${PROJECT_NAME}
     ARCHIVE DESTINATION ${LW_LIB_DIR}
