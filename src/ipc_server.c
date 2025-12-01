@@ -377,15 +377,12 @@ static bool ipc_server_cli_sub_match (ipc_server_cli_t *cli, const ipc_url_t *ur
  */
 ipc_server_t *ipc_server_create (const char *server_info)
 {
-    int err = 0;
     ipc_server_t *server;
 
-    server = (ipc_server_t *)malloc(sizeof(ipc_server_t));
+    server = (ipc_server_t *)calloc(1, sizeof(ipc_server_t));
     if (!server) {
         return  (NULL);
     }
-
-    bzero(server, sizeof(ipc_server_t));
 
     server->sock   = -1;
 
@@ -394,13 +391,11 @@ ipc_server_t *ipc_server_create (const char *server_info)
     }
 
     if (!ipc_event_pair_create(server->evtfd)) {
-        err = 1;
         goto    error;
     }
 
     server->sendbuf = malloc(IPC_MAX_PACKET_LENGTH * 2);
     if (!server->sendbuf) {
-        err = 2;
         goto    error;
     }
 
@@ -413,7 +408,6 @@ ipc_server_t *ipc_server_create (const char *server_info)
     if (ipc_server_list == NULL) {
         if (ipc_thread_create(&ipc_server_timer, ipc_server_timer_handle, NULL)) {
             ipc_mutex_unlock(&ipc_server_lock);
-            err = 3;
             goto    error;
         }
     }
@@ -425,18 +419,11 @@ ipc_server_t *ipc_server_create (const char *server_info)
     return  (server);
 
 error:
-    if (err > 2) {
-        free(server->sendbuf);
-    }
-    if (err > 1) {
-        ipc_event_pair_close(server->evtfd);
-    }
-    if (err > 0) {
-        ipc_mutex_destroy(&server->lock);
-    }
-
+    if (server->sendbuf) free(server->sendbuf);
+    if (server->evtfd[0] >= 0) ipc_event_pair_close(server->evtfd);
+    ipc_mutex_destroy(&server->lock);
     free(server);
-    return  (NULL);
+    return NULL;
 }
 
 /*
@@ -781,12 +768,11 @@ bool ipc_server_add_listener (ipc_server_t *server,
         path_len = url->url_len;
     }
 
-    cmd = (ipc_server_cmd_t *)malloc(sizeof(ipc_server_cmd_t) + url->url_len);
+    cmd = (ipc_server_cmd_t *)calloc(1, sizeof(ipc_server_cmd_t) + url->url_len);
     if (!cmd) {
         return  (false);
     }
 
-    bzero(cmd, sizeof(ipc_server_cmd_t));
     cmd->callback = callback;
     cmd->arg = arg;
     cmd->len = path_len;
@@ -1262,11 +1248,10 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
                 }
             }
             if (!sub) {
-                sub = (ipc_server_sub_t *)malloc(sizeof(ipc_server_sub_t) + url.url_len);
+                sub = (ipc_server_sub_t *)calloc(1, sizeof(ipc_server_sub_t) + url.url_len);
                 if (!sub) {
                     status = IPC_STATUS_NO_MEMORY;
                 } else {
-                    bzero(sub, sizeof(ipc_server_sub_t));
                     sub->len = url.url_len;
                     memcpy(sub->url, url.url, sub->len);
                     sub->url[sub->len] = '\0';
@@ -1373,9 +1358,9 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
     if (server->sock >= 0 && FD_ISSET(server->sock, rfds)) {
         sock = accept(server->sock, (struct sockaddr *)&addr, &addr_len);
         if (sock >= 0) {
-            cli = (ipc_server_cli_t *)malloc(sizeof(ipc_server_cli_t));
+            cli = (ipc_server_cli_t *)calloc(1, sizeof(ipc_server_cli_t));
             if (cli) {
-                bzero(cli, sizeof(ipc_server_cli_t));
+                
                 cli->sock   = sock;
                 cli->active = false;
                 /* TODO: deal with init recv buffer. */

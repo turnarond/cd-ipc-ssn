@@ -343,7 +343,7 @@ static bool ipc_client_sendmsg (ipc_client_t *client, ipc_header_t *ipc_hdr,
         return false;
     }
 
-    struct iovec iov[4] = {
+    struct iovec iov[3] = {
         {
             .iov_base = (void*)ipc_hdr,
             .iov_len = sizeof(ipc_header_t)
@@ -1005,10 +1005,6 @@ bool ipc_client_datagram (ipc_client_t *client, const ipc_url_t *url, const ipc_
     ipc_mutex_lock(&client->lock);
 
     ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_DATAGRAM, 0, 0);
-
-    if (!ipc_parser_validate_header(ipc_hdr, &len)) {
-        goto    error;
-    }
 
     ret = ipc_client_sendmsg(client, ipc_hdr, url, payload);
 
