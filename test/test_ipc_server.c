@@ -18,7 +18,7 @@ static ipc_server_t *server;
 /*
 * /light Callback
 */
-static void command_light (void *arg, ipc_server_t *server, ipc_cli_id_t cid,
+static void command_light (void *arg, ipc_server_t *server, cli_id_t cid,
                            ipc_header_t *ipc_hdr, ipc_url_t *url,
                            ipc_payload_t *payload)
 {

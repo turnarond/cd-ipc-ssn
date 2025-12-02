@@ -50,7 +50,7 @@ typedef struct ipc_server_cli {
     ipc_server_hst_t hst;
     ipc_recv_t recv;
     int sock;
-    ipc_cli_id_t id;
+    cli_id_t id;
 } ipc_server_cli_t;
 
 /* Server command */
@@ -67,7 +67,7 @@ typedef struct ipc_server_cmd {
 struct ipc_server {
     bool valid;
     char ifname[IF_NAMESIZE];
-    ipc_cli_id_t ncid;
+    cli_id_t ncid;
     ipc_server_t *next;
     ipc_server_t *prev;
     ipc_server_hst_t *hst_h;
@@ -82,6 +82,8 @@ struct ipc_server {
     void *carg;
     ipc_mutex_t lock;
     struct timeval send_timeout;
+    int handshake_timeout;
+    int keepalive_timeout;
     int sock;
     int evtfd[2];
     void *sendbuf;
@@ -98,12 +100,6 @@ struct input_arg {
  * Remote client hash
  */
 #define ipc_server_cli_hash(id)  (int)(id & IPC_CLI_HASH_MASK)
-
-/* Default send timeout */
-static const struct timeval ipc_server_def_send_timeout = {
-    .tv_sec  = (IPC_SERVER_DEF_SEND_TIMEOUT / 1000),
-    .tv_usec = (IPC_SERVER_DEF_SEND_TIMEOUT % 1000) * 1000
-};
 
 /* Server timer period (ms) */
 #define IPC_SERVER_TIMER_PERIOD  100
@@ -185,7 +181,7 @@ static int ipc_server_url_hash (const ipc_url_t *url)
 /*
  * Find client
  */
-static ipc_server_cli_t *ipc_server_cli_find (ipc_server_t *server, ipc_cli_id_t id)
+static ipc_server_cli_t *ipc_server_cli_find (ipc_server_t *server, cli_id_t id)
 {
     int hash = ipc_server_cli_hash(id);
     ipc_server_cli_t *cli;
@@ -202,9 +198,9 @@ static ipc_server_cli_t *ipc_server_cli_find (ipc_server_t *server, ipc_cli_id_t
 /*
  * Assign new Client ID
  */
-static ipc_cli_id_t ipc_server_cli_newid (ipc_server_t *server)
+static cli_id_t ipc_server_cli_newid (ipc_server_t *server)
 {
-    ipc_cli_id_t id;
+    cli_id_t id;
 
     do {
         id = server->ncid;
@@ -225,7 +221,7 @@ static void ipc_server_cli_init (ipc_server_t *server, ipc_server_cli_t *cli)
     hash = ipc_server_cli_hash(cli->id);
     INSERT_TO_HEADER(cli, server->clis[hash]);
 
-    cli->hst.alive = IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
+    cli->hst.alive = server->handshake_timeout;
     INSERT_TO_HEADER(&cli->hst, server->hst_h);
 
 #ifndef IPC_INHERIT_NODELAY
@@ -263,7 +259,7 @@ static void ipc_server_cli_destroy (ipc_server_t *server, ipc_server_cli_t *cli)
 /*
  * Close a client
  */
-bool ipc_server_peer_close (ipc_server_t *server, ipc_cli_id_t id)
+bool ipc_server_peer_close (ipc_server_t *server, cli_id_t id)
 {
     bool ret;
     ipc_server_cli_t *cli;
@@ -298,11 +294,7 @@ static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr,
 
     ipc_hdr->url_len = htons((uint16_t)url->url_len);
 
-    if (payload && payload->data_len) {
-        ipc_hdr->data_len = htonl(payload->data_len);
-    } else {
-        ipc_hdr->data_len = 0;
-    }
+    ipc_hdr->data_len = payload ? htonl(payload->data_len) : 0;
 
     uint64_t total = (uint64_t)IPC_HDR_LENGTH + ipc_hdr->url_len + ipc_hdr->data_len; // 防溢出
 
@@ -368,11 +360,7 @@ static bool ipc_server_cli_sub_match (ipc_server_cli_t *cli, const ipc_url_t *ur
     return  (sub ? true : false);
 }
 
-/*
- * Create IPC server
- * Warning: This function must be mutually exclusive with the ipc_server_destroy() call
- */
-ipc_server_t *ipc_server_create (const char *server_info)
+ipc_server_t *ipc_server_create_with_options(const char *name, const server_options_t *opts)
 {
     ipc_server_t *server;
 
@@ -396,7 +384,12 @@ ipc_server_t *ipc_server_create (const char *server_info)
         goto    error;
     }
 
-    server->send_timeout = ipc_server_def_send_timeout;
+    if (opts) {
+        server->send_timeout.tv_sec = opts->send_timeout_ms / 1000;
+        server->send_timeout.tv_usec = (opts->send_timeout_ms % 1000) * 1000000LL;
+        server->handshake_timeout = opts->idle_timeout_sec;
+        server->keepalive_timeout = opts->conn_timeout_ms;
+    }
     server->recvbuf      = (uint8_t *)server->sendbuf + IPC_MAX_PACKET_LENGTH;
     server->valid        = true;
 
@@ -424,6 +417,15 @@ error:
 }
 
 /*
+ * Create IPC server
+ * Warning: This function must be mutually exclusive with the ipc_server_destroy() call
+ */
+ipc_server_t *ipc_server_create (const char *server_info)
+{
+    return ipc_server_create_with_options(server_info, NULL);
+}
+
+/*
  * Start IPC server
  */
 bool ipc_server_start (ipc_server_t *server, const char* ipc_path)
@@ -442,7 +444,8 @@ bool ipc_server_start (ipc_server_t *server, const char* ipc_path)
     }
 
     setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, (const void *)&en, sizeof(int));
-    setsockopt(server->sock, IPPROTO_TCP, TCP_NODELAY, (const void *)&en, sizeof(int));
+    // setsockopt for AF_INET/AF_INET6
+    // setsockopt(server->sock, IPPROTO_TCP, TCP_NODELAY, (const void *)&en, sizeof(int));
 
     if (strlen(ipc_path) > sizeof(addr.sun_path)) {
         fprintf(stderr, "Invalid ipc path\r\n");
@@ -619,44 +622,6 @@ int ipc_server_peer_count (ipc_server_t *server)
     ipc_mutex_unlock(&server->lock);
 
     return  (cnt);
-}
-
-/*
- * IPC server set this server send packet to client timeout.
- * `timeout` NULL means use default: IPC_SERVER_DEF_SEND_TIMEOUT
- */
-bool ipc_server_send_timeout (ipc_server_t *server, bool cur_clis, const struct timespec *timeout)
-{
-    int i;
-    struct timeval timeval;
-    ipc_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        return  (false);
-    }
-
-    if (timeout) {
-        timeval.tv_sec  = timeout->tv_sec;
-        timeval.tv_usec = timeout->tv_nsec / 1000;
-    } else {
-        timeval = ipc_server_def_send_timeout;
-    }
-
-    ipc_mutex_lock(&server->lock);
-
-    server->send_timeout = timeval;
-
-    if (cur_clis) {
-        for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
-            LIST_FOREACH(cli, server->clis[i]) {
-                ipc_socket_sndto(cli->sock, &timeval);
-            }
-        }
-    }
-
-    ipc_mutex_unlock(&server->lock);
-
-    return  (true);
 }
 
 /*
@@ -858,7 +823,7 @@ void ipc_server_remove_method (ipc_server_t *server, const ipc_url_t *url)
 /*
  * IPC remote client address
  */
-bool ipc_server_peer_address (ipc_server_t *server, ipc_cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
+bool ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
 {
     ipc_server_cli_t *cli;
 
@@ -882,7 +847,7 @@ bool ipc_server_peer_address (ipc_server_t *server, ipc_cli_id_t id, struct sock
 /*
  * IPC server RPC reply
  */
-bool ipc_server_response (ipc_server_t *server, ipc_cli_id_t id,
+bool ipc_server_response (ipc_server_t *server, cli_id_t id,
                             uint8_t status, uint16_t seqno, const ipc_payload_t *payload)
 {
     bool ret;
@@ -913,13 +878,13 @@ bool ipc_server_response (ipc_server_t *server, ipc_cli_id_t id,
 /*
  * IPC remote client keepalive
  */
-bool ipc_server_cli_keepalive (ipc_server_t *server, ipc_cli_id_t id, int keepalive)
+bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
 {
     int en = 1;
     ipc_server_cli_t *cli;
 
 #if !defined(__QNX__)
-    int count = 3, idle = IPC_SERVER_KEEPALIVE_TIMEOUT;
+    int count = 3, idle = ipc_server_kpl_timeout;
 #endif
 
     if (!server || !server->valid) {
@@ -953,7 +918,7 @@ bool ipc_server_cli_keepalive (ipc_server_t *server, ipc_cli_id_t id, int keepal
 /*
  * IPC server get remote client id array
  */
-int ipc_server_peer_list (ipc_server_t *server, ipc_cli_id_t ids[], int max_cnt)
+int ipc_server_peer_list (ipc_server_t *server, cli_id_t ids[], int max_cnt)
 {
     int i, cnt;
     ipc_server_cli_t *cli;
@@ -984,7 +949,7 @@ out:
 /*
  * IPC server set send packet to client timeout, NULL means send wait forever when congested.
  */
-bool ipc_server_cli_send_timeout (ipc_server_t *server, ipc_cli_id_t id, const struct timespec *timeout)
+bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, const struct timespec *timeout)
 {
     struct timeval timeval;
     ipc_server_cli_t *cli;
@@ -1015,7 +980,7 @@ bool ipc_server_cli_send_timeout (ipc_server_t *server, ipc_cli_id_t id, const s
 /*
  * IPC server send datagram
  */
-bool ipc_server_cli_do_datagram (ipc_server_t *server, ipc_cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
+bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
 {
     bool ret;
     size_t len;
@@ -1052,7 +1017,7 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, ipc_cli_id_t id, const ip
 /*
  * IPC server send datagram
  */
-bool ipc_server_datagram (ipc_server_t *server, ipc_cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
+bool ipc_server_datagram (ipc_server_t *server, cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
 {
     return  (ipc_server_cli_do_datagram(server, id, url, payload));
 }
@@ -1193,9 +1158,8 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
             cmd = ipc_server_cmd_match(server, &url);
             if (cmd) {
                 callback = cmd->onrpc;
-                arg      = cmd->arg;
                 ipc_mutex_unlock(&server->lock);
-                callback(server, cli->id, ipc_hdr, &url, &payload, arg);
+                callback(server, cli->id, ipc_hdr, &url, &payload, cmd->arg);
             } else {
                 send_hdr = ipc_parser_init_header(server->sendbuf, ipc_hdr->type, IPC_STATUS_INVALID_URL, seqno);
                 ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
@@ -1285,7 +1249,7 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
     socklen_t addr_len = sizeof(struct sockaddr_storage);
     struct sockaddr_storage addr;
     ipc_header_t *ipc_hdr;
-    ipc_cli_id_t id;
+    cli_id_t id;
     ipc_server_cli_t *cli, *cli_temp;
     ipc_server_hst_t *hst, *hst_temp;
     struct input_arg input_arg;
@@ -1376,7 +1340,10 @@ int ipc_server_poll(ipc_server_t *server, int timeout_ms)
 {
     fd_set fds;
     sigset_t empty_mask;
-    struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
+    struct timespec timeout = {
+        .tv_sec  = timeout_ms / 1000,
+        .tv_nsec = (timeout_ms % 1000) * 1000000LL
+    };
 
     sigemptyset(&empty_mask);
     FD_ZERO(&fds);
