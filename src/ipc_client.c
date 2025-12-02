@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -1026,22 +1027,28 @@ void ipc_client_set_on_datagram (ipc_client_t *client, ipc_client_dat_func_t cal
     }
 }
 
-bool ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms)
+int ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms)
 {
     int max_fd, cnt;
     fd_set fds;
+    sigset_t empty_mask;
     struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
 
     FD_ZERO(&fds);
     max_fd = ipc_client_fds(client, &fds);
 
-    cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, NULL);
+    sigemptyset(&empty_mask);
+
+    // 阻塞空信号集，可以传递并中断所有信号
+    cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
     if (cnt > 0) {
         if (!ipc_client_process_events(client, &fds)) {
             ipc_client_close(client);
             fprintf(stderr, "Connection lost!\n");
         }
+        return 0;
     }
+    return cnt;
 }
 
 /*

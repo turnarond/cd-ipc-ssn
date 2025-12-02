@@ -66,7 +66,7 @@ bool ipc_client_is_connect(ipc_client_t *client);
  * `timeout` NULL means use IPC_CLIENT_DEF_SEND_TIMEOUT */
 bool ipc_client_send_timeout(ipc_client_t *client, const struct timespec *timeout);
 
-bool ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms);
+int ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms);
 
 /* Subscribe URL */
 bool ipc_client_subscribe(ipc_client_t *client, const ipc_url_t *url,

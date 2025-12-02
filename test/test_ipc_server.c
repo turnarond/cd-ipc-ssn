@@ -28,7 +28,7 @@ static void command_light (void *arg, ipc_server_t *server, ipc_cli_id_t cid,
     send.data      = "command light";
     send.data_len  = 13;
     printf("in command_light\r\n");
-    ipc_server_cli_reply(server, cid, 0, seqno, &send);
+    ipc_server_response(server, cid, 0, seqno, &send);
 }
 
 int main (int argc, char **argv)
@@ -60,14 +60,14 @@ int main (int argc, char **argv)
     ipc_url_t url;
     url.url     = "/light";
     url.url_len = strlen(url.url);
-    ipc_server_add_listener(server, &url, command_light, NULL);
+    ipc_server_add_method(server, &url, command_light, NULL);
 
     /*
     * Start server
     */
     if (!ipc_server_start(server, "ipc-light_server")) {
         fprintf(stderr, "Can not start IPC server! errno is %d\n", errno);
-        ipc_server_close(server);
+        ipc_server_destroy(server);
         return  (-1);
     }
 

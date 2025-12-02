@@ -36,6 +36,18 @@
 #define IPC_INHERIT_NODELAY 1
 #endif
 
+/* IPC server backlog */
+#define IPC_SERVER_BACKLOG  32
+
+/* IPC server default send timeout (ms) */
+#define IPC_SERVER_DEF_SEND_TIMEOUT  100
+
+/* IPC server default handshake timeout (ms) */
+#define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT  5000
+
+/* IPC stream keepalive timeout seconds */
+#define IPC_SERVER_KEEPALIVE_TIMEOUT  10
+
 /* Memory barrier */
 #if defined(__GNUC__)
 #define ipc_memory_barrier()   __sync_synchronize()

@@ -7,7 +7,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/un.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <fcntl.h>
 #include "ipc_list.h"
 #include "ipc_server.h"
 #include "ipc_parser.h"
@@ -15,11 +19,11 @@
 
 /* Client hash */
 #define IPC_CLI_HASH_SIZE  64
-#define IPC_CLI_HASH_MASK  0x2f
+#define IPC_CLI_HASH_MASK  (IPC_CLI_HASH_SIZE - 1)
 
 /* Command hash */
 #define IPC_CMD_HASH_SIZE  32
-#define IPC_CMD_HASH_MASK  0x1f
+#define IPC_CMD_HASH_MASK  (IPC_CMD_HASH_SIZE - 1)
 
 /* Subscription node */
 typedef struct ipc_server_sub {
@@ -53,7 +57,7 @@ typedef struct ipc_server_cli {
 typedef struct ipc_server_cmd {
     struct ipc_server_cmd *next;
     struct ipc_server_cmd *prev;
-    ipc_server_cmd_func_t callback;
+    ipc_rpc_handler_t onrpc;
     void *arg;
     size_t len;
     char url[1];
@@ -72,9 +76,9 @@ struct ipc_server {
     ipc_server_cmd_t *def_cmd;
     ipc_server_cmd_t *prefix_h;
     ipc_server_cmd_t *prefix_t;
-    ipc_server_dat_func_t ondat;
+    ipc_datagram_handler_t ondat;
     void *darg;
-    ipc_server_cli_func_t oncli;
+    ipc_on_connect_t oncli;
     void *carg;
     ipc_mutex_t lock;
     struct timeval send_timeout;
@@ -259,7 +263,7 @@ static void ipc_server_cli_destroy (ipc_server_t *server, ipc_server_cli_t *cli)
 /*
  * Close a client
  */
-bool ipc_server_cli_close (ipc_server_t *server, ipc_cli_id_t id)
+bool ipc_server_peer_close (ipc_server_t *server, ipc_cli_id_t id)
 {
     bool ret;
     ipc_server_cli_t *cli;
@@ -291,13 +295,6 @@ static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr,
     const ipc_url_t *url, const ipc_payload_t *payload)
 {
     ssize_t len;
-    if (url == NULL) {
-        return false;
-    }
-
-    if (url->url_len > IPC_MAX_DATA_LENGTH) {
-        return  (false);
-    }
 
     ipc_hdr->url_len = htons((uint16_t)url->url_len);
 
@@ -373,7 +370,7 @@ static bool ipc_server_cli_sub_match (ipc_server_cli_t *cli, const ipc_url_t *ur
 
 /*
  * Create IPC server
- * Warning: This function must be mutually exclusive with the ipc_server_close() call
+ * Warning: This function must be mutually exclusive with the ipc_server_destroy() call
  */
 ipc_server_t *ipc_server_create (const char *server_info)
 {
@@ -497,7 +494,7 @@ bool ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t 
 /*
  * Bind IPC server to specified network interface
  */
-bool ipc_server_bind_if (ipc_server_t *server, const char *ifname)
+static bool ipc_server_bind_if (ipc_server_t *server, const char *ifname)
 {
     bool ret;
 
@@ -522,7 +519,7 @@ bool ipc_server_bind_if (ipc_server_t *server, const char *ifname)
  * Close IPC server
  * Warning: This function must be mutually exclusive with the ipc_server_create() call
  */
-void ipc_server_close (ipc_server_t *server)
+void ipc_server_destroy (ipc_server_t *server)
 {
     int i;
     bool wait_thread_quit = false;
@@ -589,7 +586,7 @@ void ipc_server_close (ipc_server_t *server)
 /*
  * IPC server set on client callback
  */
-void ipc_server_on_cli (ipc_server_t *server, ipc_server_cli_func_t oncli, void *arg)
+void ipc_server_set_connect_handler (ipc_server_t *server, ipc_on_connect_t oncli, void *arg)
 {
     if (server) {
         server->oncli = oncli;
@@ -600,7 +597,7 @@ void ipc_server_on_cli (ipc_server_t *server, ipc_server_cli_func_t oncli, void 
 /*
  * IPC remote clients count
  */
-int ipc_server_count (ipc_server_t *server)
+int ipc_server_peer_count (ipc_server_t *server)
 {
     int i, cnt = 0;
     ipc_server_cli_t *cli;
@@ -744,8 +741,8 @@ bool ipc_server_publish (ipc_server_t *server, const ipc_url_t *url, const ipc_p
 /*
  * IPC server add RPC listener
  */
-bool ipc_server_add_listener (ipc_server_t *server,
-                               const ipc_url_t *url, ipc_server_cmd_func_t callback, void *arg)
+bool ipc_server_add_method (ipc_server_t *server,
+                               const ipc_url_t *url, ipc_rpc_handler_t callback, void *arg)
 {
     int hash;
     size_t path_len;
@@ -773,7 +770,7 @@ bool ipc_server_add_listener (ipc_server_t *server,
         return  (false);
     }
 
-    cmd->callback = callback;
+    cmd->onrpc = callback;
     cmd->arg = arg;
     cmd->len = path_len;
     memcpy(cmd->url, url->url, path_len);
@@ -806,7 +803,7 @@ bool ipc_server_add_listener (ipc_server_t *server,
 /*
  * IPC server remove RPC listener
  */
-void ipc_server_remove_listener (ipc_server_t *server, const ipc_url_t *url)
+void ipc_server_remove_method (ipc_server_t *server, const ipc_url_t *url)
 {
     int hash;
     size_t path_len;
@@ -859,38 +856,9 @@ void ipc_server_remove_listener (ipc_server_t *server, const ipc_url_t *url)
 }
 
 /*
- * IPC remote client is subscribed
- */
-bool ipc_server_cli_is_subscribed (ipc_server_t *server, ipc_cli_id_t id, const ipc_url_t *url)
-{
-    bool ret;
-    ipc_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        return  (false);
-    }
-    if (!url || !url->url || !url->url_len) {
-        return  (false);
-    }
-
-    ipc_mutex_lock(&server->lock);
-
-    cli = ipc_server_cli_find(server, id);
-    if (cli && cli->active) {
-        ret = ipc_server_cli_sub_match(cli, url);
-    } else {
-        ret = false;
-    }
-
-    ipc_mutex_unlock(&server->lock);
-
-    return  (ret);
-}
-
-/*
  * IPC remote client address
  */
-bool ipc_server_cli_address (ipc_server_t *server, ipc_cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
+bool ipc_server_peer_address (ipc_server_t *server, ipc_cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
 {
     ipc_server_cli_t *cli;
 
@@ -914,7 +882,7 @@ bool ipc_server_cli_address (ipc_server_t *server, ipc_cli_id_t id, struct socka
 /*
  * IPC server RPC reply
  */
-bool ipc_server_cli_reply (ipc_server_t *server, ipc_cli_id_t id,
+bool ipc_server_response (ipc_server_t *server, ipc_cli_id_t id,
                             uint8_t status, uint16_t seqno, const ipc_payload_t *payload)
 {
     bool ret;
@@ -985,7 +953,7 @@ bool ipc_server_cli_keepalive (ipc_server_t *server, ipc_cli_id_t id, int keepal
 /*
  * IPC server get remote client id array
  */
-int ipc_server_cli_array (ipc_server_t *server, ipc_cli_id_t ids[], int max_cnt)
+int ipc_server_peer_list (ipc_server_t *server, ipc_cli_id_t ids[], int max_cnt)
 {
     int i, cnt;
     ipc_server_cli_t *cli;
@@ -1084,7 +1052,7 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, ipc_cli_id_t id, const ip
 /*
  * IPC server send datagram
  */
-bool ipc_server_cli_datagram (ipc_server_t *server, ipc_cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
+bool ipc_server_datagram (ipc_server_t *server, ipc_cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload)
 {
     return  (ipc_server_cli_do_datagram(server, id, url, payload));
 }
@@ -1092,7 +1060,7 @@ bool ipc_server_cli_datagram (ipc_server_t *server, ipc_cli_id_t id, const ipc_u
 /*
  * IPC server set on datagram callback
  */
-void ipc_server_on_datagram (ipc_server_t *server, ipc_server_dat_func_t callback, void *arg)
+void ipc_server_set_datagram_handler (ipc_server_t *server, ipc_datagram_handler_t callback, void *arg)
 {
     if (server) {
         server->ondat = callback;
@@ -1173,7 +1141,7 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
     ipc_server_cli_t *cli = input_arg->cli;
     ipc_server_sub_t *sub, *sub_temp;
     ipc_server_cmd_t *cmd;
-    ipc_server_cmd_func_t callback;
+    ipc_rpc_handler_t callback;
     ipc_header_t *send_hdr;
     ipc_url_t url;
     ipc_payload_t payload, payload_reply;
@@ -1192,7 +1160,7 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
 
     if (ipc_hdr->type == IPC_TYPE_DATAGRAM) {
         if (server->ondat) {
-            server->ondat(server->darg, server, cli->id, &url, &payload);
+            server->ondat(server, cli->id, &url, &payload, server->darg);
         }
         return  (server->valid);
     }
@@ -1215,7 +1183,7 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
         if (!cli->onconn) {
             cli->onconn = true;
             if (server->oncli) {
-                server->oncli(server->carg, server, cli->id, true);
+                server->oncli(server, cli->id, true, server->carg);
             }
         }
         break;
@@ -1224,10 +1192,10 @@ static bool ipc_server_input (void *arg, ipc_header_t *ipc_hdr)
         if (url.url_len && url.url[0] == '/') {
             cmd = ipc_server_cmd_match(server, &url);
             if (cmd) {
-                callback = cmd->callback;
+                callback = cmd->onrpc;
                 arg      = cmd->arg;
                 ipc_mutex_unlock(&server->lock);
-                callback(arg, server, cli->id, ipc_hdr, &url, &payload);
+                callback(server, cli->id, ipc_hdr, &url, &payload, arg);
             } else {
                 send_hdr = ipc_parser_init_header(server->sendbuf, ipc_hdr->type, IPC_STATUS_INVALID_URL, seqno);
                 ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
@@ -1341,7 +1309,7 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
                     if (cli->onconn) {
                         cli->onconn = false;
                         if (server->oncli) {
-                            server->oncli(server->carg, server, cli->id, false);
+                            server->oncli(server, cli->id, false, server->carg);
                         }
                     }
 
@@ -1356,11 +1324,17 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
     }
 
     if (server->sock >= 0 && FD_ISSET(server->sock, rfds)) {
+#ifdef __USE_GNU
+        sock = accept4(server->sock, (struct sockaddr *)&addr, &addr_len, SOCK_NONBLOCK);
+#else
         sock = accept(server->sock, (struct sockaddr *)&addr, &addr_len);
+                        /* Set nonblock */
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#endif
         if (sock >= 0) {
             cli = (ipc_server_cli_t *)calloc(1, sizeof(ipc_server_cli_t));
-            if (cli) {
-                
+            if (cli) {\
                 cli->sock   = sock;
                 cli->active = false;
                 /* TODO: deal with init recv buffer. */
@@ -1398,16 +1372,39 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
 /*
  * IPC server poll 
  */
-void ipc_server_poll(ipc_server_t *server, int timeout_ms)
+int ipc_server_poll(ipc_server_t *server, int timeout_ms)
 {
     fd_set fds;
+    sigset_t empty_mask;
     struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
 
+    sigemptyset(&empty_mask);
     FD_ZERO(&fds);
     int max_fd = ipc_server_fds(server, &fds);
-    int cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, NULL);
+    // 阻塞空信号集，可以传递并中断所有信号
+    int cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
     if (cnt > 0) {
         ipc_server_input_fds(server, &fds);
+        return 0;
+    }
+    return cnt;
+}
+
+void ipc_server_run(ipc_server_t *server)
+{
+    fd_set fds;
+    sigset_t empty_mask;
+
+    while (true) {
+        sigemptyset(&empty_mask);
+        FD_ZERO(&fds);
+        int max_fd = ipc_server_fds(server, &fds);
+        // 阻塞空信号集，可以传递并中断所有信号
+        int cnt = pselect(max_fd + 1, &fds, NULL, NULL, NULL, &empty_mask);
+        if (cnt > 0) {
+            ipc_server_input_fds(server, &fds);
+            continue;
+        }
     }
 }
 
