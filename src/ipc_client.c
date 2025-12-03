@@ -12,8 +12,7 @@
 #include <sys/types.h>
 #include "ipc_list.h"
 #include "ipc_client.h"
-#include "ipc_parser.h"
-#include "ipc_platform.h"
+#include "vsi/ipc_platform.h"
 
 /* Client max pending */
 #define IPC_CLIENT_MAX_PENDING  0xff
@@ -54,7 +53,7 @@ struct ipc_client {
     ipc_client_pendq_t *pool;
     void *sendbuf;
     void *recvbuf;
-    ipc_recv_t recv;
+    ipc_stream_ctx_t recv;
     bool cid_valid;
     uint32_t rpc_pending;
     uint32_t cid;
@@ -63,7 +62,7 @@ struct ipc_client {
     int sock;
     int evtfd[2];
     struct timeval send_timeout;
-    ipc_spin_t spin;
+    ipc_spinlock_t spin;
     ipc_mutex_t lock;
     ipc_client_msg_func_t onmsg;
     void *marg;
@@ -97,7 +96,7 @@ static const struct timeval ipc_client_def_send_timeout = {
 /* Clients list lock, header, timer thread */
 static ipc_thread_t  ipc_client_timer;
 static ipc_client_t *ipc_client_list = NULL;
-static ipc_mutex_t   ipc_client_lock = IPC_MUTEX_INITIALIZER;
+static ipc_mutex_t   ipc_client_lock = SSN_MUTEX_INITIALIZER;
 
 /*
 * IPC timer thread
@@ -111,19 +110,19 @@ static void *ipc_client_timer_handle (void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_CLIENT_TIMER_PERIOD);
+        ssn_thread_msleep(IPC_CLIENT_TIMER_PERIOD);
 
-        ipc_mutex_lock(&ipc_client_lock);
+        ssn_mutex_lock(&ipc_client_lock);
 
         if (!ipc_client_list) {
-            ipc_mutex_unlock(&ipc_client_lock);
+            ssn_mutex_unlock(&ipc_client_lock);
             break;
         }
 
         LIST_FOREACH(client, ipc_client_list) {
             emit = false;
 
-            ipc_mutex_lock(&client->lock);
+            ssn_mutex_lock(&client->lock);
 
             LIST_FOREACH_SAFE(pendq, tmp, client->head) {
                 if (pendq->alive > IPC_CLIENT_TIMER_PERIOD) {
@@ -135,17 +134,17 @@ static void *ipc_client_timer_handle (void *arg)
                 }
             }
 
-            ipc_mutex_unlock(&client->lock);
+            ssn_mutex_unlock(&client->lock);
             if (emit) {
                 ipc_event_pair_signal(client->evtfd[1]);
             }
         }
 
-        ipc_mutex_unlock(&ipc_client_lock);
+        ssn_mutex_unlock(&ipc_client_lock);
 
     } while (true);
 
-    ipc_thread_exit();
+    ssn_thread_exit();
 
     return  (NULL);
 }
@@ -156,9 +155,9 @@ static void *ipc_client_timer_handle (void *arg)
 static void ipc_client_pendq_free (ipc_client_t *client, ipc_client_pendq_t *pendq)
 {
     if (IPC_CLIENT_PENDING_IS_IN_POOL(client, pendq)) {
-        ipc_mutex_lock(&client->lock);
+        ssn_mutex_lock(&client->lock);
         INSERT_TO_HEADER(pendq, client->free);
-        ipc_mutex_unlock(&client->lock);
+        ssn_mutex_unlock(&client->lock);
 
     } else {
         free(pendq);
@@ -188,7 +187,7 @@ ipc_client_t *ipc_client_create (ipc_client_msg_func_t onmsg, void *arg)
         goto    error;
     }
 
-    client->sendbuf = malloc(IPC_MAX_PACKET_LENGTH * 2);
+    client->sendbuf = malloc(IPC_MAX_PACKET_SIZE * 2);
     if (!client->sendbuf) {
         err = 1;
         goto    error;
@@ -199,25 +198,25 @@ ipc_client_t *ipc_client_create (ipc_client_msg_func_t onmsg, void *arg)
         INSERT_TO_HEADER(&client->pool[i], client->free);
     }
 
-    ipc_spin_init(&client->spin);
+    ssn_spin_init(&client->spin);
 
-    if (ipc_mutex_init(&client->lock)) {
+    if (ssn_mutex_init(&client->lock)) {
         err = 2;
         goto    error;
     }
 
-    ipc_parser_init_recv(&client->recv);
-    client->recvbuf      = (uint8_t *)client->sendbuf + IPC_MAX_PACKET_LENGTH;
+    ipc_stream_init(&client->recv);
+    client->recvbuf      = (uint8_t *)client->sendbuf + IPC_MAX_PACKET_SIZE;
     client->onmsg        = onmsg;
     client->marg         = arg;
     client->send_timeout = ipc_client_def_send_timeout;
     client->valid        = true;
 
-    ipc_mutex_lock(&ipc_client_lock);
+    ssn_mutex_lock(&ipc_client_lock);
 
     if (ipc_client_list == NULL) {
-        if (ipc_thread_create(&ipc_client_timer, ipc_client_timer_handle, NULL)) {
-            ipc_mutex_unlock(&ipc_client_lock);
+        if (ssn_thread_create(&ipc_client_timer, ipc_client_timer_handle, NULL)) {
+            ssn_mutex_unlock(&ipc_client_lock);
             err = 3;
             goto    error;
         }
@@ -225,13 +224,13 @@ ipc_client_t *ipc_client_create (ipc_client_msg_func_t onmsg, void *arg)
 
     INSERT_TO_HEADER(client, ipc_client_list);
 
-    ipc_mutex_unlock(&ipc_client_lock);
+    ssn_mutex_unlock(&ipc_client_lock);
 
     return  (client);
 
 error:
     if (err > 2) {
-        ipc_mutex_destroy(&client->lock);
+        ssn_mutex_destroy(&client->lock);
     }
     if (err > 1) {
         free(client->sendbuf);
@@ -261,17 +260,17 @@ void ipc_client_close (ipc_client_t *client)
      */
     client->valid     = false;
 
-    ipc_mutex_lock(&ipc_client_lock);
+    ssn_mutex_lock(&ipc_client_lock);
 
     DELETE_FROM_LIST(client, ipc_client_list);
     bool should_wait = (ipc_client_list == NULL);
 
-    ipc_mutex_unlock(&ipc_client_lock);
+    ssn_mutex_unlock(&ipc_client_lock);
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
     client->connected = false;
-    ipc_memory_barrier();
+    memory_barrier();
 
     if (client->sock >= 0) {
         close_socket(client->sock);
@@ -290,14 +289,14 @@ void ipc_client_close (ipc_client_t *client)
             ipc_client_pendq_free(client, pendq);
         }
         
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (should_wait) {
-        ipc_thread_wait(&ipc_client_timer);
+        ssn_thread_wait(&ipc_client_timer);
     }
 
-    ipc_mutex_destroy(&client->lock);
-    ipc_spin_destroy(&client->spin);
+    ssn_mutex_destroy(&client->lock);
+    ssn_spin_destroy(&client->spin);
     free(client);
 }
 
@@ -323,24 +322,24 @@ static bool ipc_client_send (ipc_client_t *client, size_t len)
 }
 
 static bool ipc_client_sendmsg (ipc_client_t *client, ipc_header_t *ipc_hdr, 
-    const ipc_url_t *url, const ipc_payload_t *payload)
+    const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
     ssize_t len;
-    if (url->url_len > IPC_MAX_DATA_LENGTH) {
+    if (url->url_len > IPC_MAX_PAYLOAD_SIZE) {
         return  (false);
     }
 
     ipc_hdr->url_len = htons((uint16_t)url->url_len);
 
-    if (payload->data_len) {
-        ipc_hdr->data_len = htonl(payload->data_len);
+    if (payload->length) {
+        ipc_hdr->data_len = htonl(payload->length);
     } else {
         ipc_hdr->data_len = 0;
     }
 
-    uint64_t total = (uint64_t)IPC_HDR_LENGTH + ipc_hdr->url_len + ipc_hdr->data_len; // 防溢出
+    uint64_t total = (uint64_t)IPC_HEADER_SIZE + ipc_hdr->url_len + ipc_hdr->data_len; // 防溢出
 
-    if (total > IPC_MAX_PACKET_LENGTH || total < IPC_HDR_LENGTH) {
+    if (total > IPC_MAX_PACKET_SIZE || total < IPC_HEADER_SIZE) {
         return false;
     }
 
@@ -361,7 +360,7 @@ static bool ipc_client_sendmsg (ipc_client_t *client, ipc_header_t *ipc_hdr,
     if (payload) {
         if (payload->data) {
             iov[msg.msg_iovlen].iov_base = payload->data;
-            iov[msg.msg_iovlen].iov_len = payload->data_len;
+            iov[msg.msg_iovlen].iov_len = payload->length;
             msg.msg_iovlen++;
         }
     }
@@ -382,13 +381,13 @@ static void ipc_client_timeout_all (ipc_client_t *client)
 {
     ipc_client_pendq_t *pendq, *to_head, *temp;
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
     to_head = client->head;
     client->head = client->tail = NULL;
     client->rpc_pending = 0;
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (to_head) {
         LIST_FOREACH_SAFE(pendq, temp, to_head) {
@@ -405,27 +404,27 @@ static void ipc_client_timeout_all (ipc_client_t *client)
 /*
 * Connect input callback
 */
-static bool ipc_client_conn_input (void *varg, ipc_header_t *ipc_hdr)
+static bool ipc_client_conn_input (ipc_header_t *ipc_hdr, void *varg)
 {
     struct conn_input_arg *arg = (struct conn_input_arg *)varg;
-    ipc_payload_t payload;
+    ipc_payload_ref_t payload;
     size_t length;
     uint8_t *nid;
 
-    if (ipc_hdr->type != IPC_TYPE_SERVINFO) {
+    if (ipc_hdr->msg_type != IPC_MSG_TYPE_SERVICE_INFO) {
         return  (true);
     }
     if (ipc_hdr->status) {
         return  (true);
     }
 
-    if (!ipc_parser_get_payload(ipc_hdr, &payload) || !payload.data_len) {
+    if (!ipc_get_payload(ipc_hdr, &payload) || !payload.length) {
         return  (true);
     }
 
     arg->packet_cnt++;
 
-    if (payload.data_len >= sizeof(uint32_t)) {
+    if (payload.length >= sizeof(uint32_t)) {
         nid = (uint8_t *)payload.data;
         arg->client->cid = ((uint32_t)nid[0] << 24) + ((uint32_t)nid[1] << 16)
                         + ((uint32_t)nid[2] << 8)  +  (uint32_t)nid[3];
@@ -448,7 +447,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     size_t len = 0;
     ssize_t num;
     ipc_header_t *ipc_hdr;
-    ipc_payload_t payload;
+    ipc_payload_ref_t payload;
     struct sockaddr_un server;
     struct conn_input_arg arg;
 
@@ -457,7 +456,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     }
 
     client->connected = false;
-    ipc_memory_barrier();
+    memory_barrier();
 
     if (client->sock >= 0) {
         close_socket(client->sock);
@@ -474,7 +473,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     memset(&server, 0, sizeof(server));
     strcpy(server.sun_path, ipc_path);
     server.sun_family = AF_UNIX;
-    ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_SERVINFO, 0, 0);
+    ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_SERVICE_INFO, 0, 0);
 
     ret = connect(client->sock, (struct sockaddr*)&server, sizeof(struct sockaddr_un));
     if (ret) {
@@ -503,12 +502,12 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
         return  (false);
     }
 
-    num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_LENGTH, 0);
+    num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_SIZE, 0);
 
     if (num > 0) {
         arg.client     = client;
         arg.packet_cnt = 0;
-        if (!ipc_parser_input(&client->recv, client->recvbuf,
+        if (!ipc_stream_feed(&client->recv, client->recvbuf,
                             num, ipc_client_conn_input, &arg)) {
             num = -1;
         }
@@ -518,7 +517,7 @@ bool ipc_client_connect (ipc_client_t *client, const char* ipc_path,
     }
 
     client->connected = true;
-    ipc_memory_barrier();
+    memory_barrier();
 
     /* Set send timeout */
     ipc_socket_sndto(client->sock, &client->send_timeout);
@@ -534,16 +533,16 @@ bool ipc_client_disconnect (ipc_client_t *client)
         return  (false);
     }
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
     client->connected = false;
-    ipc_memory_barrier();
+    memory_barrier();
 
     if (client->sock >= 0) {
         shutdown_socket(client->sock);
     }
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     ipc_client_timeout_all(client);
 
@@ -611,19 +610,19 @@ int ipc_client_fds (ipc_client_t *client, fd_set *rfds)
 /*
 * Client input callback
 */
-static bool ipc_client_input (void *varg, ipc_header_t *ipc_hdr)
+static bool ipc_client_input (ipc_header_t *ipc_hdr, void *varg)
 {
     ipc_client_t *client = (ipc_client_t *)varg;
     ipc_client_pendq_t *pendq, *temp;
     uint16_t seqno;
-    ipc_url_t url;
-    ipc_payload_t payload;
+    ipc_url_ref_t url;
+    ipc_payload_ref_t payload;
 
-    if (ipc_hdr->type == IPC_TYPE_PUBLISH || ipc_hdr->type == IPC_TYPE_DATAGRAM) {
-        ipc_parser_get_url(ipc_hdr, &url);
-        ipc_parser_get_payload(ipc_hdr, &payload);
+    if (ipc_hdr->msg_type == IPC_MSG_TYPE_PUBLISH || ipc_hdr->msg_type == IPC_MSG_TYPE_DATAGRAM) {
+        ipc_get_url(ipc_hdr, &url);
+        ipc_get_payload(ipc_hdr, &payload);
 
-        if (ipc_hdr->type == IPC_TYPE_PUBLISH) {
+        if (ipc_hdr->msg_type == IPC_MSG_TYPE_PUBLISH) {
             if (client->onmsg) {
                 client->onmsg(client->marg, client, &url, &payload);
             }
@@ -632,13 +631,13 @@ static bool ipc_client_input (void *varg, ipc_header_t *ipc_hdr)
          }
         goto  out;
 
-    } else if (ipc_hdr->type == IPC_FLAG_REPLY) {
+    } else if (ipc_hdr->msg_type == IPC_MSG_TYPE_REPLY_FLAG) {
         goto  out;
     }
 
-    seqno = ipc_parser_get_seqno(ipc_hdr);
+    seqno = ipc_get_seqno(ipc_hdr);
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
     LIST_FOREACH_SAFE(pendq, temp, client->head) {
         if (pendq->seqno == seqno) {
@@ -650,14 +649,14 @@ static bool ipc_client_input (void *varg, ipc_header_t *ipc_hdr)
         }
     }
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (pendq) {
-        switch (ipc_hdr->type) {
+        switch (ipc_hdr->msg_type) {
 
-        case IPC_TYPE_SUBSCRIBE:
-        case IPC_TYPE_UNSUBSCRIBE:
-        case IPC_TYPE_PINGECHO:
+        case IPC_MSG_TYPE_SUBSCRIBE:
+        case IPC_MSG_TYPE_UNSUBSCRIBE:
+        case IPC_MSG_TYPE_PING_ECHO:
             if (pendq->ftype == IPC_CLIENT_FTYPE_RES) {
                 if (pendq->callback.res) {
                     pendq->callback.res(pendq->arg, client, ipc_hdr->status == 0);
@@ -665,10 +664,10 @@ static bool ipc_client_input (void *varg, ipc_header_t *ipc_hdr)
             }
             break;
 
-        case IPC_TYPE_RPC:
+        case IPC_MSG_TYPE_RPC_REQUEST:
             if (pendq->ftype == IPC_CLIENT_FTYPE_RPC) {
                 if (pendq->callback.rpc) {
-                    ipc_parser_get_payload(ipc_hdr, &payload);
+                    ipc_get_payload(ipc_hdr, &payload);
                     pendq->callback.rpc(pendq->arg, client, ipc_hdr, &payload);
                 }
             }
@@ -701,10 +700,10 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
     if (client->connected) {
         if (FD_ISSET(client->sock, rfds)) {
             pkt_e = false;
-            num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_LENGTH, MSG_DONTWAIT);
+            num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_SIZE, MSG_DONTWAIT);
             if (num > 0) {
                 // TODO: deal recv msg;
-                if (!ipc_parser_input(&client->recv, client->recvbuf,
+                if (!ipc_stream_feed(&client->recv, client->recvbuf,
                                     num, ipc_client_input, client)) {
                     pkt_e = true;
                 }
@@ -712,7 +711,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
 
             if (pkt_e || num == 0 || (num < 0 && errno != EWOULDBLOCK)) {
                 client->connected = false;
-                ipc_memory_barrier();
+                memory_barrier();
 
                 ipc_client_timeout_all(client);
                 return  (false);
@@ -725,7 +724,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
 
         ipc_event_pair_fetch(client->evtfd[0]);
 
-        ipc_mutex_lock(&client->lock);
+        ssn_mutex_lock(&client->lock);
 
         LIST_FOREACH_SAFE(pendq, temp, client->head) {
             if (pendq->alive <= 0) {
@@ -737,7 +736,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
             }
         }
 
-        ipc_mutex_unlock(&client->lock);
+        ssn_mutex_unlock(&client->lock);
 
         if (to_head) {
             LIST_FOREACH_SAFE(pendq, temp, to_head) {
@@ -760,7 +759,7 @@ static uint16_t ipc_client_prepare_seqno (ipc_client_t *client)
 {
     uint16_t seqno;
 
-    ipc_spin_lock(&client->spin);
+    ssn_spin_lock(&client->spin);
 
     if (client->seqno_nq == 0) {
         seqno = 1;
@@ -770,7 +769,7 @@ static uint16_t ipc_client_prepare_seqno (ipc_client_t *client)
         client->seqno_nq++;
     }
 
-    ipc_spin_unlock(&client->spin);
+    ssn_spin_unlock(&client->spin);
 
     return  (seqno << IPC_CLIENT_MAX_POFFSET);
 }
@@ -786,10 +785,10 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
 
     if (fast) {
         if (client->free) {
-            ipc_mutex_lock(&client->lock);
+            ssn_mutex_lock(&client->lock);
             pendq = client->free;
             DELETE_FROM_LIST(pendq, client->free);
-            ipc_mutex_unlock(&client->lock);
+            ssn_mutex_unlock(&client->lock);
         }
     }
 
@@ -800,7 +799,7 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
         }
     }
     
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
     for (i = 0; i < IPC_CLIENT_MAX_PENDING; i++) {
         seqno = client->seqno;
         client->seqno = (seqno + 1) & IPC_CLIENT_MAX_PENDING;
@@ -816,7 +815,7 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
             break;
         }
     }
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (i >= IPC_CLIENT_MAX_PENDING) {
         ipc_client_pendq_free(client, pendq);
@@ -839,7 +838,7 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
 * Request
 */
 static bool ipc_client_request (ipc_client_t *client, uint8_t type, 
-                                const ipc_url_t *url, const ipc_payload_t *payload,
+                                const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
                                 ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
 {
     size_t len;
@@ -852,7 +851,7 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
     }
 
     if (callback) {
-        pendq = ipc_client_prepare_pendq(client, type == IPC_TYPE_PINGECHO,
+        pendq = ipc_client_prepare_pendq(client, type == IPC_MSG_TYPE_PING_ECHO,
                                         arg, IPC_CLIENT_FTYPE_RES, timeout);
         if (!pendq) {
             return  (false);
@@ -864,9 +863,9 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
         seqno = ipc_client_prepare_seqno(client);
     }
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
-    ipc_hdr = ipc_parser_init_header(client->sendbuf, type, 0, seqno);
+    ipc_hdr = ipc_create_header(client->sendbuf, type, 0, seqno);
 
     if (!ipc_client_sendmsg(client, ipc_hdr, url, payload)) {
         goto    error;
@@ -876,12 +875,12 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
         INSERT_TO_FIFO(pendq, client->head, client->tail);
     }
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     return  (true);
 
 error:
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (pendq) {
         ipc_client_pendq_free(client, pendq);
@@ -893,34 +892,34 @@ error:
 /*
 * Subscribe URL
 */
-bool ipc_client_subscribe (ipc_client_t *client, const ipc_url_t *url,
+bool ipc_client_subscribe (ipc_client_t *client, const ipc_url_ref_t *url,
                             ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
 {
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
         return  (false);
     }
 
-    return  (ipc_client_request(client, IPC_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout));
+    return  (ipc_client_request(client, IPC_MSG_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout));
 }
 
 /*
 * Unsubscribe URL
 */
-bool ipc_client_unsubscribe (ipc_client_t *client, const ipc_url_t *url,
+bool ipc_client_unsubscribe (ipc_client_t *client, const ipc_url_ref_t *url,
                             ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
 {
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
         return  (false);
     }
 
-    return  (ipc_client_request(client, IPC_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout));
+    return  (ipc_client_request(client, IPC_MSG_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout));
 }
 
 /*
 * RPC call with externed arguments.
 * This functions are special interfaces used by client robots, and users are prohibited from using them!
 */
-bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_t *url, const ipc_payload_t *payload,
+bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
                         ipc_client_rpc_func_t callback, void *arg, const struct timespec *timeout, void *arg_ex)
 {
     size_t len;
@@ -948,9 +947,9 @@ bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_t *url, const ipc_p
         seqno = ipc_client_prepare_seqno(client);
     }
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
-    ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_RPC, 0, seqno);
+    ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_RPC_REQUEST, 0, seqno);
 
     if (!ipc_client_sendmsg(client, ipc_hdr, url, payload)) {
         goto    error;
@@ -961,12 +960,12 @@ bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_t *url, const ipc_p
         client->rpc_pending++;
     }
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     return  (true);
 
 error:
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     if (pendq) {
         ipc_client_pendq_free(client, pendq);
@@ -978,7 +977,7 @@ error:
 /*
 * RPC call
 */
-bool ipc_client_call (ipc_client_t *client, const ipc_url_t *url, const ipc_payload_t *payload,
+bool ipc_client_call (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
                     ipc_client_rpc_func_t callback, void *arg, const struct timespec *timeout)
 {
     return  (ipc_client_call_ex(client, url, payload, callback, arg, timeout, NULL));
@@ -987,7 +986,7 @@ bool ipc_client_call (ipc_client_t *client, const ipc_url_t *url, const ipc_payl
 /*
 * Send datagram to server
 */
-bool ipc_client_datagram (ipc_client_t *client, const ipc_url_t *url, const ipc_payload_t *payload)
+bool ipc_client_datagram (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
     bool ret;
     size_t len;
@@ -1003,18 +1002,18 @@ bool ipc_client_datagram (ipc_client_t *client, const ipc_url_t *url, const ipc_
         return  (false);
     }
 
-    ipc_mutex_lock(&client->lock);
+    ssn_mutex_lock(&client->lock);
 
-    ipc_hdr = ipc_parser_init_header(client->sendbuf, IPC_TYPE_DATAGRAM, 0, 0);
+    ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_DATAGRAM, 0, 0);
 
     ret = ipc_client_sendmsg(client, ipc_hdr, url, payload);
 
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     return  (ret);
 
 error:
-    ipc_mutex_unlock(&client->lock);
+    ssn_mutex_unlock(&client->lock);
 
     return  (false);
 }

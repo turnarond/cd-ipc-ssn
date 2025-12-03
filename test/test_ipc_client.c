@@ -1,4 +1,4 @@
-#include "ipc_parser.h"
+#include "ipc_protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,14 +10,12 @@
 #include <arpa/inet.h>
 #include "ipc_client.h"
 
-#define MY_SERVER_PASSWD "123456"
-
 static ipc_client_t *client;
 
-static void on_command_light (void *arg, struct ipc_client *client, ipc_header_t *vsoa_hdr, ipc_payload_t *payload)
+static void on_command_light (void *arg, struct ipc_client *client, ipc_header_t *vsoa_hdr, ipc_payload_ref_t *payload)
 {
     if (vsoa_hdr) {
-        printf("On asynchronous RPC reply, payload: %.*s\n", (int)payload->data_len, (char*)payload->data);
+        printf("On asynchronous RPC reply, payload: %.*s\n", (int)payload->length, (char*)payload->data);
     } else {
         fprintf(stderr, "VSOA server /light reply timeout!\n");
     }
@@ -61,7 +59,7 @@ int main (int argc, char **argv)
             }
         }
 
-        ipc_url_t url;
+        ipc_url_ref_t url;
         url.url     = "/light";
         url.url_len = strlen(url.url);
         int ret = ipc_client_call(client, &url, NULL, on_command_light, NULL, NULL);

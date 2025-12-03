@@ -9,7 +9,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/un.h>
-#include "ipc_parser.h"
+#include "ipc_protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,11 +37,11 @@ typedef void (*ipc_on_connect_t)(ipc_server_t *server, cli_id_t id, bool connect
  * NOTICE: Can not remove listener in callback
  *         `ipc_hdr`, `url` and `payload` are invalid when this function returns */
 typedef void (*ipc_rpc_handler_t)(ipc_server_t *server, cli_id_t id, ipc_header_t *ipc_hdr, 
-                                    ipc_url_t *url, ipc_payload_t *payload, void *arg);
+                                    ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
 
 /* Server on datagram callback */
 typedef void (*ipc_datagram_handler_t)(ipc_server_t *server, cli_id_t id,
-                                       ipc_url_t *url, ipc_payload_t *payload, void *arg);
+                                       ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
 
 /* Lifecycle */
 ipc_server_t *ipc_server_create(const char* server_info);
@@ -61,10 +61,10 @@ void ipc_server_set_datagram_handler(ipc_server_t *server, ipc_datagram_handler_
 
 /* RPC Registeation*/
 bool ipc_server_add_method(ipc_server_t *server,
-                              const ipc_url_t *url, ipc_rpc_handler_t callback, void *arg);
-void ipc_server_remove_method(ipc_server_t *server, const ipc_url_t *url);
+                              const ipc_url_ref_t *url, ipc_rpc_handler_t callback, void *arg);
+void ipc_server_remove_method(ipc_server_t *server, const ipc_url_ref_t *url);
 bool ipc_server_response(ipc_server_t *server, cli_id_t id,
-                           uint8_t status, uint16_t seqno, const ipc_payload_t *payload);
+                           uint8_t status, uint16_t seqno, const ipc_payload_ref_t *payload);
 
 /* Connection Management */
 int ipc_server_peer_count(ipc_server_t *server);
@@ -76,11 +76,11 @@ bool ipc_server_address(ipc_server_t *server, struct sockaddr *addr, socklen_t *
 bool ipc_server_peer_address(ipc_server_t *server, cli_id_t id, struct sockaddr *addr, socklen_t *namelen);
 
 /* Publish Management */
-bool ipc_server_is_subscribed(ipc_server_t *server, const ipc_url_t *url);
-bool ipc_server_publish(ipc_server_t *server, const ipc_url_t *url, const ipc_payload_t *payload);
+bool ipc_server_is_subscribed(ipc_server_t *server, const ipc_url_ref_t *url);
+bool ipc_server_publish(ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
 
 /* IPC server send datagram */
-bool ipc_server_datagram(ipc_server_t *server, cli_id_t id, const ipc_url_t *url, const ipc_payload_t *payload);
+bool ipc_server_datagram(ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
 
 #ifdef __cplusplus
 }

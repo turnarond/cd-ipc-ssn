@@ -19,14 +19,14 @@ static ipc_server_t *server;
 * /light Callback
 */
 static void command_light (void *arg, ipc_server_t *server, cli_id_t cid,
-                           ipc_header_t *ipc_hdr, ipc_url_t *url,
-                           ipc_payload_t *payload)
+                           ipc_header_t *ipc_hdr, ipc_url_ref_t *url,
+                           ipc_payload_ref_t *payload)
 {
-    ipc_payload_t send;
-    uint16_t seqno = ipc_parser_get_seqno(ipc_hdr);
+    ipc_payload_ref_t send;
+    uint16_t seqno = ipc_get_seqno(ipc_hdr);
 
     send.data      = "command light";
-    send.data_len  = 13;
+    send.length  = 13;
     printf("in command_light\r\n");
     ipc_server_response(server, cid, 0, seqno, &send);
 }
@@ -57,7 +57,7 @@ int main (int argc, char **argv)
     /*
     * Add /light listener
     */
-    ipc_url_t url;
+    ipc_url_ref_t url;
     url.url     = "/light";
     url.url_len = strlen(url.url);
     ipc_server_add_method(server, &url, command_light, NULL);

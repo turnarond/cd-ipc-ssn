@@ -9,7 +9,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/un.h>
-#include "ipc_parser.h"
+#include "ipc_protocol.h"
 
 /* Client timer period (ms) */
 #define IPC_CLIENT_TIMER_PERIOD  10
@@ -31,17 +31,17 @@ struct ipc_client;
 typedef struct ipc_client ipc_client_t;
 
 /* Client on message callback (received subscribed messages) */
-typedef void (*ipc_client_msg_func_t)(void *arg, ipc_client_t *client, ipc_url_t *url, ipc_payload_t *payload);
+typedef void (*ipc_client_msg_func_t)(void *arg, ipc_client_t *client, ipc_url_ref_t *url, ipc_payload_ref_t *payload);
 
 /* Client RPC callback (`ipc_hdr` NULL means server not responding)
  * The memory pointed to by `ipc_hdr` and `payload` will be invalidated when the callback function returns */
-typedef void (*ipc_client_rpc_func_t)(void *arg, ipc_client_t *client, ipc_header_t *ipc_hdr, ipc_payload_t *payload);
+typedef void (*ipc_client_rpc_func_t)(void *arg, ipc_client_t *client, ipc_header_t *ipc_hdr, ipc_payload_ref_t *payload);
 
 /* Client subscribe, unsubscribe and ping callback */
 typedef void (*ipc_client_res_func_t)(void *arg, ipc_client_t *client, bool success);
 
 /* Client on datagram callback same as on message */
-typedef void (*ipc_client_dat_func_t)(void *arg, ipc_client_t *client, ipc_url_t *url, ipc_payload_t *payload);
+typedef void (*ipc_client_dat_func_t)(void *arg, ipc_client_t *client, ipc_url_ref_t *url, ipc_payload_ref_t *payload);
 
 /* Create IPC client 
  * Warning: This function must be mutually exclusive with the ipc_client_close() call */
@@ -69,22 +69,22 @@ bool ipc_client_send_timeout(ipc_client_t *client, const struct timespec *timeou
 int ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms);
 
 /* Subscribe URL */
-bool ipc_client_subscribe(ipc_client_t *client, const ipc_url_t *url,
+bool ipc_client_subscribe(ipc_client_t *client, const ipc_url_ref_t *url,
                            ipc_client_res_func_t callback, void *arg, const struct timespec *timeout);
 
 /* Unsubscribe URL */
-bool ipc_client_unsubscribe(ipc_client_t *client, const ipc_url_t *url,
+bool ipc_client_unsubscribe(ipc_client_t *client, const ipc_url_ref_t *url,
                              ipc_client_res_func_t callback, void *arg, const struct timespec *timeout);
 
 /* RPC call
  * This function is an asynchronous RPC call.
  * If you need a synchronous RPC call,
  * you can use RPC call synchronization extension interface. */
-bool ipc_client_call(ipc_client_t *client, const ipc_url_t *url, const ipc_payload_t *payload,
+bool ipc_client_call(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
                       ipc_client_rpc_func_t callback, void *arg, const struct timespec *timeout);
 
 /* Send datagram to server */
-bool ipc_client_datagram(ipc_client_t *client, const ipc_url_t *url, const ipc_payload_t *payload);
+bool ipc_client_datagram(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
 
 /* IPC client set on datagram callback */
 void ipc_client_set_on_datagram(ipc_client_t *client, ipc_client_dat_func_t callback, void *arg);
