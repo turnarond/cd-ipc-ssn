@@ -20,7 +20,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 /* ==================== Platform Detection ==================== */
 #if defined(_WIN32)
     #define IPC_PLATFORM_WINDOWS 1
@@ -50,7 +49,6 @@ extern "C" {
 #endif
 
 /* ==================== Types ==================== */
-
 // Opaque handles (hide implementation)
 typedef struct ipc_mutex     ipc_mutex_t;
 typedef struct ipc_spinlock  ipc_spinlock_t;

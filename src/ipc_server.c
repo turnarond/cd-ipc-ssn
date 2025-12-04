@@ -1,7 +1,6 @@
 /*
  * IPC server
  */
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -15,7 +14,7 @@
 #include "ipc_list.h"
 #include "ipc_server.h"
 #include "ipc_protocol.h"
-#include "ipc_platform.h"
+#include "ipc_global.h"
 
 /* Client hash */
 #define IPC_CLI_HASH_SIZE  64
@@ -80,12 +79,12 @@ struct ipc_server {
     void *darg;
     ipc_on_connect_t oncli;
     void *carg;
-    ipc_mutex_t lock;
-    struct timeval send_timeout;
+    ipc_mutex_t *lock;
+    int send_timeout;
     int handshake_timeout;
     int keepalive_timeout;
     int sock;
-    int evtfd[2];
+    ipc_event_pair_t *evtfd;
     void *sendbuf;
     void *recvbuf;
 };
@@ -104,15 +103,10 @@ struct input_arg {
 /* Server timer period (ms) */
 #define IPC_SERVER_TIMER_PERIOD  100
 
-/* Server list lock, header, timer thread */
-static ipc_thread_t  ipc_server_timer;
-static ipc_server_t *ipc_server_list = NULL;
-static ipc_mutex_t   ipc_server_lock = SSN_MUTEX_INITIALIZER;
-
 /*
  * Server timer thread handle
  */
-static void *ipc_server_timer_handle (void *arg)
+void *ipc_server_timer_handle (void *arg)
 {
     bool emit;
     ipc_server_t *server;
@@ -121,23 +115,23 @@ static void *ipc_server_timer_handle (void *arg)
     (void)arg;
 
     do {
-        ssn_thread_msleep(IPC_SERVER_TIMER_PERIOD);
+        ipc_thread_msleep(IPC_SERVER_TIMER_PERIOD);
 
-        ssn_mutex_lock(&ipc_server_lock);
+        ipc_mutex_lock(g_ipc_server_lock);
 
-        if (!ipc_server_list) {
-            ssn_mutex_unlock(&ipc_server_lock);
+        if (!g_ipc_server_list) {
+            ipc_mutex_unlock(g_ipc_server_lock);
             break;
         }
 
-        LIST_FOREACH(server, ipc_server_list) {
+        LIST_FOREACH(server, g_ipc_server_list) {
             if (!server->hst_h) {
                 continue;
             }
 
             emit = false;
 
-            ssn_mutex_lock(&server->lock);
+            ipc_mutex_lock(server->lock);
 
             LIST_FOREACH(hst, server->hst_h) {
                 if (hst->alive <= IPC_SERVER_TIMER_PERIOD) {
@@ -148,18 +142,18 @@ static void *ipc_server_timer_handle (void *arg)
                 }
             }
 
-            ssn_mutex_unlock(&server->lock);
+            ipc_mutex_unlock(server->lock);
 
             if (emit) {
-                ipc_event_pair_signal(server->evtfd[1]);
+                ipc_event_pair_signal(server->evtfd);
             }
         }
 
-        ssn_mutex_unlock(&ipc_server_lock);
+        ipc_mutex_unlock(g_ipc_server_lock);
 
     } while (true);
 
-    ssn_thread_exit();
+    ipc_thread_exit();
 
     return  (NULL);
 }
@@ -223,13 +217,6 @@ static void ipc_server_cli_init (ipc_server_t *server, ipc_server_cli_t *cli)
 
     cli->hst.alive = server->handshake_timeout;
     INSERT_TO_HEADER(&cli->hst, server->hst_h);
-
-#ifndef IPC_INHERIT_NODELAY
-    {
-        int en = 1;
-        setsockopt(cli->sock, IPPROTO_TCP, TCP_NODELAY, (const void *)&en, sizeof(int));
-    }
-#endif
 }
 
 /*
@@ -252,7 +239,7 @@ static void ipc_server_cli_destroy (ipc_server_t *server, ipc_server_cli_t *cli)
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
 
-    close_socket(cli->sock);
+    ipc_socket_close(cli->sock);
     free(cli);
 }
 
@@ -268,17 +255,17 @@ bool ipc_server_peer_close (ipc_server_t *server, cli_id_t id)
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (cli) {
-        shutdown_socket(cli->sock);
+        ipc_socket_shutdown(cli->sock);
         ret = true;
     } else {
         ret = false;
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (ret);
 }
@@ -328,7 +315,7 @@ static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr,
     len = sendmsg(cli->sock, &msg, 0); 
 
     if (len < 0) {
-        shutdown_socket(cli->sock);
+        ipc_socket_shutdown(cli->sock);
         return false;
     }
     return true;
@@ -371,11 +358,11 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
 
     server->sock   = -1;
 
-    if (ssn_mutex_init(&server->lock)) {
+    if (ipc_mutex_init(&server->lock)) {
         goto    error;
     }
 
-    if (!ipc_event_pair_create(server->evtfd)) {
+    if (ipc_event_pair_create(&server->evtfd) != 0) {
         goto    error;
     }
 
@@ -385,33 +372,28 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
     }
 
     if (opts) {
-        server->send_timeout.tv_sec = opts->send_timeout_ms / 1000;
-        server->send_timeout.tv_usec = (opts->send_timeout_ms % 1000) * 1000000LL;
+        server->send_timeout = opts->send_timeout_ms;
         server->handshake_timeout = opts->idle_timeout_sec;
         server->keepalive_timeout = opts->conn_timeout_ms;
+        if(opts->ifname[0]) {
+            strncpy(server->ifname, opts->ifname, strlen(opts->ifname));
+        }
     }
     server->recvbuf      = (uint8_t *)server->sendbuf + IPC_MAX_PACKET_SIZE;
     server->valid        = true;
 
-    ssn_mutex_lock(&ipc_server_lock);
+    ipc_mutex_lock(g_ipc_server_lock);
 
-    if (ipc_server_list == NULL) {
-        if (ssn_thread_create(&ipc_server_timer, ipc_server_timer_handle, NULL)) {
-            ssn_mutex_unlock(&ipc_server_lock);
-            goto    error;
-        }
-    }
+    INSERT_TO_HEADER(server, g_ipc_server_list);
 
-    INSERT_TO_HEADER(server, ipc_server_list);
-
-    ssn_mutex_unlock(&ipc_server_lock);
+    ipc_mutex_unlock(g_ipc_server_lock);
 
     return  (server);
 
 error:
     if (server->sendbuf) free(server->sendbuf);
-    if (server->evtfd[0] >= 0) ipc_event_pair_close(server->evtfd);
-    ssn_mutex_destroy(&server->lock);
+    if (server->evtfd) ipc_event_pair_destroy(server->evtfd);
+    ipc_mutex_destroy(server->lock);
     free(server);
     return NULL;
 }
@@ -438,14 +420,12 @@ bool ipc_server_start (ipc_server_t *server, const char* ipc_path)
         return  (false);
     }
 
-    server->sock = create_socket(AF_UNIX, SOCK_STREAM, 0, false);
+    server->sock = ipc_socket_create(AF_UNIX, SOCK_STREAM, 0, false);
     if (server->sock < 0) {
         return  (false);
     }
 
     setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, (const void *)&en, sizeof(int));
-    // setsockopt for AF_INET/AF_INET6
-    // setsockopt(server->sock, IPPROTO_TCP, TCP_NODELAY, (const void *)&en, sizeof(int));
 
     if (strlen(ipc_path) > sizeof(addr.sun_path)) {
         fprintf(stderr, "Invalid ipc path\r\n");
@@ -455,14 +435,12 @@ bool ipc_server_start (ipc_server_t *server, const char* ipc_path)
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, ipc_path);
 
-    //清理旧的连接
-    unlink(addr.sun_path);
     if (bind(server->sock, (struct sockaddr *)&addr, SUN_LEN(&addr))) {
         goto    error;
     }
 
     if (server->ifname[0]) {
-        ipc_socket_bindif(server->sock, server->ifname);
+        ipc_socket_bind_to_interface(server->sock, server->ifname);
     }
 
     listen(server->sock, IPC_SERVER_BACKLOG);
@@ -471,7 +449,7 @@ bool ipc_server_start (ipc_server_t *server, const char* ipc_path)
 
 error:
     if (server->sock >= 0) {
-        close_socket(server->sock);
+        ipc_socket_close(server->sock);
         server->sock = -1;
     }
 
@@ -495,37 +473,12 @@ bool ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t 
 }
 
 /*
- * Bind IPC server to specified network interface
- */
-static bool ipc_server_bind_if (ipc_server_t *server, const char *ifname)
-{
-    bool ret;
-
-    if (!server || !server->valid) {
-        return  (false);
-    }
-    if (!ifname || strlen(ifname) >= IF_NAMESIZE) {
-        return  (false);
-    }
-
-    strcpy(server->ifname, ifname);
-    ret = true;
-
-    if (server->sock >= 0 && !ipc_socket_bindif(server->sock, ifname)) {
-        ret = false;
-    }
-
-    return  (ret);
-}
-
-/*
  * Close IPC server
  * Warning: This function must be mutually exclusive with the ipc_server_create() call
  */
 void ipc_server_destroy (ipc_server_t *server)
 {
     int i;
-    bool wait_thread_quit = false;
     ipc_server_cli_t *cli, *cli_temp;
     ipc_server_cmd_t *cmd, *cmd_temp;
 
@@ -533,30 +486,23 @@ void ipc_server_destroy (ipc_server_t *server)
         return;
     }
 
-    ssn_mutex_lock(&ipc_server_lock);
+    ipc_mutex_lock(g_ipc_server_lock);
 
-    DELETE_FROM_LIST(server, ipc_server_list);
-    if (ipc_server_list == NULL) {
-        wait_thread_quit = true;
-    }
+    DELETE_FROM_LIST(server, g_ipc_server_list);
 
-    ssn_mutex_unlock(&ipc_server_lock);
+    ipc_mutex_unlock(g_ipc_server_lock);
 
-    if (wait_thread_quit) {
-        ssn_thread_wait(&ipc_server_timer);
-    }
-
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     server->valid = false;
-    memory_barrier();
+    ipc_memory_barrier();
 
     if (server->sock >= 0) {
-        close_socket(server->sock);
+        ipc_socket_close(server->sock);
         server->sock = -1;
     }
 
-    ipc_event_pair_close(server->evtfd);
+    ipc_event_pair_destroy(server->evtfd);
     free(server->sendbuf);
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
@@ -581,8 +527,8 @@ void ipc_server_destroy (ipc_server_t *server)
         free(server->def_cmd);
     }
 
-    ssn_mutex_unlock(&server->lock);
-    ssn_mutex_destroy(&server->lock);
+    ipc_mutex_unlock(server->lock);
+    ipc_mutex_destroy(server->lock);
     free(server);
 }
 
@@ -609,7 +555,7 @@ int ipc_server_peer_count (ipc_server_t *server)
         return  (0);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
         LIST_FOREACH(cli, server->clis[i]) {
@@ -619,7 +565,7 @@ int ipc_server_peer_count (ipc_server_t *server)
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (cnt);
 }
@@ -639,7 +585,7 @@ bool ipc_server_is_subscribed (ipc_server_t *server, const ipc_url_ref_t *url)
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
         LIST_FOREACH(cli, server->clis[i]) {
@@ -647,13 +593,13 @@ bool ipc_server_is_subscribed (ipc_server_t *server, const ipc_url_ref_t *url)
                 continue;
             }
             if (ipc_server_cli_sub_match(cli, url)) {
-                ssn_mutex_unlock(&server->lock);
+                ipc_mutex_unlock(server->lock);
                 return  (true);
             }
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (false);
 }
@@ -675,7 +621,7 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     ipc_hdr = ipc_create_header(server->sendbuf, IPC_MSG_TYPE_PUBLISH, 0, 0);
 
@@ -690,7 +636,7 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (true);
 }
@@ -741,7 +687,7 @@ bool ipc_server_add_method (ipc_server_t *server,
     memcpy(cmd->url, url->url, path_len);
     cmd->url[path_len] = '\0';
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     if (def) {
         need_free = server->def_cmd;
@@ -756,7 +702,7 @@ bool ipc_server_add_method (ipc_server_t *server,
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     if (need_free) {
         free(need_free);
@@ -791,7 +737,7 @@ void ipc_server_remove_method (ipc_server_t *server, const ipc_url_ref_t *url)
         path_len = url->url_len;
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     if (def) {
         cmd = server->def_cmd;
@@ -813,7 +759,7 @@ void ipc_server_remove_method (ipc_server_t *server, const ipc_url_ref_t *url)
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     if (cmd) {
         free(cmd);
@@ -831,15 +777,15 @@ bool ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (!cli || getpeername(cli->sock, addr, namelen)) {
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         return  (false);
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (true);
 }
@@ -858,11 +804,11 @@ bool ipc_server_response (ipc_server_t *server, cli_id_t id,
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (!cli) {
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         return  (false);
     }
 
@@ -870,7 +816,7 @@ bool ipc_server_response (ipc_server_t *server, cli_id_t id,
 
     ret = ipc_server_cli_sendmsg(cli, ipc_hdr, NULL, payload);
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (ret);
 }
@@ -891,26 +837,17 @@ bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (!cli) {
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         return  (false);
     }
 
     setsockopt(cli->sock, SOL_SOCKET, SO_KEEPALIVE, (const void *)&en, sizeof(int));
 
-#if !defined(__QNX__)
-    if (keepalive > 0) {
-        idle = keepalive;
-    }
-    setsockopt(cli->sock, IPPROTO_TCP, TCP_KEEPIDLE, (const void *)&idle, sizeof(int));
-    setsockopt(cli->sock, IPPROTO_TCP, TCP_KEEPINTVL, (const void *)&idle, sizeof(int));
-    setsockopt(cli->sock, IPPROTO_TCP, TCP_KEEPCNT, (const void *)&count, sizeof(int));
-#endif /*!__QNX__ */
-
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (true);
 }
@@ -929,7 +866,7 @@ int ipc_server_peer_list (ipc_server_t *server, cli_id_t ids[], int max_cnt)
 
     cnt = 0;
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
         LIST_FOREACH(cli, server->clis[i]) {
@@ -941,7 +878,7 @@ int ipc_server_peer_list (ipc_server_t *server, cli_id_t ids[], int max_cnt)
     }
 
 out:
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (cnt);
 }
@@ -949,30 +886,29 @@ out:
 /*
  * IPC server set send packet to client timeout, NULL means send wait forever when congested.
  */
-bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, const struct timespec *timeout)
+bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout_ms)
 {
-    struct timeval timeval;
+    int timeval;
     ipc_server_cli_t *cli;
 
     if (!server || !server->valid) {
         return  (false);
     }
 
-    if (timeout) {
-        timeval.tv_sec  = timeout->tv_sec;
-        timeval.tv_usec = timeout->tv_nsec / 1000;
+    if (timeout_ms > 0) {
+        timeval = timeout_ms;
     } else {
         timeval = server->send_timeout;
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (cli) {
-        ipc_socket_sndto(cli->sock, &timeval);
+        ipc_socket_set_send_timeout(cli->sock, timeval);
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (cli ? true : false);
 }
@@ -997,11 +933,11 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_ur
         return  (false);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
     if (!cli) {
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         return  (false);
     }
 
@@ -1009,7 +945,7 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_ur
 
     ret = ipc_server_cli_sendmsg(cli, ipc_hdr, url, payload);
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (ret);
 }
@@ -1048,12 +984,13 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
     FD_SET(server->sock, rfds);
     max_fd = server->sock;
 
-    FD_SET(server->evtfd[0], rfds);
-    if (max_fd < server->evtfd[0]) {
-        max_fd = server->evtfd[0];
+    int ev_fd = ipc_event_pair_get_read_fd(server->evtfd);
+    FD_SET(ev_fd, rfds);
+    if (max_fd < ev_fd) {
+        max_fd = ev_fd;
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
         LIST_FOREACH(cli, server->clis[i]) {
@@ -1064,7 +1001,7 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
         }
     }
 
-    ssn_mutex_unlock(&server->lock);
+    ipc_mutex_unlock(server->lock);
 
     return  (max_fd);
 }
@@ -1130,7 +1067,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
         return  (server->valid);
     }
 
-    ssn_mutex_lock(&server->lock);
+    ipc_mutex_lock(server->lock);
 
     switch (ipc_hdr->msg_type) {
 
@@ -1144,7 +1081,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
             cli->hst.alive = 0;
             DELETE_FROM_LIST(&cli->hst, server->hst_h);
         }
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         if (!cli->onconn) {
             cli->onconn = true;
             if (server->oncli) {
@@ -1158,17 +1095,17 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
             cmd = ipc_server_cmd_match(server, &url);
             if (cmd) {
                 callback = cmd->onrpc;
-                ssn_mutex_unlock(&server->lock);
+                ipc_mutex_unlock(server->lock);
                 callback(server, cli->id, ipc_hdr, &url, &payload, cmd->arg);
             } else {
                 send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_STATUS_BAD_URL, seqno);
                 ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-                ssn_mutex_unlock(&server->lock);
+                ipc_mutex_unlock(server->lock);
             }
         } else {
             send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_STATUS_INVALID_ARGS, seqno);
             ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-            ssn_mutex_unlock(&server->lock);
+            ipc_mutex_unlock(server->lock);
         }
         break;
 
@@ -1198,7 +1135,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
         }
         send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
         ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         break;
 
     case IPC_MSG_TYPE_UNSUBSCRIBE:
@@ -1221,17 +1158,17 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
         }
         send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
         ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         break;
 
     case IPC_MSG_TYPE_PING_ECHO:
         send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
         ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         break;
 
     default:
-        ssn_mutex_unlock(&server->lock);
+        ipc_mutex_unlock(server->lock);
         break;
     }
 
@@ -1277,11 +1214,11 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
                         }
                     }
 
-                    ssn_mutex_lock(&server->lock);
+                    ipc_mutex_lock(server->lock);
 
                     ipc_server_cli_destroy(server, cli);
 
-                    ssn_mutex_unlock(&server->lock);
+                    ipc_mutex_unlock(server->lock);
                 }
             }
         }
@@ -1303,33 +1240,32 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
                 cli->active = false;
                 /* TODO: deal with init recv buffer. */
                 ipc_stream_init(&cli->recv);
-                ipc_socket_sndto(sock, &server->send_timeout);
+                ipc_socket_set_send_timeout(sock, server->send_timeout);
 
-                ssn_mutex_lock(&server->lock);
+                ipc_mutex_lock(server->lock);
                 ipc_server_cli_init(server, cli);
-                ssn_mutex_unlock(&server->lock);
+                ipc_mutex_unlock(server->lock);
 
             } else {
-                close_socket(sock);
+                ipc_socket_close(sock);
             }
         }
     }
 
-    if (FD_ISSET(server->evtfd[0], rfds)) {
-        while (ipc_event_pair_fetch(server->evtfd[0]) > 0) {
-            ssn_mutex_lock(&server->lock);
+    if (FD_ISSET(ipc_event_pair_get_read_fd(server->evtfd), rfds)) {
+        ipc_event_pair_drain(server->evtfd);
+        ipc_mutex_lock(server->lock);
 
-            LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
-                if (hst->alive == 0) {
-                    DELETE_FROM_LIST(hst, server->hst_h);
+        LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
+            if (hst->alive == 0) {
+                DELETE_FROM_LIST(hst, server->hst_h);
 
-                    cli = (ipc_server_cli_t *)((char *)hst - offsetof(ipc_server_cli_t, hst));
-                    shutdown_socket(cli->sock);
-                }
+                cli = (ipc_server_cli_t *)((char *)hst - offsetof(ipc_server_cli_t, hst));
+                ipc_socket_shutdown(cli->sock);
             }
-
-            ssn_mutex_unlock(&server->lock);
         }
+
+        ipc_mutex_unlock(server->lock);
     }
 }
 

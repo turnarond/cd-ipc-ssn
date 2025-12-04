@@ -47,17 +47,7 @@ int main (int argc, char **argv)
     }
 
     while (1) {
-        FD_ZERO(&fds);
-        max_fd = ipc_client_fds(client, &fds);
-
-        cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, NULL);
-        if (cnt > 0) {
-            if (!ipc_client_process_events(client, &fds)) {
-                ipc_client_close(client);
-                fprintf(stderr, "Connection lost!\n");
-                return  (-1);
-            }
-        }
+        ipc_client_poll(client, 1000);
 
         ipc_url_ref_t url;
         url.url     = "/light";

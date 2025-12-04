@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "ipc_server.h"
-#include "ipc_platform.h"
+#include "vsi/ipc_platform.h"
 
 #include <errno.h>
 
@@ -18,9 +18,9 @@ static ipc_server_t *server;
 /*
 * /light Callback
 */
-static void command_light (void *arg, ipc_server_t *server, cli_id_t cid,
+static void command_light (ipc_server_t *server, cli_id_t cid,
                            ipc_header_t *ipc_hdr, ipc_url_ref_t *url,
-                           ipc_payload_ref_t *payload)
+                           ipc_payload_ref_t *payload, void *arg)
 {
     ipc_payload_ref_t send;
     uint16_t seqno = ipc_get_seqno(ipc_hdr);

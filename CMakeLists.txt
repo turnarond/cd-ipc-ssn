@@ -15,9 +15,15 @@ link_directories(
 )
 
 add_library(${PROJECT_NAME} SHARED
+    src/vsi/ipc_event.c
+    src/vsi/ipc_mutex.c
+    src/vsi/ipc_platform.c
+    src/vsi/ipc_socket.c
+    src/vsi/ipc_thread.c
+    src/ipc_global.c
     src/ipc_client.c
     src/ipc_server.c
-    src/ipc_parser.c
+    src/ipc_protocol.c
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -33,7 +39,7 @@ install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_client.h"
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_server.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_parser.h"
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_protocol.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_cliauto.h"

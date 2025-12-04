@@ -1,17 +1,18 @@
 #include "ipc_platform.h"
 #include <stdlib.h>
 
+// ===== Mutex =====
 #ifdef IPC_PLATFORM_WINDOWS
     #include <windows.h>
     struct ipc_mutex { CRITICAL_SECTION cs; };
-    struct ipc_spinlock { CRITICAL_SECTION cs; }; // Windows: no true spinlock in user mode
+    struct ipc_spinlock { CRITICAL_SECTION cs; };
+    struct ipc_thread { HANDLE handle; };
 #else
     #include <pthread.h>
     struct ipc_mutex { pthread_mutex_t mtx; };
     struct ipc_spinlock { pthread_spinlock_t lock; };
+    struct ipc_thread { pthread_t tid; };
 #endif
-
-// ===== Mutex =====
 int ipc_mutex_init(ipc_mutex_t **out)
 {
     ipc_mutex_t *m = malloc(sizeof(ipc_mutex_t));

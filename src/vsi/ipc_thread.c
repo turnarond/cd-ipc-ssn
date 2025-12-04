@@ -6,9 +6,9 @@
     struct ipc_thread { HANDLE handle; };
 #else
     #include <pthread.h>
+    #include <unistd.h>
     struct ipc_thread { pthread_t tid; };
 #endif
-
 int ipc_thread_create(ipc_thread_t **out, void *(*func)(void *), void *arg)
 {
     ipc_thread_t *thr = malloc(sizeof(ipc_thread_t));

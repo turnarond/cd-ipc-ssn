@@ -10,6 +10,7 @@
 #include <sys/select.h>
 #include <sys/un.h>
 #include "ipc_protocol.h"
+#include "ipc_global.h"
 
 /* Client timer period (ms) */
 #define IPC_CLIENT_TIMER_PERIOD  10
@@ -23,12 +24,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Structure declaration */
-struct ipc_client;
-
-/* Client type */
-typedef struct ipc_client ipc_client_t;
 
 /* Client on message callback (received subscribed messages) */
 typedef void (*ipc_client_msg_func_t)(void *arg, ipc_client_t *client, ipc_url_ref_t *url, ipc_payload_ref_t *payload);
@@ -64,7 +59,7 @@ bool ipc_client_is_connect(ipc_client_t *client);
 
 /* IPC client send timeout
  * `timeout` NULL means use IPC_CLIENT_DEF_SEND_TIMEOUT */
-bool ipc_client_send_timeout(ipc_client_t *client, const struct timespec *timeout);
+bool ipc_client_send_timeout(ipc_client_t *client, const int timeout_ms);
 
 int ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms);
 

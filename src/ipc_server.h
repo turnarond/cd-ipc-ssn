@@ -10,16 +10,11 @@
 #include <sys/select.h>
 #include <sys/un.h>
 #include "ipc_protocol.h"
+#include "ipc_global.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Structure declaration */
-struct ipc_server;
-
-/* Server type */
-typedef struct ipc_server ipc_server_t;
 
 /* Remote client ID */
 typedef uint32_t  cli_id_t;
@@ -28,6 +23,7 @@ typedef struct {
     uint64_t send_timeout_ms;     // 默认 100
     uint64_t conn_timeout_ms;     // 默认 5000
     uint64_t idle_timeout_sec;    // 默认 10
+    char ifname[IF_NAMESIZE];     // 指定绑定的硬件接口名
 } server_options_t;
 
 /* Server on client connect or lost callback */
