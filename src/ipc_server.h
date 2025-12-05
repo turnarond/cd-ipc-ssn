@@ -20,9 +20,9 @@ extern "C" {
 typedef uint32_t  cli_id_t;
 
 typedef struct {
-    uint64_t send_timeout_ms;     // 默认 100
-    uint64_t conn_timeout_ms;     // 默认 5000
-    uint64_t idle_timeout_sec;    // 默认 10
+    uint64_t send_timeout_ms; 
+    uint64_t conn_timeout_ms; 
+    uint64_t idle_timeout_sec;
     char ifname[IF_NAMESIZE];     // 指定绑定的硬件接口名
 } server_options_t;
 
@@ -45,7 +45,7 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
 void ipc_server_destroy(ipc_server_t *server);
 
 /* Start IPC server */
-bool ipc_server_start(ipc_server_t *server, const char* ipc_path);
+bool ipc_server_start(ipc_server_t *server);
 
 /* Event Loop */
 int ipc_server_poll(ipc_server_t *server, int timeout_ms);

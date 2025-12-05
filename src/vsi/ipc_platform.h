@@ -36,6 +36,10 @@ extern "C" {
     #define IF_NAMESIZE 16
 #endif
 
+#ifndef SRV_NAME_LEN
+    #define SRV_NAME_LEN 64
+#endif
+
 #define IPC_SERVER_BACKLOG              32
 #define IPC_SERVER_DEF_SEND_TIMEOUT     100      // ms
 #define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT 5000   // ms

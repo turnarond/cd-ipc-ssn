@@ -63,6 +63,8 @@ bool ipc_client_send_timeout(ipc_client_t *client, const int timeout_ms);
 
 int ipc_client_poll(ipc_client_t *client, uint64_t timeout_ms);
 
+void ipc_client_run(ipc_client_t *client);
+
 /* Subscribe URL */
 bool ipc_client_subscribe(ipc_client_t *client, const ipc_url_ref_t *url,
                            ipc_client_res_func_t callback, void *arg, const struct timespec *timeout);

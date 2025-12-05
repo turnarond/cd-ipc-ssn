@@ -4,6 +4,12 @@ project(lwipcssn)
 
 set(CMAKE_CXX_STANDARD 11)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_definitions(IPC_LOG_LEVEL=0)   # DEBUG
+else()
+    add_definitions(NDEBUG)
+endif()
+
 include_directories(
     ${LW_INCLUDE_DIR}
     ${LW_INCLUDE_DIR}/libevent
@@ -20,6 +26,7 @@ add_library(${PROJECT_NAME} SHARED
     src/vsi/ipc_platform.c
     src/vsi/ipc_socket.c
     src/vsi/ipc_thread.c
+    src/util/ipc_log.c
     src/ipc_global.c
     src/ipc_client.c
     src/ipc_server.c

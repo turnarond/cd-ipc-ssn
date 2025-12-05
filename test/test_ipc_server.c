@@ -48,7 +48,7 @@ int main (int argc, char **argv)
     /*
     * Initialize server
     */
-    server = ipc_server_create("light_server");
+    server = ipc_server_create("ipc-light_server");
     if (!server) {
         fprintf(stderr, "Can not create IPC server!\n");
         return  (-1);
@@ -65,14 +65,14 @@ int main (int argc, char **argv)
     /*
     * Start server
     */
-    if (!ipc_server_start(server, "ipc-light_server")) {
+    if (!ipc_server_start(server)) {
         fprintf(stderr, "Can not start IPC server! errno is %d\n", errno);
         ipc_server_destroy(server);
         return  (-1);
     }
 
     while (1) {
-        ipc_server_poll(server, 1000);
+        ipc_server_poll(server, 10000);
     }
 
     return (0);

@@ -191,7 +191,7 @@ bool ipc_stream_feed(ipc_stream_ctx_t *recv, void *buf, size_t buf_len,
 
             // We have a complete packet
             ipc_header_t *hdr = (ipc_header_t *)recv->buffer;
-            if (!callback(arg, hdr)) {
+            if (!callback(hdr, arg)) {
                 // Callback requests stop
                 recv->cur_len = 0;
                 recv->total_len = 0;
