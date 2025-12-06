@@ -31,13 +31,13 @@ typedef void (*ipc_on_connect_t)(ipc_server_t *server, cli_id_t id, bool connect
 
 /* Server command callback
  * NOTICE: Can not remove listener in callback
- *         `ipc_hdr`, `url` and `payload` are invalid when this function returns */
-typedef void (*ipc_rpc_handler_t)(ipc_server_t *server, cli_id_t id, ipc_header_t *ipc_hdr, 
-                                    ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
+ *         `ipc_hdr`, `url` and `data` are invalid when this function returns */
+typedef void (*ipc_server_rpc_handler_t)(ipc_server_t *server, cli_id_t id, ipc_header_t *ipc_hdr, 
+                                    ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg);
 
 /* Server on message callback */
-typedef void (*ipc_message_handler_t)(ipc_server_t *server, cli_id_t id,
-                                       ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
+typedef void (*ipc_server_msg_handler_t)(ipc_server_t *server, cli_id_t id,
+                                       ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg);
 
 /* Lifecycle */
 ipc_server_t *ipc_server_create(const char* server_info);
@@ -53,14 +53,14 @@ void ipc_server_run(ipc_server_t *server);
 
 /* Callback Setup */
 void ipc_server_set_connect_handler(ipc_server_t *server, ipc_on_connect_t oncli, void *arg);
-void ipc_server_set_message_handler(ipc_server_t *server, ipc_message_handler_t callback, void *arg);
+void ipc_server_set_message_handler(ipc_server_t *server, ipc_server_msg_handler_t callback, void *arg);
 
 /* RPC Registeation*/
 bool ipc_server_add_method(ipc_server_t *server,
-                              const ipc_url_ref_t *url, ipc_rpc_handler_t callback, void *arg);
+                              const ipc_url_ref_t *url, ipc_server_rpc_handler_t callback, void *arg);
 void ipc_server_remove_method(ipc_server_t *server, const ipc_url_ref_t *url);
 int ipc_server_response(ipc_server_t *server, cli_id_t id,
-                           uint8_t status, uint16_t seqno, const ipc_payload_ref_t *payload);
+                           uint8_t status, uint16_t seqno, const ipc_data_ref_t *data);
 
 /* Connection Management */
 int ipc_server_peer_count(ipc_server_t *server);
@@ -73,10 +73,10 @@ int ipc_server_peer_address(ipc_server_t *server, cli_id_t id, struct sockaddr *
 
 /* Publish Management */
 bool ipc_server_is_subscribed(ipc_server_t *server, const ipc_url_ref_t *url);
-int ipc_server_publish(ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
+int ipc_server_publish(ipc_server_t *server, const ipc_url_ref_t *url, const ipc_data_ref_t *data);
 
 /* IPC server send message */
-int ipc_server_message(ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
+int ipc_server_message(ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_data_ref_t *data);
 
 #ifdef __cplusplus
 }

@@ -75,11 +75,11 @@ typedef struct {
     size_t url_len;
 } ipc_url_ref_t;
 
-/* IPC payload */
+/* IPC data */
 typedef struct {
     void *data;
     size_t length;
-} ipc_payload_ref_t;
+} ipc_data_ref_t;
 
 /* IPC packet input callback */
 typedef bool (*ipc_packet_handler_t)(ipc_header_t *ipc_hdr, void *arg);
@@ -93,8 +93,8 @@ void ipc_stream_init(ipc_stream_ctx_t *recv);
 /* Get IPC url */
 bool ipc_get_url(const ipc_header_t *ipc_hdr, ipc_url_ref_t *url);
 
-/* Get IPC payload */
-bool ipc_get_payload(const ipc_header_t *ipc_hdr, ipc_payload_ref_t *payload);
+/* Get IPC data */
+bool ipc_get_data(const ipc_header_t *ipc_hdr, ipc_data_ref_t *data);
 
 /* IPC input */
 bool ipc_stream_feed(ipc_stream_ctx_t *recv, void *buf, size_t buf_len,
@@ -122,7 +122,7 @@ static inline uint16_t ipc_get_url_length(const ipc_header_t *hdr) {
     return ntohs(hdr->url_len);
 }
 
-static inline uint32_t ipc_get_payload_length(const ipc_header_t *hdr) {
+static inline uint32_t ipc_get_data_length(const ipc_header_t *hdr) {
     return ntohl(hdr->data_len);
 }
 

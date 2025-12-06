@@ -9,7 +9,6 @@
 #include "ipc_protocol.h"
 
 /* ------------------ Helper Functions ------------------ */
-
 static bool validate_and_get_total_length(const uint8_t *buf, size_t buf_size, size_t *out_total_len)
 {
     if (buf_size < IPC_HEADER_SIZE) {
@@ -80,8 +79,9 @@ void ipc_stream_init(ipc_stream_ctx_t *recv)
 bool ipc_set_url(ipc_header_t *ipc_hdr, const ipc_url_ref_t *url)
 {
     if (!ipc_hdr || !url) return false;
-    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) return false;
-    if (ntohl(ipc_hdr->data_len) != 0) return false; // payload already set
+    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) 
+        return false;
+    if (ntohl(ipc_hdr->data_len) != 0) return false; // data already set
 
     if (url->url_len > IPC_MAX_PAYLOAD_SIZE) return false;
 
@@ -92,48 +92,28 @@ bool ipc_set_url(ipc_header_t *ipc_hdr, const ipc_url_ref_t *url)
     return true;
 }
 
-bool ipc_set_payload(ipc_header_t *ipc_hdr, const ipc_payload_ref_t *payload)
-{
-    if (!ipc_hdr || !payload) return false;
-    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) return false;
-
-    size_t url_len = ntohs(ipc_hdr->url_len);
-    if (payload->length == 0) {
-        ipc_hdr->data_len = 0;
-        return true;
-    }
-
-    if (payload->length > IPC_MAX_PAYLOAD_SIZE || 
-        url_len > IPC_MAX_PAYLOAD_SIZE ||
-        url_len + payload->length > IPC_MAX_PAYLOAD_SIZE) {
-        return false;
-    }
-
-    ipc_hdr->data_len = htonl((uint32_t)payload->length);
-    memcpy((char*)(ipc_hdr + 1) + url_len, payload->data, payload->length);
-    return true;
-}
-
 bool ipc_get_url(const ipc_header_t *ipc_hdr, ipc_url_ref_t *url)
 {
     if (!ipc_hdr || !url) return false;
-    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) return false;
+    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) 
+        return false;
 
     url->url_len = ntohs(ipc_hdr->url_len);
     url->url = (url->url_len > 0) ? (char*)(ipc_hdr + 1) : NULL;
     return true;
 }
 
-bool ipc_get_payload(const ipc_header_t *ipc_hdr, ipc_payload_ref_t *payload)
+bool ipc_get_data(const ipc_header_t *ipc_hdr, ipc_data_ref_t *data)
 {
-    if (!ipc_hdr || !payload) return false;
-    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) return false;
+    if (!ipc_hdr || !data) return false;
+    if (ipc_hdr->magic != IPC_MAGIC_BYTE || ipc_hdr->version != IPC_PROTOCOL_VERSION) 
+        return false;
 
-    payload->length = ntohl(ipc_hdr->data_len);
-    if (payload->length == 0) {
-        payload->data = NULL;
+    data->length = ntohl(ipc_hdr->data_len);
+    if (data->length == 0) {
+        data->data = NULL;
     } else {
-        payload->data = (char*)(ipc_hdr + 1) + ntohs(ipc_hdr->url_len);
+        data->data = (char*)(ipc_hdr + 1) + ntohs(ipc_hdr->url_len);
     }
     return true;
 }

@@ -59,7 +59,7 @@ typedef struct ipc_server_cli {
 typedef struct ipc_server_cmd {
     struct ipc_server_cmd *next;
     struct ipc_server_cmd *prev;
-    ipc_rpc_handler_t onrpc;
+    ipc_server_rpc_handler_t onrpc;
     void *arg;
     size_t len;
     char url[1];
@@ -79,7 +79,7 @@ struct ipc_server {
     ipc_server_cmd_t *def_cmd;
     ipc_server_cmd_t *prefix_h;
     ipc_server_cmd_t *prefix_t;
-    ipc_message_handler_t onmsg;
+    ipc_server_msg_handler_t onmsg;
     void *msg_arg;
     ipc_on_connect_t oncli;
     void *carg;
@@ -280,7 +280,7 @@ bool ipc_server_peer_close (ipc_server_t *server, cli_id_t id)
  * Client send
  */
 static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, 
-    const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+    const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     ssize_t len;
     uint64_t total = (uint64_t)IPC_HEADER_SIZE;
@@ -290,9 +290,9 @@ static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr,
         ipc_hdr->url_len = htons((uint16_t)url->url_len);
     }
 
-    if (payload) {
-        total += payload->length;
-        ipc_hdr->data_len =  htonl(payload->length);
+    if (data) {
+        total += data->length;
+        ipc_hdr->data_len =  htonl(data->length);
     } 
 
     if (total > IPC_MAX_PACKET_SIZE || total < IPC_HEADER_SIZE) {
@@ -318,10 +318,10 @@ static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr,
         msg.msg_iovlen++;
     }
 
-    if (payload) {
-        if (payload->data) {
-            iov[msg.msg_iovlen].iov_base = payload->data;
-            iov[msg.msg_iovlen].iov_len = payload->length;
+    if (data) {
+        if (data->data) {
+            iov[msg.msg_iovlen].iov_base = data->data;
+            iov[msg.msg_iovlen].iov_len = data->length;
             msg.msg_iovlen++;
         }
     }
@@ -676,7 +676,7 @@ bool ipc_server_is_subscribed (ipc_server_t *server, const ipc_url_ref_t *url)
 /*
  * IPC server do publish
  */
-static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     int i;
     size_t len;
@@ -702,7 +702,7 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
                 continue;
             }
             if (ipc_server_cli_sub_match(cli, url)) {
-                ipc_server_cli_sendmsg(cli, ipc_hdr, url, payload);
+                ipc_server_cli_sendmsg(cli, ipc_hdr, url, data);
             }
         }
     }
@@ -717,16 +717,16 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
 /*
  * IPC server publish
  */
-int ipc_server_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
-    return  (ipc_server_do_publish(server, url, payload));
+    return  (ipc_server_do_publish(server, url, data));
 }
 
 /*
  * IPC server add RPC listener
  */
 bool ipc_server_add_method (ipc_server_t *server,
-                               const ipc_url_ref_t *url, ipc_rpc_handler_t callback, void *arg)
+                               const ipc_url_ref_t *url, ipc_server_rpc_handler_t callback, void *arg)
 {
     int hash;
     size_t path_len;
@@ -878,7 +878,7 @@ int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr 
  * IPC server RPC reply
  */
 int ipc_server_response (ipc_server_t *server, cli_id_t id,
-                            uint8_t status, uint16_t seqno, const ipc_payload_ref_t *payload)
+                            uint8_t status, uint16_t seqno, const ipc_data_ref_t *data)
 {
     bool ret;
     ipc_server_cli_t *cli;
@@ -900,7 +900,7 @@ int ipc_server_response (ipc_server_t *server, cli_id_t id,
 
     ipc_hdr = ipc_create_header(server->sendbuf, IPC_MSG_TYPE_RPC_REQUEST, status, seqno);
 
-    ret = ipc_server_cli_sendmsg(cli, ipc_hdr, NULL, payload);
+    ret = ipc_server_cli_sendmsg(cli, ipc_hdr, NULL, data);
 
     ipc_mutex_unlock(server->lock);
 
@@ -1013,7 +1013,7 @@ bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout
 /*
  * IPC server send message
  */
-int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     bool ret;
     size_t len;
@@ -1028,8 +1028,8 @@ int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_
         LOG_ERROR("ipc server do message: invalid url.");
         return  (false);
     }
-    if (!payload) {
-        LOG_ERROR("ipc server do message: invalid payload.");
+    if (!data) {
+        LOG_ERROR("ipc server do message: invalid data.");
         return  (false);
     }
 
@@ -1044,7 +1044,7 @@ int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_
 
     ipc_hdr = ipc_create_header(server->sendbuf, IPC_MSG_TYPE_MESSAGE, 0, 0);
 
-    ret = ipc_server_cli_sendmsg(cli, ipc_hdr, url, payload);
+    ret = ipc_server_cli_sendmsg(cli, ipc_hdr, url, data);
 
     ipc_mutex_unlock(server->lock);
 
@@ -1056,15 +1056,15 @@ int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_
 /*
  * IPC server send message
  */
-int ipc_server_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
-    return  (ipc_server_cli_do_message(server, id, url, payload));
+    return  (ipc_server_cli_do_message(server, id, url, data));
 }
 
 /*
  * IPC server set on message callback
  */
-void ipc_server_set_message_handler (ipc_server_t *server, ipc_message_handler_t callback, void *arg)
+void ipc_server_set_message_handler (ipc_server_t *server, ipc_server_msg_handler_t callback, void *arg)
 {
     if (server) {
         server->onmsg = callback;
@@ -1148,10 +1148,10 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
     ipc_server_cli_t *cli = input_arg->cli;
     ipc_server_sub_t *sub, *sub_temp;
     ipc_server_cmd_t *cmd;
-    ipc_rpc_handler_t callback;
+    ipc_server_rpc_handler_t callback;
     ipc_header_t *send_hdr;
     ipc_url_ref_t url;
-    ipc_payload_ref_t payload, payload_reply;
+    ipc_data_ref_t data, reply;
 
     LOG_DEBUG("ipc server input: msg type is %d.", ipc_hdr->msg_type);
 
@@ -1161,7 +1161,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
 
     seqno = ipc_get_seqno(ipc_hdr);
     ipc_get_url(ipc_hdr, &url);
-    ipc_get_payload(ipc_hdr, &payload);
+    ipc_get_data(ipc_hdr, &data);
 
     if (!cli->active) {
         cli->active = true;
@@ -1169,7 +1169,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
 
     if (ipc_hdr->msg_type == IPC_MSG_TYPE_MESSAGE) {
         if (server->onmsg) {
-            server->onmsg(server, cli->id, &url, &payload, server->msg_arg);
+            server->onmsg(server, cli->id, &url, &data, server->msg_arg);
         }
         return  (server->valid);
     }
@@ -1181,9 +1181,9 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
     case IPC_MSG_TYPE_SERVICE_INFO:
         send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
         cid = htonl(cli->id);
-        payload_reply.data = &cid;
-        payload_reply.length = sizeof(uint32_t);
-        ipc_server_cli_sendmsg(cli, send_hdr, NULL, &payload_reply);
+        reply.data = &cid;
+        reply.length = sizeof(uint32_t);
+        ipc_server_cli_sendmsg(cli, send_hdr, NULL, &reply);
         if (cli->hst.alive) {
             cli->hst.alive = 0;
             DELETE_FROM_LIST(&cli->hst, server->hst_h);
@@ -1203,7 +1203,7 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
             if (cmd) {
                 callback = cmd->onrpc;
                 ipc_mutex_unlock(server->lock);
-                callback(server, cli->id, ipc_hdr, &url, &payload, cmd->arg);
+                callback(server, cli->id, ipc_hdr, &url, &data, cmd->arg);
             } else {
                 send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_STATUS_BAD_URL, seqno);
                 ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);

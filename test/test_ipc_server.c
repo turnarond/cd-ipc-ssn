@@ -20,9 +20,9 @@ static ipc_server_t *server;
 */
 static void command_light (ipc_server_t *server, cli_id_t cid,
                            ipc_header_t *ipc_hdr, ipc_url_ref_t *url,
-                           ipc_payload_ref_t *payload, void *arg)
+                           ipc_data_ref_t *data, void *arg)
 {
-    ipc_payload_ref_t send;
+    ipc_data_ref_t send;
     uint16_t seqno = ipc_get_seqno(ipc_hdr);
 
     send.data      = "command light";
@@ -36,7 +36,7 @@ int main (int argc, char **argv)
     struct sockaddr_in addr;
     uint16_t server_port = SERVER_DEFAULT_PORT;
 
-    bzero(&addr, sizeof(struct sockaddr_in));
+    memset(&addr, 0, sizeof(struct sockaddr_in));
     addr.sin_family      = AF_INET;
     addr.sin_port        = htons(server_port);
     addr.sin_addr.s_addr = INADDR_ANY;

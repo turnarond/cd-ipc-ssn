@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 11)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_definitions(IPC_LOG_LEVEL=0)   # DEBUG
 else()
-    add_definitions(NDEBUG)
+    add_definitions(-DNDEBUG)
 endif()
 
 include_directories(

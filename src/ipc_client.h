@@ -16,25 +16,20 @@
 extern "C" {
 #endif
 
-/* Client on message callback (received subscribed messages) */
-typedef void (*ipc_client_sub_func_t)(ipc_client_t *client, ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
-
 /* Client RPC callback (`ipc_hdr` NULL means server not responding)
- * The memory pointed to by `ipc_hdr` and `payload` will be invalidated when the callback function returns */
-typedef void (*ipc_client_rpc_func_t)(ipc_client_t *client, ipc_header_t *ipc_hdr, ipc_payload_ref_t *payload, void *arg);
+ * The memory pointed to by `ipc_hdr` and `data` will be invalidated when the callback function returns */
+typedef void (*ipc_client_rpcreply_handler_t)(ipc_client_t *client, ipc_header_t *ipc_hdr, ipc_data_ref_t *data, void *arg);
 
 /* Client subscribe, unsubscribe and ping callback */
-typedef void (*ipc_client_res_func_t)(ipc_client_t *client, bool success, void *arg);
+typedef void (*ipc_client_result_handler_t)(ipc_client_t *client, bool success, void *arg);
 
-/* Client on message callback same as on message */
-typedef void (*ipc_client_msg_func_t)(ipc_client_t *client, ipc_url_ref_t *url, ipc_payload_ref_t *payload, void *arg);
+/* Client on message callback, for subscribe and onmessage. */
+typedef void (*ipc_client_msg_handler_t)(ipc_client_t *client, ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg);
 
-/* Create IPC client 
- * Warning: This function must be mutually exclusive with the ipc_client_close() call */
-ipc_client_t *ipc_client_create(ipc_client_sub_func_t onmsg, void *arg);
+/* Create IPC client , Callback for subscribed (published) messages */
+ipc_client_t *ipc_client_create(ipc_client_msg_handler_t on_publish, void *arg);
 
-/* Close IPC client 
- * Warning: This function must be mutually exclusive with the ipc_client_create() call */
+/* Close IPC client */
 void ipc_client_close(ipc_client_t *client);
 
 /* Connect to server (Synchronous) */
@@ -58,21 +53,21 @@ void ipc_client_run(ipc_client_t *client);
 
 /* Subscribe URL */
 bool ipc_client_subscribe(ipc_client_t *client, const ipc_url_ref_t *url,
-                           ipc_client_res_func_t callback, void *arg, uint64_t timeout_ms);
+                           ipc_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
 
 /* Unsubscribe URL */
 bool ipc_client_unsubscribe(ipc_client_t *client, const ipc_url_ref_t *url,
-                             ipc_client_res_func_t callback, void *arg, uint64_t timeout_ms);
+                             ipc_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
 
 /* RPC call */
-int ipc_client_call(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
-                      ipc_client_rpc_func_t callback, void *arg, uint64_t timeout_ms);
+int ipc_client_call(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_data_ref_t *data,
+                      ipc_client_rpcreply_handler_t callback, void *arg, uint64_t timeout_ms);
 
 /* Send message to server */
-int ipc_client_message(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload);
+int ipc_client_message(ipc_client_t *client, const ipc_url_ref_t *url, const ipc_data_ref_t *data);
 
 /* IPC client set on message callback */
-void ipc_client_set_on_message(ipc_client_t *client, ipc_client_msg_func_t callback, void *arg);
+void ipc_client_set_on_message(ipc_client_t *client, ipc_client_msg_handler_t callback, void *arg);
 
 #ifdef __cplusplus
 }
