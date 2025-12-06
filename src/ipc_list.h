@@ -60,9 +60,6 @@
 #define LIST_FOREACH(node, head) \
     for ((node) = (head); (node); (node) = (node)->next)
 
-#define FOREACH_FROM_LIST_REVERSE(node, tail) \
-        for ((node) = (tail); (node) != NULL; (node) = (node)->prev)
-
 #define LIST_FOREACH_SAFE(cur, tmp, head) \
     for ((cur) = (head), (tmp) = (cur) ? (cur)->next : NULL; \
          (cur); \
@@ -93,33 +90,6 @@
                 (node)->prev->next = (node)->next; \
             } else { \
                 (header) = (node)->next; \
-            } \
-        } while (0)
-
-/* Insert left and right */
-#define INSERT_TO_LEFT(node, right, header) \
-        do { \
-            (node)->next = (right); \
-            (node)->prev = (right)->prev; \
-            if ((right)->prev) { \
-                (right)->prev->next = (node); \
-            } \
-            (right)->prev = (node); \
-            if ((header) == (right)) { \
-                (header) = (node); \
-            } \
-        } while (0)
-
-#define INSERT_TO_RIGHT(node, left, tail) \
-        do { \
-            (node)->prev = (left); \
-            (node)->next = (left)->next; \
-            if ((left)->next) { \
-                (left)->next->prev = (node); \
-            } \
-            (left)->next = (node); \
-            if ((tail) == (left)) { \
-                (tail) = (node); \
             } \
         } while (0)
 

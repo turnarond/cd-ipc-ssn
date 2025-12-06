@@ -55,7 +55,7 @@ struct ipc_client {
     bool cid_valid;
     uint32_t cid;
     uint16_t seqno;
-    uint16_t seqno_nq;
+    uint16_t next_non_pending_seqno;
     int sock;
     ipc_event_pair_t *evtfd;
     int send_timeout;
@@ -113,7 +113,7 @@ void *ipc_client_timer_handle (void *arg)
                         pendq->timeout_ms = 0;
                         emit = true;
                         LOG_INFO("pend %d of client %d emit", client->cid, pendq->seqno);
-                        break; // only deal with one timeout pend of a client;
+                        // break; // only deal with one timeout pend of a client;
                     }
                 }
             }
@@ -149,7 +149,7 @@ static ipc_pending_request_t *get_pending_by_seqno(ipc_client_t *client, uint16_
  */
 static void free_pending_index (ipc_client_t *client, uint16_t seqno)
 {
-    if (seqno > IPC_CLIENT_MAX_PENDING) {
+    if (seqno >= IPC_CLIENT_MAX_PENDING) {
         LOG_ERROR("free pending index: invalid seqno %d", seqno);
         return;
     }
@@ -174,12 +174,12 @@ ipc_client_t *ipc_client_create (ipc_client_msg_handler_t onmsg, void *arg)
         return (NULL);
     }
 
+    memset(client, 0, sizeof(ipc_client_t));
+
     // 初始化pendings
     for (int i = 0 ; i < IPC_CLIENT_MAX_PENDING ; i++) {
         client->pending_pool[i].seqno = i;
     }
-
-    memset(client, 0, sizeof(ipc_client_t));
 
     client->sock   = -1;
 
@@ -725,7 +725,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
                 if (pendq->timeout_ms == 0) {
                     if (pendq->ftype == IPC_CLIENT_FTYPE_RPC && 
                         pendq->callback.rpc) {
-                        pendq->callback.msg(client, NULL, NULL, pendq->arg);
+                        pendq->callback.rpc(client, NULL, NULL, pendq->arg);
                         free_pending_index(client, pendq->seqno);
                     }
                 }
@@ -746,12 +746,12 @@ static uint16_t ipc_client_prepare_seqno (ipc_client_t *client)
 
     ipc_spinlock_lock(client->spin);
 
-    if (client->seqno_nq == 0) {
+    if (client->next_non_pending_seqno == 0) {
         seqno = 1;
-        client->seqno_nq = 2;
+        client->next_non_pending_seqno = 2;
     } else {
-        seqno = client->seqno_nq;
-        client->seqno_nq++;
+        seqno = client->next_non_pending_seqno;
+        client->next_non_pending_seqno++;
     }
 
     ipc_spinlock_unlock(client->spin);
