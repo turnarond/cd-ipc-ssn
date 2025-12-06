@@ -40,10 +40,12 @@ extern "C" {
     #define SRV_NAME_LEN 64
 #endif
 
-#define IPC_SERVER_BACKLOG              32
-#define IPC_SERVER_DEF_SEND_TIMEOUT     100      // ms
-#define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT 5000   // ms
-#define IPC_SERVER_KEEPALIVE_TIMEOUT    10       // seconds
+/* Server timer period (ms) */
+#define IPC_TIMER_PERIOD                    10
+#define IPC_SERVER_BACKLOG                  32
+#define IPC_DEF_SEND_TIMEOUT                100     // ms
+#define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
+#define IPC_SERVER_KEEPALIVE_TIMEOUT        10      // seconds
 
 #if defined(IPC_PLATFORM_SYLIXOS) || defined(IPC_PLATFORM_LINUX)
     #define IPC_INHERIT_NODELAY 1

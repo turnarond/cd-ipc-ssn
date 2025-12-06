@@ -79,8 +79,8 @@ struct ipc_server {
     ipc_server_cmd_t *def_cmd;
     ipc_server_cmd_t *prefix_h;
     ipc_server_cmd_t *prefix_t;
-    ipc_datagram_handler_t ondat;
-    void *darg;
+    ipc_message_handler_t onmsg;
+    void *msg_arg;
     ipc_on_connect_t oncli;
     void *carg;
     ipc_mutex_t *lock;
@@ -104,9 +104,6 @@ struct input_arg {
  */
 #define ipc_server_cli_hash(id)  (int)(id & IPC_CLI_HASH_MASK)
 
-/* Server timer period (ms) */
-#define IPC_SERVER_TIMER_PERIOD  100
-
 /*
  * Server timer thread handle
  */
@@ -119,7 +116,7 @@ void *ipc_server_timer_handle (void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_SERVER_TIMER_PERIOD);
+        ipc_thread_msleep(IPC_TIMER_PERIOD);
 
         ipc_mutex_lock(g_ipc_server_lock);
 
@@ -138,11 +135,11 @@ void *ipc_server_timer_handle (void *arg)
             ipc_mutex_lock(server->lock);
 
             LIST_FOREACH(hst, server->hst_h) {
-                if (hst->alive <= IPC_SERVER_TIMER_PERIOD) {
+                if (hst->alive <= IPC_TIMER_PERIOD) {
                     hst->alive = 0;
                     emit = true;
                 } else {
-                    hst->alive -= IPC_SERVER_TIMER_PERIOD;
+                    hst->alive -= IPC_TIMER_PERIOD;
                 }
             }
 
@@ -406,7 +403,7 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
             strncpy(server->ifname, opts->ifname, strlen(opts->ifname));
         }
     } else {
-        server->send_timeout = IPC_SERVER_DEF_SEND_TIMEOUT;
+        server->send_timeout = IPC_DEF_SEND_TIMEOUT;
         server->handshake_timeout = IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = IPC_SERVER_KEEPALIVE_TIMEOUT;
     }
@@ -518,7 +515,7 @@ error:
 /*
  * Get IPC server address (must be called after `ipc_server_start`)
  */
-bool ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t *namelen)
+int ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t *namelen)
 {
     if (!server || !server->valid || server->sock < 0) {
         LOG_ERROR("ipc server address: invalid server handle.");
@@ -720,7 +717,7 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
 /*
  * IPC server publish
  */
-bool ipc_server_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
     return  (ipc_server_do_publish(server, url, payload));
 }
@@ -854,7 +851,7 @@ void ipc_server_remove_method (ipc_server_t *server, const ipc_url_ref_t *url)
 /*
  * IPC remote client address
  */
-bool ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
+int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
 {
     ipc_server_cli_t *cli;
 
@@ -880,7 +877,7 @@ bool ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr
 /*
  * IPC server RPC reply
  */
-bool ipc_server_response (ipc_server_t *server, cli_id_t id,
+int ipc_server_response (ipc_server_t *server, cli_id_t id,
                             uint8_t status, uint16_t seqno, const ipc_payload_ref_t *payload)
 {
     bool ret;
@@ -1014,9 +1011,9 @@ bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout
 }
 
 /*
- * IPC server send datagram
+ * IPC server send message
  */
-bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
     bool ret;
     size_t len;
@@ -1024,15 +1021,15 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_ur
     ipc_header_t *ipc_hdr;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server do datagram: invalid server handle.");
+        LOG_ERROR("ipc server do message: invalid server handle.");
         return  (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc server do datagram: invalid url.");
+        LOG_ERROR("ipc server do message: invalid url.");
         return  (false);
     }
     if (!payload) {
-        LOG_ERROR("ipc server do datagram: invalid payload.");
+        LOG_ERROR("ipc server do message: invalid payload.");
         return  (false);
     }
 
@@ -1041,37 +1038,37 @@ bool ipc_server_cli_do_datagram (ipc_server_t *server, cli_id_t id, const ipc_ur
     cli = ipc_server_cli_find(server, id);
     if (!cli) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server do datagram: not found cli %d.", id);
+        LOG_ERROR("ipc server do message: not found cli %d.", id);
         return  (false);
     }
 
-    ipc_hdr = ipc_create_header(server->sendbuf, IPC_MSG_TYPE_DATAGRAM, 0, 0);
+    ipc_hdr = ipc_create_header(server->sendbuf, IPC_MSG_TYPE_MESSAGE, 0, 0);
 
     ret = ipc_server_cli_sendmsg(cli, ipc_hdr, url, payload);
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server do datagram to cid %d success.", id);
+    LOG_DEBUG("ipc server do message to cid %d success.", id);
 
     return  (ret);
 }
 
 /*
- * IPC server send datagram
+ * IPC server send message
  */
-bool ipc_server_datagram (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_server_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
-    return  (ipc_server_cli_do_datagram(server, id, url, payload));
+    return  (ipc_server_cli_do_message(server, id, url, payload));
 }
 
 /*
- * IPC server set on datagram callback
+ * IPC server set on message callback
  */
-void ipc_server_set_datagram_handler (ipc_server_t *server, ipc_datagram_handler_t callback, void *arg)
+void ipc_server_set_message_handler (ipc_server_t *server, ipc_message_handler_t callback, void *arg)
 {
     if (server) {
-        server->ondat = callback;
-        server->darg  = arg;
+        server->onmsg = callback;
+        server->msg_arg  = arg;
     }
 }
 
@@ -1170,9 +1167,9 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
         cli->active = true;
     }
 
-    if (ipc_hdr->msg_type == IPC_MSG_TYPE_DATAGRAM) {
-        if (server->ondat) {
-            server->ondat(server, cli->id, &url, &payload, server->darg);
+    if (ipc_hdr->msg_type == IPC_MSG_TYPE_MESSAGE) {
+        if (server->onmsg) {
+            server->onmsg(server, cli->id, &url, &payload, server->msg_arg);
         }
         return  (server->valid);
     }

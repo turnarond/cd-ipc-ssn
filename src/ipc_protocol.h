@@ -33,7 +33,7 @@ extern "C" {
 #define IPC_MSG_TYPE_SUBSCRIBE        (0x02U)
 #define IPC_MSG_TYPE_UNSUBSCRIBE      (0x03U)
 #define IPC_MSG_TYPE_PUBLISH          (0x04U)
-#define IPC_MSG_TYPE_DATAGRAM         (0x05U)
+#define IPC_MSG_TYPE_MESSAGE         (0x05U)
 #define IPC_MSG_TYPE_REPLY_FLAG       (0xFCU)  // Not a standalone type; used as flag in replies
 #define IPC_MSG_TYPE_PING_ECHO        (0xFFU)
 

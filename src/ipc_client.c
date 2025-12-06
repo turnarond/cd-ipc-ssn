@@ -3,6 +3,7 @@
  */
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,10 +27,10 @@
 
 /* Client callback union. */
 typedef union {
-    ipc_client_msg_func_t msg;
+    ipc_client_sub_func_t sub;
     ipc_client_rpc_func_t rpc;
     ipc_client_res_func_t res;
-    ipc_client_dat_func_t dat;
+    ipc_client_msg_func_t msg;
 } ipc_client_callback_u;
 
 /* Client pending queue */
@@ -66,10 +67,10 @@ struct ipc_client {
     int send_timeout;
     ipc_spinlock_t *spin;
     ipc_mutex_t *lock;
+    ipc_client_sub_func_t onsub;
+    void *sub_arg;
     ipc_client_msg_func_t onmsg;
-    void *marg;
-    ipc_client_dat_func_t ondat;
-    void *darg;
+    void *msg_arg;
 };
 
 /* Client fast pending buffer */
@@ -100,7 +101,7 @@ void *ipc_client_timer_handle (void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_CLIENT_TIMER_PERIOD);
+        ipc_thread_msleep(IPC_TIMER_PERIOD);
 
         ipc_mutex_lock(g_ipc_client_lock);
 
@@ -115,8 +116,8 @@ void *ipc_client_timer_handle (void *arg)
             ipc_mutex_lock(client->lock);
 
             LIST_FOREACH_SAFE(pendq, tmp, client->head) {
-                if (pendq->alive > IPC_CLIENT_TIMER_PERIOD) {
-                    pendq->alive -= IPC_CLIENT_TIMER_PERIOD;
+                if (pendq->alive > IPC_TIMER_PERIOD) {
+                    pendq->alive -= IPC_TIMER_PERIOD;
                 } else {
                     pendq->alive = 0;
                     emit = true;
@@ -159,7 +160,7 @@ static void ipc_client_pendq_free (ipc_client_t *client, ipc_client_pendq_t *pen
 * Create IPC client
 * Warning: This function must be mutually exclusive with the ipc_client_close() call
 */
-ipc_client_t *ipc_client_create (ipc_client_msg_func_t onmsg, void *arg)
+ipc_client_t *ipc_client_create (ipc_client_sub_func_t onmsg, void *arg)
 {
     int i, err = 0;
     ipc_client_t *client;
@@ -202,9 +203,9 @@ ipc_client_t *ipc_client_create (ipc_client_msg_func_t onmsg, void *arg)
 
     ipc_stream_init(&client->recv);
     client->recvbuf      = (uint8_t *)client->sendbuf + IPC_MAX_PACKET_SIZE;
-    client->onmsg        = onmsg;
-    client->marg         = arg;
-    client->send_timeout = IPC_CLIENT_DEF_SEND_TIMEOUT;
+    client->onsub        = onmsg;
+    client->sub_arg      = arg;
+    client->send_timeout = IPC_DEF_SEND_TIMEOUT;
     client->valid        = true;
 
     ipc_mutex_lock(g_ipc_client_lock);
@@ -270,7 +271,7 @@ void ipc_client_close (ipc_client_t *client)
     LIST_FOREACH_SAFE(pendq, temp, client->head) {
         if (pendq->ftype == IPC_CLIENT_FTYPE_RPC &&
             pendq->callback.rpc) {
-                pendq->callback.rpc(pendq->arg, client, NULL, NULL);
+                pendq->callback.rpc(client, NULL, NULL, pendq->arg);
             }
             DELETE_FROM_FIFO(pendq, client->head, client->tail);
             ipc_client_pendq_free(client, pendq);
@@ -378,7 +379,7 @@ static void ipc_client_timeout_all (ipc_client_t *client)
         LIST_FOREACH_SAFE(pendq, temp, to_head) {
             if (pendq->ftype == IPC_CLIENT_FTYPE_RPC &&
                 pendq->callback.rpc) {
-                pendq->callback.rpc(pendq->arg, client, NULL, NULL);
+                pendq->callback.rpc(client, NULL, NULL, pendq->arg);
             }
             DELETE_FROM_LIST(pendq, to_head);
             ipc_client_pendq_free(client, pendq);
@@ -564,7 +565,7 @@ bool ipc_client_send_timeout (ipc_client_t *client, const int timeout_ms)
     if (timeout_ms > 0) {
         client->send_timeout  = timeout_ms;
     } else {
-        client->send_timeout = IPC_CLIENT_DEF_TIMEOUT;
+        client->send_timeout = IPC_DEF_SEND_TIMEOUT;
     }
 
     if (client->connected && client->sock >= 0) {
@@ -618,18 +619,18 @@ static bool ipc_client_input (ipc_header_t *ipc_hdr, void *varg)
     ipc_url_ref_t url;
     ipc_payload_ref_t payload;
 
-    if (ipc_hdr->msg_type == IPC_MSG_TYPE_PUBLISH || ipc_hdr->msg_type == IPC_MSG_TYPE_DATAGRAM) {
+    if (ipc_hdr->msg_type == IPC_MSG_TYPE_PUBLISH || ipc_hdr->msg_type == IPC_MSG_TYPE_MESSAGE) {
         ipc_get_url(ipc_hdr, &url);
         ipc_get_payload(ipc_hdr, &payload);
 
         if (ipc_hdr->msg_type == IPC_MSG_TYPE_PUBLISH) {
             LOG_DEBUG("ipc client input: get publish msg.");
-            if (client->onmsg) {
-                client->onmsg(client->marg, client, &url, &payload);
+            if (client->onsub) {
+                client->onsub(client, &url, &payload, client->sub_arg);
             }
-        } else if (client->ondat) {
-            LOG_DEBUG("ipc client input: get datagram msg.");
-            client->ondat(client->darg, client, &url, &payload);
+        } else if (client->onmsg) {
+            LOG_DEBUG("ipc client input: get message msg.");
+            client->onmsg(client, &url, &payload, client->msg_arg);
          }
         goto  out;
 
@@ -662,7 +663,7 @@ static bool ipc_client_input (ipc_header_t *ipc_hdr, void *varg)
         case IPC_MSG_TYPE_PING_ECHO:
             if (pendq->ftype == IPC_CLIENT_FTYPE_RES) {
                 if (pendq->callback.res) {
-                    pendq->callback.res(pendq->arg, client, ipc_hdr->status == 0);
+                    pendq->callback.res(client, ipc_hdr->status == 0, pendq->arg);
                 }
             }
             break;
@@ -671,7 +672,7 @@ static bool ipc_client_input (ipc_header_t *ipc_hdr, void *varg)
             if (pendq->ftype == IPC_CLIENT_FTYPE_RPC) {
                 if (pendq->callback.rpc) {
                     ipc_get_payload(ipc_hdr, &payload);
-                    pendq->callback.rpc(pendq->arg, client, ipc_hdr, &payload);
+                    pendq->callback.rpc( client, ipc_hdr, &payload, pendq->arg);
                 }
             }
             break;
@@ -752,8 +753,8 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
 
         if (to_head) {
             LIST_FOREACH_SAFE(pendq, temp, to_head) {
-                if (pendq->callback.dat) {
-                    pendq->callback.dat(pendq->arg, client, NULL, NULL);
+                if (pendq->callback.msg) {
+                    pendq->callback.msg(client, NULL, NULL, pendq->arg);
                 }
                 DELETE_FROM_FIFO(pendq, to_head, to_tail);
                 ipc_client_pendq_free(client, pendq);
@@ -790,7 +791,7 @@ static uint16_t ipc_client_prepare_seqno (ipc_client_t *client)
 * Prepare a pendq
 */
 static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool fast, void *arg, 
-                                                    uint32_t ftype, const struct timespec *timeout)
+                                                    uint32_t ftype, uint64_t timeout_ms)
 {
     uint16_t i, seqno;
     ipc_client_pendq_t *pendq = NULL, *queued;
@@ -837,10 +838,10 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
     pendq->arg = arg;
     pendq->ftype = ftype;
 
-    if (timeout) {
-        pendq->alive = (timeout->tv_sec * 1000) + (timeout->tv_nsec / 1000000);
+    if (timeout_ms > 0) {
+        pendq->alive = timeout_ms;
     } else {
-        pendq->alive = IPC_CLIENT_DEF_TIMEOUT;
+        pendq->alive = IPC_DEF_SEND_TIMEOUT;
     }
 
     return (pendq);
@@ -851,7 +852,7 @@ static ipc_client_pendq_t *ipc_client_prepare_pendq (ipc_client_t *client, bool 
 */
 static bool ipc_client_request (ipc_client_t *client, uint8_t type, 
                                 const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
-                                ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
+                                ipc_client_res_func_t callback, void *arg, uint64_t timeout_ms)
 {
     size_t len;
     uint16_t seqno;
@@ -865,7 +866,7 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
 
     if (callback) {
         pendq = ipc_client_prepare_pendq(client, type == IPC_MSG_TYPE_PING_ECHO,
-                                        arg, IPC_CLIENT_FTYPE_RES, timeout);
+                                        arg, IPC_CLIENT_FTYPE_RES, timeout_ms);
         if (!pendq) {
             LOG_ERROR("ipc client request: prepare pendq failed.");
             return (false);
@@ -909,36 +910,36 @@ error:
 * Subscribe URL
 */
 bool ipc_client_subscribe (ipc_client_t *client, const ipc_url_ref_t *url,
-                            ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
+                            ipc_client_res_func_t callback, void *arg, uint64_t timeout_ms)
 {
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
         LOG_ERROR("ipc client subscribe failed: invalid client handle.");
         return (false);
     }
 
-    return (ipc_client_request(client, IPC_MSG_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout));
+    return (ipc_client_request(client, IPC_MSG_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout_ms));
 }
 
 /*
 * Unsubscribe URL
 */
 bool ipc_client_unsubscribe (ipc_client_t *client, const ipc_url_ref_t *url,
-                            ipc_client_res_func_t callback, void *arg, const struct timespec *timeout)
+                            ipc_client_res_func_t callback, void *arg, uint64_t timeout_ms)
 {
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
         LOG_ERROR("ipc client ipc_client_unsubscribe failed: invalid client handle.");
         return (false);
     }
 
-    return (ipc_client_request(client, IPC_MSG_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout));
+    return (ipc_client_request(client, IPC_MSG_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout_ms));
 }
 
 /*
 * RPC call with externed arguments.
 * This functions are special interfaces used by client robots, and users are prohibited from using them!
 */
-bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
-                        ipc_client_rpc_func_t callback, void *arg, const struct timespec *timeout, void *arg_ex)
+static int ipc_client_call_ex (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
+                        ipc_client_rpc_func_t callback, void *arg, uint64_t timeout_ms, void *arg_ex)
 {
     size_t len;
     uint8_t flag;
@@ -956,7 +957,7 @@ bool ipc_client_call_ex (ipc_client_t *client, const ipc_url_ref_t *url, const i
     }
 
     if (callback) {
-        pendq = ipc_client_prepare_pendq(client, false, arg, IPC_CLIENT_FTYPE_RPC, timeout);
+        pendq = ipc_client_prepare_pendq(client, false, arg, IPC_CLIENT_FTYPE_RPC, timeout_ms);
         if (!pendq) {
             LOG_ERROR("ipc client call failed: prepare pendq failed");
             return (false);
@@ -1001,43 +1002,43 @@ error:
 /*
 * RPC call
 */
-bool ipc_client_call (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
-                    ipc_client_rpc_func_t callback, void *arg, const struct timespec *timeout)
+int ipc_client_call (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload,
+                    ipc_client_rpc_func_t callback, void *arg, uint64_t timeout_ms)
 {
-    return (ipc_client_call_ex(client, url, payload, callback, arg, timeout, NULL));
+    return (ipc_client_call_ex(client, url, payload, callback, arg, timeout_ms, NULL));
 }
 
 /*
-* Send datagram to server
+* Send message to server
 */
-bool ipc_client_datagram (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
+int ipc_client_message (ipc_client_t *client, const ipc_url_ref_t *url, const ipc_payload_ref_t *payload)
 {
     bool ret;
     size_t len;
     ipc_header_t *ipc_hdr;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client datagram: invalid client handle.");
+        LOG_ERROR("ipc client message: invalid client handle.");
         return (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc client datagram: invalid url.");
+        LOG_ERROR("ipc client message: invalid url.");
         return (false);
     }
     if (!payload) {
-        LOG_ERROR("ipc client datagram: invalid payload.");
+        LOG_ERROR("ipc client message: invalid payload.");
         return (false);
     }
 
     ipc_mutex_lock(client->lock);
 
-    ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_DATAGRAM, 0, 0);
+    ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_MESSAGE, 0, 0);
 
     ret = ipc_client_sendmsg(client, ipc_hdr, url, payload);
 
     ipc_mutex_unlock(client->lock);
 
-    LOG_DEBUG("ipc client datagram success.");
+    LOG_DEBUG("ipc client message success.");
 
     return (ret);
 
@@ -1047,11 +1048,11 @@ error:
     return (false);
 }
 
-void ipc_client_set_on_datagram (ipc_client_t *client, ipc_client_dat_func_t callback, void *arg)
+void ipc_client_set_on_message (ipc_client_t *client, ipc_client_msg_func_t callback, void *arg)
 {
     if (client) {
-        client->ondat = callback;
-        client->darg  = arg;
+        client->onmsg = callback;
+        client->msg_arg  = arg;
     }
 }
 
