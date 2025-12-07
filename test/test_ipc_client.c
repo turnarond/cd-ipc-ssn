@@ -15,7 +15,8 @@ static ipc_client_t *client;
 static void on_command_light (struct ipc_client *client, ipc_header_t *vsoa_hdr, ipc_data_ref_t *data, void *arg)
 {
     if (vsoa_hdr) {
-        printf("On asynchronous RPC reply, data: %.*s\n", (int)data->length, (char*)data->data);
+        printf("On asynchronous RPC reply, data: %.*s, seqno is %d\n", (int)data->length, (char*)data->data, 
+        ntohs(vsoa_hdr->seqno));
     } else {
         fprintf(stderr, "VSOA server /light reply timeout!\n");
     }
@@ -56,6 +57,7 @@ int main (int argc, char **argv)
         if (ret < 0) {
             fprintf(stderr, "Asynchronous RPC call error (not connected to server)!\n");
         }
+        sleep(1);
     }
 
     return  (0);

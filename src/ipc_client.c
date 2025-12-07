@@ -34,6 +34,7 @@ typedef union {
 
 /* Client pending queue */
 typedef struct ipc_pending_request {
+    uint16_t index;          // pending 序号
     uint16_t seqno;          // 请求序列号（唯一标识）
     uint32_t timeout_ms;     // 超时值
     uint32_t ftype;          // 回调类型：RPC / RES（subscribe等）
@@ -49,6 +50,7 @@ struct ipc_client {
     ipc_client_t *prev;
     ipc_pending_request_t pending_pool[IPC_CLIENT_MAX_PENDING];
     uint32_t pending_bitmap[IPC_CLIENT_MAX_PENDING_BITMAP];
+    uint16_t seqno_to_index[65536];
     void *sendbuf;
     void *recvbuf;
     ipc_stream_ctx_t recv;
@@ -100,7 +102,8 @@ void *ipc_client_timer_handle (void *arg)
             break;
         }
 
-        LIST_FOREACH(client, g_ipc_client_list) {
+        LIST_FOREACH(client, g_ipc_client_list) 
+        {
             emit = false;
 
             ipc_mutex_lock(client->lock);
@@ -112,8 +115,7 @@ void *ipc_client_timer_handle (void *arg)
                     } else {
                         pendq->timeout_ms = 0;
                         emit = true;
-                        LOG_INFO("pend %d of client %d emit", client->cid, pendq->seqno);
-                        // break; // only deal with one timeout pend of a client;
+                        LOG_INFO("seqno %d of client %d timeout", pendq->seqno, client->cid);
                     }
                 }
             }
@@ -135,27 +137,35 @@ void *ipc_client_timer_handle (void *arg)
 
 static ipc_pending_request_t *get_pending_by_seqno(ipc_client_t *client, uint16_t seqno) 
 {
-    if (seqno >= IPC_CLIENT_MAX_PENDING) return NULL;
-    int w = seqno / 32;
-    int b = seqno % 32;
-    if (!(client->pending_bitmap[w] & (1U << b))) {
-        return NULL; // 未分配
+    // TODO: list mapping to find pending's seqno.
+    uint16_t index = client->seqno_to_index[seqno];
+    if (index == 0xFFFF || index >= IPC_CLIENT_MAX_PENDING) {
+        return NULL;
     }
-    return &client->pending_pool[seqno];
+    
+    ipc_mutex_lock(client->lock);
+    if (!is_bit_set(client->pending_bitmap, index)) {
+        ipc_mutex_unlock(client->lock);
+        return NULL;
+    }
+
+    ipc_pending_request_t *pendq = &client->pending_pool[index];
+    ipc_mutex_unlock(client->lock);
+    return pendq;
 }
 
 /*
  * Pendq free
  */
-static void free_pending_index (ipc_client_t *client, uint16_t seqno)
+static void free_pending_index (ipc_client_t *client, uint16_t index)
 {
-    if (seqno >= IPC_CLIENT_MAX_PENDING) {
-        LOG_ERROR("free pending index: invalid seqno %d", seqno);
+    if (index >= IPC_CLIENT_MAX_PENDING) {
+        LOG_ERROR("free pending index: invalid index %d", index);
         return;
     }
 
-    int w = seqno / 32;
-    int b = seqno % 32;
+    int w = index / 32;
+    int b = index % 32;
     client->pending_bitmap[w] &= ~(1U << b);
 }
 
@@ -175,13 +185,14 @@ ipc_client_t *ipc_client_create (ipc_client_msg_handler_t onmsg, void *arg)
     }
 
     memset(client, 0, sizeof(ipc_client_t));
+    memset(client->seqno_to_index, 0xFF, sizeof(client->seqno_to_index));
 
     // 初始化pendings
     for (int i = 0 ; i < IPC_CLIENT_MAX_PENDING ; i++) {
-        client->pending_pool[i].seqno = i;
+        client->pending_pool[i].index = i;
     }
 
-    client->sock   = -1;
+    client->sock = -1;
 
     if (ipc_event_pair_create(&client->evtfd) != 0) {
         LOG_ERROR("ipc client create: event pair create failed, errno %d", errno);
@@ -275,7 +286,7 @@ void ipc_client_close (ipc_client_t *client)
             if (pendq->ftype == IPC_CLIENT_FTYPE_RPC &&
                 pendq->callback.rpc) {
                 pendq->callback.rpc(client, NULL, NULL, pendq->arg);
-                free_pending_index(client, pendq->seqno);
+                free_pending_index(client, pendq->index);
             }
         }
     }
@@ -377,7 +388,7 @@ static void ipc_client_timeout_all (ipc_client_t *client)
                 pendq->callback.rpc) {
                 pendq->callback.rpc(client, NULL, NULL, pendq->arg);
             }
-            free_pending_index(client, pendq->seqno);
+            free_pending_index(client, pendq->index);
         }
     }
     ipc_mutex_unlock(client->lock);
@@ -664,7 +675,8 @@ static bool ipc_client_input (ipc_header_t *ipc_hdr, void *varg)
             break;
         }
 
-        free_pending_index(client, pendq->seqno);
+        free_pending_index(client, pendq->index);
+        LOG_DEBUG("ipc client input free seqno pend %d, index %d.", pendq->seqno, pendq->index);
     }
 
     LOG_DEBUG("ipc client input finished.");
@@ -726,7 +738,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
                     if (pendq->ftype == IPC_CLIENT_FTYPE_RPC && 
                         pendq->callback.rpc) {
                         pendq->callback.rpc(client, NULL, NULL, pendq->arg);
-                        free_pending_index(client, pendq->seqno);
+                        free_pending_index(client, pendq->index);
                     }
                 }
             }
@@ -807,10 +819,11 @@ static bool ipc_client_request (ipc_client_t *client, uint8_t type,
         }
         pendq = &client->pending_pool[index];
         pendq->callback.res = callback;
-        seqno = pendq->seqno;
+        seqno = pendq->seqno = client->seqno++;
         pendq->timeout_ms = timeout_ms;
         pendq->ftype = type;
         pendq->arg = arg;
+        client->seqno_to_index[seqno] = index;
     } else {
         pendq = NULL;
         seqno = ipc_client_prepare_seqno(client);
@@ -834,7 +847,7 @@ error:
     ipc_mutex_unlock(client->lock);
 
     if (pendq) {
-        free_pending_index(client, pendq->seqno);
+        free_pending_index(client, pendq->index);
     }
 
     return (false);
@@ -896,11 +909,12 @@ static int ipc_client_call_ex (ipc_client_t *client, const ipc_url_ref_t *url, c
             return -1;
         }
         pendq = &client->pending_pool[index];
-        seqno = pendq->seqno;
+        seqno = pendq->seqno = client->seqno++;
         pendq->callback.rpc = callback;
         pendq->timeout_ms = timeout_ms;
         pendq->ftype = IPC_CLIENT_FTYPE_RPC;
         pendq->arg = arg;
+        client->seqno_to_index[seqno] = index;
     } else {
         pendq = NULL;
         seqno = ipc_client_prepare_seqno(client);
@@ -921,7 +935,7 @@ error:
     ipc_mutex_unlock(client->lock);
 
     if (pendq) {
-        free_pending_index(client, pendq->seqno);
+        free_pending_index(client, pendq->index);
     }
 
     return (false);

@@ -41,7 +41,7 @@ extern "C" {
 #endif
 
 /* Server timer period (ms) */
-#define IPC_TIMER_PERIOD                    10
+#define IPC_TIMER_PERIOD                    50
 #define IPC_SERVER_BACKLOG                  32
 #define IPC_DEF_SEND_TIMEOUT                100     // ms
 #define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
