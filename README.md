@@ -14,3 +14,8 @@ cd build
 cmake ..
 make
 ```
+
+## TODO
+   * Add Node over client and server.
+   * Add node discovery.
+   * Support AF_INET? Or Not.
