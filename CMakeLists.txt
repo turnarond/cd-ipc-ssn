@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.12)
 
 project(lwipcssn)
 
+include(../../CMakeCommonLib)
 set(CMAKE_CXX_STANDARD 11)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -14,6 +15,7 @@ include_directories(
     ${LW_INCLUDE_DIR}
     ${LW_INCLUDE_DIR}/libevent
     ./
+    ./src
 )
 
 link_directories(
@@ -31,24 +33,40 @@ add_library(${PROJECT_NAME} SHARED
     src/ipc_client.c
     src/ipc_server.c
     src/ipc_protocol.c
+    src/ipc_error.c
 )
 
 install(TARGETS ${PROJECT_NAME}
     ARCHIVE DESTINATION ${LW_LIB_DIR}
     LIBRARY DESTINATION ${LW_LIB_DIR}
-    RUNTIME DESTINATION ${LW_BIN_DIR}
 )
 
 ## Mark cpp header files for installation
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_client.h"
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_client.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_server.h"
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_server.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_protocol.h"
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_protocol.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/ipc_cliauto.h"
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_error.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_global.h"
+    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
+)
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/vsi/ipc_platform.h"
+    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}/vsi
+)
+
+# Build test files
+add_executable(test_ipc_server test/test_ipc_server.c)
+target_link_libraries(test_ipc_server ${PROJECT_NAME})
+
+add_executable(test_ipc_client test/test_ipc_client.c)
+target_link_libraries(test_ipc_client ${PROJECT_NAME})
+
+add_executable(test_ipc_comprehensive test/test_ipc_comprehensive.c)
+target_link_libraries(test_ipc_comprehensive ${PROJECT_NAME} pthread)

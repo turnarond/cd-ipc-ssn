@@ -4,6 +4,8 @@
 #include <string.h>
 #ifdef SYLIXOS
 #include <sys/vproc.h>
+#else
+#include <unistd.h>
 #endif
 #include <sys/select.h>
 #include <netinet/in.h>

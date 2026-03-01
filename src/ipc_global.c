@@ -1,4 +1,7 @@
-// ipc_global.c
+/**
+ * @file ipc_global.c
+ * @brief 全局资源管理
+ */
 
 #include "ipc_global.h"
 
@@ -13,9 +16,13 @@ ipc_mutex_t  *g_ipc_server_lock = NULL;
 
 static int g_initialized = 0;
 
-extern void *ipc_client_timer_handle (void *arg);
-extern void *ipc_server_timer_handle (void *arg);
+extern void *ipc_client_timer_handle(void *arg);
+extern void *ipc_server_timer_handle(void *arg);
 
+/**
+ * @brief 初始化全局资源
+ * @return 0 成功，-1 失败
+ */
 int ipc_global_init(void)
 {
     if (__atomic_exchange_n(&g_initialized, 1, __ATOMIC_ACQ_REL)) {
@@ -53,6 +60,9 @@ fail:
     return -1;
 }
 
+/**
+ * @brief 清理全局资源
+ */
 void ipc_global_cleanup(void)
 {
     if (!__atomic_exchange_n(&g_initialized, 0, __ATOMIC_ACQ_REL)) {
@@ -91,19 +101,27 @@ void ipc_global_cleanup(void)
 // ipc_global.c 末尾（或单独放回原文件）
 
 #if defined(__GNUC__) || defined(__clang__)
+/**
+ * @brief 库构造函数
+ */
 __attribute__((constructor))
 static void lib_constructor(void)
 {
     (void)ipc_global_init();
 }
 
+/**
+ * @brief 库析构函数
+ */
 __attribute__((destructor))
 static void lib_destructor(void)
 {
     ipc_global_cleanup();
 }
 #elif defined(IPC_PLATFORM_WINDOWS)
-// 如果必须放在某个 .c 中，建议放在 ipc_global.c
+/**
+ * @brief Windows DLL入口函数
+ */
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 {
     switch (reason) {

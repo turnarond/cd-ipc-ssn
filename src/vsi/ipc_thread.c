@@ -1,3 +1,8 @@
+/**
+ * @file ipc_thread.c
+ * @brief 线程操作实现
+ */
+
 #include "ipc_platform.h"
 #include <stdlib.h>
 
@@ -9,41 +14,57 @@
     #include <unistd.h>
     struct ipc_thread { pthread_t tid; };
 #endif
+
+/**
+ * @brief 创建线程
+ * @param out 输出参数，返回创建的线程指针
+ * @param func 线程函数
+ * @param arg 线程函数参数
+ * @return 0 成功，-1 失败
+ */
 int ipc_thread_create(ipc_thread_t **out, void *(*func)(void *), void *arg)
 {
-    ipc_thread_t *thr = malloc(sizeof(ipc_thread_t));
-    if (!thr) return -1;
+    ipc_thread_t *thread = malloc(sizeof(ipc_thread_t));
+    if (!thread) return -1;
 
 #ifdef IPC_PLATFORM_WINDOWS
-    thr->handle = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, arg, 0, NULL);
-    if (!thr->handle) {
-        free(thr);
+    thread->handle = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, arg, 0, NULL);
+    if (!thread->handle) {
+        free(thread);
         return -1;
     }
 #else
-    if (pthread_create(&thr->tid, NULL, func, arg) != 0) {
-        free(thr);
+    if (pthread_create(&thread->tid, NULL, func, arg) != 0) {
+        free(thread);
         return -1;
     }
 #endif
 
-    *out = thr;
+    *out = thread;
     return 0;
 }
 
-int ipc_thread_join(ipc_thread_t *thr)
+/**
+ * @brief 等待线程结束
+ * @param thread 线程指针
+ * @return 0 成功，-1 失败
+ */
+int ipc_thread_join(ipc_thread_t *thread)
 {
-    if (!thr) return -1;
+    if (!thread) return -1;
 #ifdef IPC_PLATFORM_WINDOWS
-    WaitForSingleObject(thr->handle, INFINITE);
-    CloseHandle(thr->handle);
+    WaitForSingleObject(thread->handle, INFINITE);
+    CloseHandle(thread->handle);
 #else
-    pthread_join(thr->tid, NULL);
+    pthread_join(thread->tid, NULL);
 #endif
-    free(thr);
+    free(thread);
     return 0;
 }
 
+/**
+ * @brief 线程退出
+ */
 void ipc_thread_exit(void)
 {
 #ifdef IPC_PLATFORM_WINDOWS
@@ -53,6 +74,10 @@ void ipc_thread_exit(void)
 #endif
 }
 
+/**
+ * @brief 线程睡眠指定毫秒数
+ * @param ms 睡眠毫秒数
+ */
 void ipc_thread_msleep(unsigned int ms)
 {
 #ifdef IPC_PLATFORM_SYLIXOS

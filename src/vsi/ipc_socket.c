@@ -1,3 +1,8 @@
+/**
+ * @file ipc_socket.c
+ * @brief 套接字操作实现
+ */
+
 #include "ipc_platform.h"
 #include <string.h>
 #include <errno.h>
@@ -8,6 +13,14 @@
     #include <unistd.h>
 #endif
 
+/**
+ * @brief 创建套接字
+ * @param family 地址族
+ * @param type 套接字类型
+ * @param protocol 协议
+ * @param nonblocking 是否非阻塞
+ * @return 套接字描述符，失败返回-1
+ */
 ipc_socket_t ipc_socket_create(int family, int type, int protocol, bool nonblocking)
 {
 #ifdef IPC_PLATFORM_LINUX
@@ -19,20 +32,24 @@ ipc_socket_t ipc_socket_create(int family, int type, int protocol, bool nonblock
     if (nonblocking) flags |= SOCK_NONBLOCK;
     return socket(family, type | flags, protocol);
 #else
-    ipc_socket_t s = socket(family, type, protocol);
-    if (s >= 0 && nonblocking) {
+    ipc_socket_t sock = socket(family, type, protocol);
+    if (sock >= 0 && nonblocking) {
 #ifdef IPC_PLATFORM_WINDOWS
         u_long on = 1;
-        ioctlsocket(s, FIONBIO, &on);
+        ioctlsocket(sock, FIONBIO, &on);
 #else
         int on = 1;
-        ioctl(s, FIONBIO, &on);
+        ioctl(sock, FIONBIO, &on);
 #endif
     }
-    return s;
+    return sock;
 #endif
 }
 
+/**
+ * @brief 关闭套接字
+ * @param sock 套接字描述符
+ */
 void ipc_socket_close(ipc_socket_t sock)
 {
 #ifdef IPC_PLATFORM_WINDOWS
@@ -42,6 +59,10 @@ void ipc_socket_close(ipc_socket_t sock)
 #endif
 }
 
+/**
+ * @brief 关闭套接字的读写
+ * @param sock 套接字描述符
+ */
 void ipc_socket_shutdown(ipc_socket_t sock)
 {
 #ifdef IPC_PLATFORM_WINDOWS
@@ -51,6 +72,11 @@ void ipc_socket_shutdown(ipc_socket_t sock)
 #endif
 }
 
+/**
+ * @brief 设置套接字发送超时
+ * @param sock 套接字描述符
+ * @param timeout_ms 超时时间（毫秒）
+ */
 void ipc_socket_set_send_timeout(ipc_socket_t sock, int timeout_ms)
 {
     struct timeval tv = {
@@ -60,6 +86,12 @@ void ipc_socket_set_send_timeout(ipc_socket_t sock, int timeout_ms)
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
+/**
+ * @brief 将套接字绑定到指定网络接口
+ * @param sock 套接字描述符
+ * @param ifname 网络接口名称
+ * @return 成功返回true，失败返回false
+ */
 bool ipc_socket_bind_to_interface(ipc_socket_t sock, const char *ifname)
 {
 #if defined(SO_BINDTODEVICE) && (defined(IPC_PLATFORM_LINUX) || defined(IPC_PLATFORM_SYLIXOS))

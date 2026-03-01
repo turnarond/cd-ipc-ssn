@@ -60,7 +60,7 @@ bool ipc_server_add_method(ipc_server_t *server,
                               const ipc_url_ref_t *url, ipc_server_rpc_handler_t callback, void *arg);
 void ipc_server_remove_method(ipc_server_t *server, const ipc_url_ref_t *url);
 int ipc_server_response(ipc_server_t *server, cli_id_t id,
-                           uint8_t status, uint16_t seqno, const ipc_data_ref_t *data);
+                           uint32_t status, uint16_t seqno, const ipc_data_ref_t *data);
 
 /* Connection Management */
 int ipc_server_peer_count(ipc_server_t *server);

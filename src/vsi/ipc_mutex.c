@@ -1,3 +1,8 @@
+/**
+ * @file ipc_mutex.c
+ * @brief 互斥锁和自旋锁实现
+ */
+
 #include "ipc_platform.h"
 #include <stdlib.h>
 
@@ -13,103 +18,149 @@
     struct ipc_spinlock { pthread_spinlock_t lock; };
     struct ipc_thread { pthread_t tid; };
 #endif
+
+/**
+ * @brief 初始化互斥锁
+ * @param out 输出参数，返回初始化后的互斥锁指针
+ * @return 0 成功，-1 失败
+ */
 int ipc_mutex_init(ipc_mutex_t **out)
 {
-    ipc_mutex_t *m = malloc(sizeof(ipc_mutex_t));
-    if (!m) return -1;
+    ipc_mutex_t *mutex = malloc(sizeof(ipc_mutex_t));
+    if (!mutex) return -1;
 
 #ifdef IPC_PLATFORM_WINDOWS
-    if (!InitializeCriticalSectionEx(&m->cs, 8192, CRITICAL_SECTION_NO_DEBUG_INFO)) {
-        free(m);
+    if (!InitializeCriticalSectionEx(&mutex->cs, 8192, CRITICAL_SECTION_NO_DEBUG_INFO)) {
+        free(mutex);
         return -1;
     }
 #else
-    if (pthread_mutex_init(&m->mtx, NULL) != 0) {
-        free(m);
+    if (pthread_mutex_init(&mutex->mtx, NULL) != 0) {
+        free(mutex);
         return -1;
     }
 #endif
-    *out = m;
+    *out = mutex;
     return 0;
 }
 
-int ipc_mutex_destroy(ipc_mutex_t *m)
+/**
+ * @brief 销毁互斥锁
+ * @param mutex 互斥锁指针
+ * @return 0 成功，-1 失败
+ */
+int ipc_mutex_destroy(ipc_mutex_t *mutex)
 {
-    if (!m) return -1;
+    if (!mutex) return -1;
 #ifdef IPC_PLATFORM_WINDOWS
-    DeleteCriticalSection(&m->cs);
+    DeleteCriticalSection(&mutex->cs);
 #else
-    pthread_mutex_destroy(&m->mtx);
+    pthread_mutex_destroy(&mutex->mtx);
 #endif
-    free(m);
+    free(mutex);
     return 0;
 }
 
-int ipc_mutex_lock(ipc_mutex_t *m) {
+/**
+ * @brief 加锁互斥锁
+ * @param mutex 互斥锁指针
+ * @return 0 成功
+ */
+int ipc_mutex_lock(ipc_mutex_t *mutex)
+{
 #ifdef IPC_PLATFORM_WINDOWS
-    EnterCriticalSection(&m->cs);
+    EnterCriticalSection(&mutex->cs);
 #else
-    pthread_mutex_lock(&m->mtx);
+    pthread_mutex_lock(&mutex->mtx);
 #endif
     return 0;
 }
 
-int ipc_mutex_unlock(ipc_mutex_t *m) {
+/**
+ * @brief 解锁互斥锁
+ * @param mutex 互斥锁指针
+ * @return 0 成功
+ */
+int ipc_mutex_unlock(ipc_mutex_t *mutex)
+{
 #ifdef IPC_PLATFORM_WINDOWS
-    LeaveCriticalSection(&m->cs);
+    LeaveCriticalSection(&mutex->cs);
 #else
-    pthread_mutex_unlock(&m->mtx);
+    pthread_mutex_unlock(&mutex->mtx);
 #endif
     return 0;
 }
 
 // ===== Spinlock =====
+
+/**
+ * @brief 初始化自旋锁
+ * @param out 输出参数，返回初始化后的自旋锁指针
+ * @return 0 成功，-1 失败
+ */
 int ipc_spinlock_init(ipc_spinlock_t **out)
 {
-    ipc_spinlock_t *s = malloc(sizeof(ipc_spinlock_t));
-    if (!s) return -1;
+    ipc_spinlock_t *spinlock = malloc(sizeof(ipc_spinlock_t));
+    if (!spinlock) return -1;
 
 #ifdef IPC_PLATFORM_WINDOWS
-    if (!InitializeCriticalSectionEx(&s->cs, 4000, CRITICAL_SECTION_NO_DEBUG_INFO)) {
-        free(s);
+    if (!InitializeCriticalSectionEx(&spinlock->cs, 4000, CRITICAL_SECTION_NO_DEBUG_INFO)) {
+        free(spinlock);
         return -1;
     }
 #else
-    if (pthread_spin_init(&s->lock, 0) != 0) {
-        free(s);
+    if (pthread_spin_init(&spinlock->lock, 0) != 0) {
+        free(spinlock);
         return -1;
     }
 #endif
-    *out = s;
+    *out = spinlock;
     return 0;
 }
 
-int ipc_spinlock_destroy(ipc_spinlock_t *s)
+/**
+ * @brief 销毁自旋锁
+ * @param spinlock 自旋锁指针
+ * @return 0 成功，-1 失败
+ */
+int ipc_spinlock_destroy(ipc_spinlock_t *spinlock)
 {
-    if (!s) return -1;
+    if (!spinlock) return -1;
 #ifdef IPC_PLATFORM_WINDOWS
-    DeleteCriticalSection(&s->cs);
+    DeleteCriticalSection(&spinlock->cs);
 #else
-    pthread_spin_destroy(&s->lock);
+    pthread_spin_destroy(&spinlock->lock);
 #endif
-    free(s);
+    free(spinlock);
     return 0;
 }
 
-int ipc_spinlock_lock(ipc_spinlock_t *s) {
+/**
+ * @brief 加锁自旋锁
+ * @param spinlock 自旋锁指针
+ * @return 0 成功
+ */
+int ipc_spinlock_lock(ipc_spinlock_t *spinlock)
+{
 #ifdef IPC_PLATFORM_WINDOWS
-    EnterCriticalSection(&s->cs);
+    EnterCriticalSection(&spinlock->cs);
 #else
-    pthread_spin_lock(&s->lock);
+    pthread_spin_lock(&spinlock->lock);
 #endif
     return 0;
 }
 
-int ipc_spinlock_unlock(ipc_spinlock_t *s) {
+/**
+ * @brief 解锁自旋锁
+ * @param spinlock 自旋锁指针
+ * @return 0 成功
+ */
+int ipc_spinlock_unlock(ipc_spinlock_t *spinlock)
+{
 #ifdef IPC_PLATFORM_WINDOWS
-    LeaveCriticalSection(&s->cs);
+    LeaveCriticalSection(&spinlock->cs);
 #else
-    pthread_spin_unlock(&s->lock);
+    pthread_spin_unlock(&spinlock->lock);
 #endif
     return 0;
 }

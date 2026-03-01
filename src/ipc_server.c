@@ -16,6 +16,7 @@
 #include "ipc_list.h"
 #include "ipc_server.h"
 #include "ipc_protocol.h"
+#include "ipc_error.h"
 #include "ipc_global.h"
 #include "util/ipc_log.h"
 
@@ -107,7 +108,7 @@ struct input_arg {
 /*
  * Server timer thread handle
  */
-void *ipc_server_timer_handle (void *arg)
+void *ipc_server_timer_handle(void *arg)
 {
     bool emit;
     ipc_server_t *server;
@@ -162,7 +163,7 @@ void *ipc_server_timer_handle (void *arg)
 /*
  * Command hash
  */
-static int ipc_server_url_hash (const ipc_url_ref_t *url)
+static int ipc_server_url_hash(const ipc_url_ref_t *url)
 {
     int i, sum = 0;
 
@@ -176,7 +177,7 @@ static int ipc_server_url_hash (const ipc_url_ref_t *url)
 /*
  * Find client
  */
-static ipc_server_cli_t *ipc_server_cli_find (ipc_server_t *server, cli_id_t id)
+static ipc_server_cli_t *ipc_server_cli_find(ipc_server_t *server, cli_id_t id)
 {
     int hash = ipc_server_cli_hash(id);
     ipc_server_cli_t *cli;
@@ -193,7 +194,7 @@ static ipc_server_cli_t *ipc_server_cli_find (ipc_server_t *server, cli_id_t id)
 /*
  * Assign new Client ID
  */
-static cli_id_t ipc_server_cli_newid (ipc_server_t *server)
+static cli_id_t ipc_server_cli_newid(ipc_server_t *server)
 {
     cli_id_t id;
 
@@ -208,7 +209,7 @@ static cli_id_t ipc_server_cli_newid (ipc_server_t *server)
 /*
  * Initialize a client
  */
-static void ipc_server_cli_init (ipc_server_t *server, ipc_server_cli_t *cli)
+static void ipc_server_cli_init(ipc_server_t *server, ipc_server_cli_t *cli)
 {
     int hash;
 
@@ -224,7 +225,7 @@ static void ipc_server_cli_init (ipc_server_t *server, ipc_server_cli_t *cli)
 /*
  * Destroy a client
  */
-static void ipc_server_cli_destroy (ipc_server_t *server, ipc_server_cli_t *cli)
+static void ipc_server_cli_destroy(ipc_server_t *server, ipc_server_cli_t *cli)
 {
     int hash = ipc_server_cli_hash(cli->id);
     ipc_server_sub_t *sub, *sub_temp;
@@ -249,7 +250,7 @@ static void ipc_server_cli_destroy (ipc_server_t *server, ipc_server_cli_t *cli)
 /*
  * Close a client
  */
-bool ipc_server_peer_close (ipc_server_t *server, cli_id_t id)
+bool ipc_server_peer_close(ipc_server_t *server, cli_id_t id)
 {
     bool ret;
     ipc_server_cli_t *cli;
@@ -282,64 +283,18 @@ bool ipc_server_peer_close (ipc_server_t *server, cli_id_t id)
 static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, 
     const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
-    ssize_t len;
-    uint64_t total = (uint64_t)IPC_HEADER_SIZE;
-    
-    if (url) {
-        total += url->url_len;
-        ipc_hdr->url_len = htons((uint16_t)url->url_len);
-    }
-
-    if (data) {
-        total += data->length;
-        ipc_hdr->data_len =  htonl(data->length);
-    } 
-
-    if (total > IPC_MAX_PACKET_SIZE || total < IPC_HEADER_SIZE) {
-        LOG_ERROR("ipc server cli sendmsg failed: length %lu invalid", total);
-        return false;
-    }
-
-    struct iovec iov[3] = {
-        {
-            .iov_base = (void*)ipc_hdr,
-            .iov_len = sizeof(ipc_header_t)
-        }
-    };
-
-    struct msghdr msg = {
-        .msg_iov = iov,
-        .msg_iovlen = 1
-    };
-
-    if (url) {
-        iov[msg.msg_iovlen].iov_base = url->url;
-        iov[msg.msg_iovlen].iov_len = url->url_len;
-        msg.msg_iovlen++;
-    }
-
-    if (data) {
-        if (data->data) {
-            iov[msg.msg_iovlen].iov_base = data->data;
-            iov[msg.msg_iovlen].iov_len = data->length;
-            msg.msg_iovlen++;
-        }
-    }
-
-    len = sendmsg(cli->sock, &msg, 0); 
-    if (len < 0) {
+    bool ret = ipc_send_message(cli->sock, ipc_hdr, url, data);
+    if (!ret) {
         ipc_socket_shutdown(cli->sock);
         LOG_ERROR("ipc server sendmsg faield, cli %d errno %d", cli->id, errno);
-        return false;
     }
-    LOG_DEBUG("ipc server sendmsg success, length is %lu", len);
-    return true;
+    return ret;
 }
 
 /*
  * Client subscribe match
  */
-static bool ipc_server_cli_sub_match (ipc_server_cli_t *cli, const ipc_url_ref_t *url)
+static bool ipc_server_cli_sub_match(ipc_server_cli_t *cli, const ipc_url_ref_t *url)
 {
     size_t path_len;
     ipc_server_sub_t *sub;
@@ -380,12 +335,12 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
     server->sock   = -1;
 
     if (ipc_mutex_init(&server->lock)) {
-        LOG_ERROR("ipc server create with options: init mutex failed.");
+        LOG_ERROR("ipc server create with options: init mutex failed, errno %d", errno);
         goto error;
     }
 
     if (ipc_event_pair_create(&server->evtfd) != 0) {
-        LOG_ERROR("ipc server create with options: event pair create failed.");
+        LOG_ERROR("ipc server create with options: event pair create failed, errno %d", errno);
         goto error;
     }
 
@@ -427,30 +382,36 @@ error:
     if (server->evtfd) ipc_event_pair_destroy(server->evtfd);
     ipc_mutex_destroy(server->lock);
     free(server);
-    LOG_ERROR("ipc server create with options: failed");
+    LOG_ERROR("ipc server create with options: failed, errno %d", errno);
     return NULL;
 }
 
-/*
- * Create IPC server
- * Warning: This function must be mutually exclusive with the ipc_server_destroy() call
+/**
+ * @brief 创建IPC服务器
+ * 
+ * @param server_info 服务器信息
+ * @return 服务器实例指针，失败返回NULL
+ * @warning 此函数必须与ipc_server_destroy()调用互斥
  */
-ipc_server_t *ipc_server_create (const char *server_info)
+ipc_server_t *ipc_server_create(const char *server_info)
 {
     return ipc_server_create_with_options(server_info, NULL);
 }
 
-/*
- * Start IPC server
+/**
+ * @brief 启动IPC服务器
+ * 
+ * @param server 服务器实例指针
+ * @return 启动成功返回true，失败返回false
  */
-bool ipc_server_start (ipc_server_t *server)
+bool ipc_server_start(ipc_server_t *server)
 {
     int en = 1;
 
     struct sockaddr_un addr;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server start: invalid server handle");
+        ipc_handle_error(IPC_ERR_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid server handle");
         return  (false);
     }
 
@@ -467,12 +428,12 @@ bool ipc_server_start (ipc_server_t *server)
         }
     } else if (errno != ENOENT) {
         LOG_ERROR("ipc server start: stat file %s exist but failed, errno %d.", server->srv_name, errno);
-        return -1;
+        return false;
     }
 
     server->sock = ipc_socket_create(AF_UNIX, SOCK_STREAM, 0, false);
     if (server->sock < 0) {
-        LOG_ERROR("ipc server start: create socket failed, errno is %d.", errno);
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "create socket failed, errno is %d", errno);
         return  (false);
     }
 
@@ -487,7 +448,7 @@ bool ipc_server_start (ipc_server_t *server)
     strcpy(addr.sun_path, server->srv_name);
 
     if (bind(server->sock, (struct sockaddr *)&addr, SUN_LEN(&addr))) {
-        LOG_ERROR("ipc server start: bind failed, errno is %d", errno);
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "bind failed, errno is %d", errno);
         goto error;
     }
 
@@ -512,10 +473,15 @@ error:
     return  (false);
 }
 
-/*
- * Get IPC server address (must be called after `ipc_server_start`)
+/**
+ * @brief 获取IPC服务器地址（必须在`ipc_server_start`之后调用）
+ * 
+ * @param server 服务器实例指针
+ * @param addr 地址结构体
+ * @param namelen 地址长度
+ * @return 获取成功返回true，失败返回false
  */
-int ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t *namelen)
+int ipc_server_address(ipc_server_t *server, struct sockaddr *addr, socklen_t *namelen)
 {
     if (!server || !server->valid || server->sock < 0) {
         LOG_ERROR("ipc server address: invalid server handle.");
@@ -531,11 +497,13 @@ int ipc_server_address (ipc_server_t *server, struct sockaddr *addr, socklen_t *
     return  (true);
 }
 
-/*
- * Close IPC server
- * Warning: This function must be mutually exclusive with the ipc_server_create() call
+/**
+ * @brief 关闭IPC服务器
+ * 
+ * @param server 服务器实例指针
+ * @warning 此函数必须与ipc_server_create()调用互斥
  */
-void ipc_server_destroy (ipc_server_t *server)
+void ipc_server_destroy(ipc_server_t *server)
 {
     int i;
     ipc_server_cli_t *cli, *cli_temp;
@@ -593,8 +561,12 @@ void ipc_server_destroy (ipc_server_t *server)
     LOG_DEBUG("ipc server destory success.");
 }
 
-/*
- * IPC server set on client callback
+/**
+ * @brief 设置客户端连接回调函数
+ * 
+ * @param server 服务器实例指针
+ * @param oncli 连接回调函数
+ * @param arg 回调参数
  */
 void ipc_server_set_connect_handler (ipc_server_t *server, ipc_on_connect_t oncli, void *arg)
 {
@@ -604,8 +576,11 @@ void ipc_server_set_connect_handler (ipc_server_t *server, ipc_on_connect_t oncl
     }
 }
 
-/*
- * IPC remote clients count
+/**
+ * @brief 获取远程客户端数量
+ * 
+ * @param server 服务器实例指针
+ * @return 客户端数量
  */
 int ipc_server_peer_count (ipc_server_t *server)
 {
@@ -634,8 +609,12 @@ int ipc_server_peer_count (ipc_server_t *server)
     return  (cnt);
 }
 
-/*
- * IPC server is subscribed
+/**
+ * @brief 检查服务器是否被订阅
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
+ * @return 已订阅返回true，未订阅返回false
  */
 bool ipc_server_is_subscribed (ipc_server_t *server, const ipc_url_ref_t *url)
 {
@@ -673,8 +652,13 @@ bool ipc_server_is_subscribed (ipc_server_t *server, const ipc_url_ref_t *url)
     return  (false);
 }
 
-/*
- * IPC server do publish
+/**
+ * @brief 服务器发布消息
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发布成功返回true，失败返回false
  */
 static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
@@ -714,16 +698,27 @@ static bool ipc_server_do_publish (ipc_server_t *server, const ipc_url_ref_t *ur
     return  (true);
 }
 
-/*
- * IPC server publish
+/**
+ * @brief 服务器发布消息
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发布成功返回true，失败返回false
  */
 int ipc_server_publish (ipc_server_t *server, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     return  (ipc_server_do_publish(server, url, data));
 }
 
-/*
- * IPC server add RPC listener
+/**
+ * @brief 添加RPC监听器
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @return 添加成功返回true，失败返回false
  */
 bool ipc_server_add_method (ipc_server_t *server,
                                const ipc_url_ref_t *url, ipc_server_rpc_handler_t callback, void *arg)
@@ -789,8 +784,11 @@ bool ipc_server_add_method (ipc_server_t *server,
     return  (true);
 }
 
-/*
- * IPC server remove RPC listener
+/**
+ * @brief 移除RPC监听器
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
  */
 void ipc_server_remove_method (ipc_server_t *server, const ipc_url_ref_t *url)
 {
@@ -848,8 +846,14 @@ void ipc_server_remove_method (ipc_server_t *server, const ipc_url_ref_t *url)
     LOG_DEBUG("ipc server remove method %.*s success.", (int)url->url_len, url->url);
 }
 
-/*
- * IPC remote client address
+/**
+ * @brief 获取远程客户端地址
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param addr 地址结构体
+ * @param namelen 地址长度
+ * @return 获取成功返回true，失败返回false
  */
 int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr *addr, socklen_t *namelen)
 {
@@ -865,7 +869,11 @@ int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr 
     cli = ipc_server_cli_find(server, id);
     if (!cli || getpeername(cli->sock, addr, namelen)) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server peer address: invalid client handle %d.", cli->id);
+        if (!cli) {
+            LOG_ERROR("ipc server peer address: client not found for id %d.", id);
+        } else {
+            LOG_ERROR("ipc server peer address: invalid client handle %d.", cli->id);
+        }
         return  (false);
     }
 
@@ -874,11 +882,18 @@ int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr 
     return  (true);
 }
 
-/*
- * IPC server RPC reply
+/**
+ * @brief 服务器RPC响应
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param status 状态码
+ * @param seqno 序列号
+ * @param data 数据引用
+ * @return 响应成功返回true，失败返回false
  */
 int ipc_server_response (ipc_server_t *server, cli_id_t id,
-                            uint8_t status, uint16_t seqno, const ipc_data_ref_t *data)
+                            uint32_t status, uint16_t seqno, const ipc_data_ref_t *data)
 {
     bool ret;
     ipc_server_cli_t *cli;
@@ -904,13 +919,22 @@ int ipc_server_response (ipc_server_t *server, cli_id_t id,
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server response success: cid %d.", id);
+    if (ret) {
+        LOG_DEBUG("ipc server response success: cid %d.", id);
+    } else {
+        LOG_ERROR("ipc server response failed: cid %d.", id);
+    }
 
     return  (ret);
 }
 
-/*
- * IPC remote client keepalive
+/**
+ * @brief 远程客户端心跳
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param keepalive 心跳时间
+ * @return 设置成功返回true，失败返回false
  */
 bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
 {
@@ -942,8 +966,13 @@ bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
     return  (true);
 }
 
-/*
- * IPC server get remote client id array
+/**
+ * @brief 获取远程客户端ID列表
+ * 
+ * @param server 服务器实例指针
+ * @param ids ID数组
+ * @param max_cnt 最大数量
+ * @return 实际获取的ID数量
  */
 int ipc_server_peer_list (ipc_server_t *server, cli_id_t ids[], int max_cnt)
 {
@@ -976,8 +1005,15 @@ out:
     return  (cnt);
 }
 
-/*
- * IPC server set send packet to client timeout, NULL means send wait forever when congested.
+/**
+ * @brief 设置服务器发送数据包到客户端的超时时间
+ * 
+ * NULL表示拥塞时无限等待
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param timeout_ms 超时时间（毫秒）
+ * @return 设置成功返回true，失败返回false
  */
 bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout_ms)
 {
@@ -1010,8 +1046,14 @@ bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout
     return  (cli ? true : false);
 }
 
-/*
- * IPC server send message
+/**
+ * @brief 服务器发送消息
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发送成功返回true，失败返回false
  */
 int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
@@ -1048,21 +1090,35 @@ int ipc_server_cli_do_message (ipc_server_t *server, cli_id_t id, const ipc_url_
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server do message to cid %d success.", id);
+    if (ret) {
+        LOG_DEBUG("ipc server do message to cid %d success.", id);
+    } else {
+        LOG_ERROR("ipc server do message to cid %d failed.", id);
+    }
 
     return  (ret);
 }
 
-/*
- * IPC server send message
+/**
+ * @brief 服务器发送消息
+ * 
+ * @param server 服务器实例指针
+ * @param id 客户端ID
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发送成功返回true，失败返回false
  */
 int ipc_server_message (ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     return  (ipc_server_cli_do_message(server, id, url, data));
 }
 
-/*
- * IPC server set on message callback
+/**
+ * @brief 设置消息处理回调函数
+ * 
+ * @param server 服务器实例指针
+ * @param callback 消息处理回调函数
+ * @param arg 回调参数
  */
 void ipc_server_set_message_handler (ipc_server_t *server, ipc_server_msg_handler_t callback, void *arg)
 {
@@ -1072,8 +1128,12 @@ void ipc_server_set_message_handler (ipc_server_t *server, ipc_server_msg_handle
     }
 }
 
-/*
- * IPC server checking event
+/**
+ * @brief 获取服务器文件描述符
+ * 
+ * @param server 服务器实例指针
+ * @param rfds 文件描述符集
+ * @return 最大文件描述符，失败返回-1
  */
 static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
 {
@@ -1111,8 +1171,12 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
     return  (max_fd);
 }
 
-/*
- * Command match
+/**
+ * @brief 命令匹配
+ * 
+ * @param server 服务器实例指针
+ * @param url URL引用
+ * @return 匹配的命令指针，未匹配返回NULL
  */
 static ipc_server_cmd_t *ipc_server_cmd_match (ipc_server_t *server, const ipc_url_ref_t *url)
 {
@@ -1136,28 +1200,154 @@ static ipc_server_cmd_t *ipc_server_cmd_match (ipc_server_t *server, const ipc_u
     return  (server->def_cmd);
 }
 
-/*
- * IPC server packet input
+/**
+ * @brief 服务器数据包输入处理
+ * 
+ * @param ipc_hdr IPC消息头部
+ * @param arg 回调参数
+ * @return 处理成功返回true，失败返回false
  */
-static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
+static bool ipc_server_handle_service_info(ipc_server_t *server, ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, uint16_t seqno)
 {
-    uint8_t status, hs_buf[6];
-    uint16_t seqno, cid;
-    struct input_arg *input_arg = arg;
-    ipc_server_t *server  = input_arg->server;
-    ipc_server_cli_t *cli = input_arg->cli;
-    ipc_server_sub_t *sub, *sub_temp;
+    ipc_header_t *send_hdr;
+    ipc_data_ref_t reply;
+    uint32_t cid = htonl(cli->id);
+    
+    send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
+    reply.data = &cid;
+    reply.length = sizeof(uint32_t);
+    ipc_server_cli_sendmsg(cli, send_hdr, NULL, &reply);
+    
+    if (cli->hst.alive) {
+        cli->hst.alive = 0;
+        DELETE_FROM_LIST(&cli->hst, server->hst_h);
+    }
+    
+    ipc_mutex_unlock(server->lock);
+    
+    if (!cli->onconn) {
+        cli->onconn = true;
+        if (server->oncli) {
+            server->oncli(server, cli->id, true, server->carg);
+        }
+    }
+    
+    return true;
+}
+
+static bool ipc_server_handle_rpc_request(ipc_server_t *server, ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, uint16_t seqno, const ipc_url_ref_t *url, const ipc_data_ref_t *data)
+{
     ipc_server_cmd_t *cmd;
     ipc_server_rpc_handler_t callback;
     ipc_header_t *send_hdr;
+    
+    if (url->url_len && url->url[0] == '/') {
+        cmd = ipc_server_cmd_match(server, url);
+        if (cmd) {
+            callback = cmd->onrpc;
+            ipc_mutex_unlock(server->lock);
+            callback(server, cli->id, ipc_hdr, (ipc_url_ref_t *)url, (ipc_data_ref_t *)data, cmd->arg);
+        } else {
+            send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_ERR_NOT_FOUND, seqno);
+            ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
+            ipc_mutex_unlock(server->lock);
+        }
+    } else {
+        send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_ERR_INVALID_ARGS, seqno);
+        ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
+        ipc_mutex_unlock(server->lock);
+    }
+    
+    return true;
+}
+
+static bool ipc_server_handle_subscribe(ipc_server_t *server, ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, uint16_t seqno, const ipc_url_ref_t *url)
+{
+    uint32_t status;
+    ipc_server_sub_t *sub;
+    ipc_header_t *send_hdr;
+    
+    if (url->url_len && url->url[0] == '/') {
+        LIST_FOREACH(sub, cli->subscribed) {
+            if (sub->len == url->url_len && !memcmp(sub->url, url->url, sub->len)) {
+                break;
+            }
+        }
+        if (!sub) {
+            sub = (ipc_server_sub_t *)calloc(1, sizeof(ipc_server_sub_t) + url->url_len);
+            if (!sub) {
+                status = IPC_ERR_OUT_OF_MEMORY;
+            } else {
+                sub->len = url->url_len;
+                memcpy(sub->url, url->url, sub->len);
+                sub->url[sub->len] = '\0';
+                INSERT_TO_HEADER(sub, cli->subscribed);
+                status = 0;
+            }
+        } else {
+            status = 0;
+        }
+    } else {
+        status = IPC_ERR_INVALID_ARGS;
+    }
+    
+    send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
+    ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
+    ipc_mutex_unlock(server->lock);
+    
+    return true;
+}
+
+static bool ipc_server_handle_unsubscribe(ipc_server_t *server, ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, uint16_t seqno, const ipc_url_ref_t *url)
+{
+    uint32_t status = 0;
+    ipc_server_sub_t *sub, *sub_temp;
+    ipc_header_t *send_hdr;
+    
+    if (url->url_len && url->url[0] == '/') {
+        LIST_FOREACH_SAFE(sub, sub_temp, cli->subscribed) {
+            if (url->url_len != sub->len || memcmp(sub->url, url->url, sub->len)) {
+                continue;
+            }
+            DELETE_FROM_LIST(sub, cli->subscribed);
+            free(sub);
+            break;
+        }
+    } else {
+        LIST_FOREACH_SAFE(sub, sub_temp, cli->subscribed) {
+            DELETE_FROM_LIST(sub, cli->subscribed);
+            free(sub);
+        }
+    }
+    
+    send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
+    ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
+    ipc_mutex_unlock(server->lock);
+    
+    return true;
+}
+
+static bool ipc_server_handle_ping_echo(ipc_server_t *server, ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, uint16_t seqno)
+{
+    ipc_header_t *send_hdr;
+    
+    send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
+    ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
+    ipc_mutex_unlock(server->lock);
+    
+    return true;
+}
+
+static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
+{
+    struct input_arg *input_arg = arg;
+    ipc_server_t *server  = input_arg->server;
+    ipc_server_cli_t *cli = input_arg->cli;
+    uint16_t seqno;
     ipc_url_ref_t url;
-    ipc_data_ref_t data, reply;
+    ipc_data_ref_t data;
 
     LOG_DEBUG("ipc server input: msg type is %d.", ipc_hdr->msg_type);
-
-    if (ipc_hdr->msg_type == IPC_MSG_TYPE_REPLY_FLAG) {
-        return  (true);
-    }
 
     seqno = ipc_get_seqno(ipc_hdr);
     ipc_get_url(ipc_hdr, &url);
@@ -1179,99 +1369,23 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
     switch (ipc_hdr->msg_type) {
 
     case IPC_MSG_TYPE_SERVICE_INFO:
-        send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
-        cid = htonl(cli->id);
-        reply.data = &cid;
-        reply.length = sizeof(uint32_t);
-        ipc_server_cli_sendmsg(cli, send_hdr, NULL, &reply);
-        if (cli->hst.alive) {
-            cli->hst.alive = 0;
-            DELETE_FROM_LIST(&cli->hst, server->hst_h);
-        }
-        ipc_mutex_unlock(server->lock);
-        if (!cli->onconn) {
-            cli->onconn = true;
-            if (server->oncli) {
-                server->oncli(server, cli->id, true, server->carg);
-            }
-        }
+        ipc_server_handle_service_info(server, cli, ipc_hdr, seqno);
         break;
 
     case IPC_MSG_TYPE_RPC_REQUEST:
-        if (url.url_len && url.url[0] == '/') {
-            cmd = ipc_server_cmd_match(server, &url);
-            if (cmd) {
-                callback = cmd->onrpc;
-                ipc_mutex_unlock(server->lock);
-                callback(server, cli->id, ipc_hdr, &url, &data, cmd->arg);
-            } else {
-                send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_STATUS_BAD_URL, seqno);
-                ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-                ipc_mutex_unlock(server->lock);
-            }
-        } else {
-            send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, IPC_STATUS_INVALID_ARGS, seqno);
-            ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-            ipc_mutex_unlock(server->lock);
-        }
+        ipc_server_handle_rpc_request(server, cli, ipc_hdr, seqno, &url, &data);
         break;
 
     case IPC_MSG_TYPE_SUBSCRIBE:
-        if (url.url_len && url.url[0] == '/') {
-            LIST_FOREACH(sub, cli->subscribed) {
-                if (sub->len == url.url_len && !memcmp(sub->url, url.url, sub->len)) {
-                    break;
-                }
-            }
-            if (!sub) {
-                sub = (ipc_server_sub_t *)calloc(1, sizeof(ipc_server_sub_t) + url.url_len);
-                if (!sub) {
-                    status = IPC_STATUS_OUT_OF_MEMORY;
-                } else {
-                    sub->len = url.url_len;
-                    memcpy(sub->url, url.url, sub->len);
-                    sub->url[sub->len] = '\0';
-                    INSERT_TO_HEADER(sub, cli->subscribed);
-                    status = 0;
-                }
-            } else {
-                status = 0;
-            }
-        } else {
-            status = IPC_STATUS_INVALID_ARGS;
-        }
-        send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
-        ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ipc_mutex_unlock(server->lock);
+        ipc_server_handle_subscribe(server, cli, ipc_hdr, seqno, &url);
         break;
 
     case IPC_MSG_TYPE_UNSUBSCRIBE:
-        if (url.url_len && url.url[0] == '/') {
-            LIST_FOREACH_SAFE(sub, sub_temp, cli->subscribed) {
-                if (url.url_len != sub->len || memcmp(sub->url, url.url, sub->len)) {
-                    continue;
-                }
-                DELETE_FROM_LIST(sub, cli->subscribed);
-                free(sub);
-                break;
-            }
-            status = 0;
-        } else {
-            LIST_FOREACH_SAFE(sub, sub_temp, cli->subscribed) {
-                DELETE_FROM_LIST(sub, cli->subscribed);
-                free(sub);
-            }
-            status = 0;
-        }
-        send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, status, seqno);
-        ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ipc_mutex_unlock(server->lock);
+        ipc_server_handle_unsubscribe(server, cli, ipc_hdr, seqno, &url);
         break;
 
     case IPC_MSG_TYPE_PING_ECHO:
-        send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
-        ipc_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
-        ipc_mutex_unlock(server->lock);
+        ipc_server_handle_ping_echo(server, cli, ipc_hdr, seqno);
         break;
 
     default:
@@ -1282,68 +1396,67 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
     return  (server->valid);
 }
 
-/*
- * IPC server input event
+/**
+ * @brief 服务器输入事件处理
+ * 
+ * @param server 服务器实例指针
+ * @param rfds 文件描述符集
  */
-static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
+/**
+ * @brief 处理客户端输入事件
+ * 
+ * @param server 服务器实例指针
+ * @param cli 客户端实例指针
+ * @param rfds 文件描述符集
+ */
+static void ipc_server_handle_client_input(ipc_server_t *server, ipc_server_cli_t *cli, const fd_set *rfds)
 {
-    int i;
-    int sock;
     ssize_t num;
-    socklen_t addr_len = sizeof(struct sockaddr_storage);
-    struct sockaddr_storage addr;
-    ipc_header_t *ipc_hdr;
-    cli_id_t id;
-    ipc_server_cli_t *cli, *cli_temp;
-    ipc_server_hst_t *hst, *hst_temp;
     struct input_arg input_arg;
+    
+    if (FD_ISSET(cli->sock, rfds)) {
+        num = recv(cli->sock, server->recvbuf, IPC_MAX_PACKET_SIZE, MSG_DONTWAIT);
+        if (num > 0) {
+            input_arg.server = server;
+            input_arg.cli = cli;
+            ipc_stream_feed(&cli->recv, server->recvbuf, num, ipc_server_input, &input_arg);
+        }
 
-    if (!server || !server->valid) {
-        return;
-    }
-
-    for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
-        LIST_FOREACH_SAFE(cli, cli_temp, server->clis[i]) {
-            if (FD_ISSET(cli->sock, rfds)) {
-                num   = recv(cli->sock, server->recvbuf, IPC_MAX_PACKET_SIZE, MSG_DONTWAIT);
-                if (num > 0) {
-                    input_arg.server = server;
-                    input_arg.cli    = cli;
-                    ipc_stream_feed(&cli->recv, server->recvbuf,
-                                        num, ipc_server_input, &input_arg);
-                }
-
-                if (num == 0 || (num < 0 && errno != EWOULDBLOCK)) {
-                    if (cli->onconn) {
-                        cli->onconn = false;
-                        if (server->oncli) {
-                            server->oncli(server, cli->id, false, server->carg);
-                        }
-                    }
-
-                    ipc_mutex_lock(server->lock);
-
-                    ipc_server_cli_destroy(server, cli);
-
-                    ipc_mutex_unlock(server->lock);
+        if (num == 0 || (num < 0 && errno != EWOULDBLOCK)) {
+            if (cli->onconn) {
+                cli->onconn = false;
+                if (server->oncli) {
+                    server->oncli(server, cli->id, false, server->carg);
                 }
             }
+
+            ipc_mutex_lock(server->lock);
+            ipc_server_cli_destroy(server, cli);
+            ipc_mutex_unlock(server->lock);
         }
     }
+}
 
+static void ipc_server_handle_new_connection(ipc_server_t *server, const fd_set *rfds)
+{
+    int sock;
+    socklen_t addr_len = sizeof(struct sockaddr_storage);
+    struct sockaddr_storage addr;
+    ipc_server_cli_t *cli;
+    
     if (server->sock >= 0 && FD_ISSET(server->sock, rfds)) {
 #ifdef __USE_GNU
         sock = accept4(server->sock, (struct sockaddr *)&addr, &addr_len, SOCK_NONBLOCK);
 #else
         sock = accept(server->sock, (struct sockaddr *)&addr, &addr_len);
-                        /* Set nonblock */
+        /* Set nonblock */
         int flags = fcntl(sock, F_GETFL, 0);
         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
 #endif
         if (sock >= 0) {
             cli = (ipc_server_cli_t *)calloc(1, sizeof(ipc_server_cli_t));
             if (cli) {
-                cli->sock   = sock;
+                cli->sock = sock;
                 cli->active = false;
                 /* TODO: deal with init recv buffer. */
                 ipc_stream_init(&cli->recv);
@@ -1352,14 +1465,20 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
                 ipc_mutex_lock(server->lock);
                 ipc_server_cli_init(server, cli);
                 ipc_mutex_unlock(server->lock);
-
             } else {
                 ipc_socket_close(sock);
             }
         }
     }
+}
 
-    if (FD_ISSET(ipc_event_pair_get_read_fd(server->evtfd), rfds)) {
+static void ipc_server_handle_event_input(ipc_server_t *server, const fd_set *rfds)
+{
+    int evt_fd = ipc_event_pair_get_read_fd(server->evtfd);
+    ipc_server_hst_t *hst, *hst_temp;
+    ipc_server_cli_t *cli;
+    
+    if (FD_ISSET(evt_fd, rfds)) {
         ipc_event_pair_drain(server->evtfd);
         ipc_mutex_lock(server->lock);
 
@@ -1374,6 +1493,25 @@ static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
 
         ipc_mutex_unlock(server->lock);
     }
+}
+
+static void ipc_server_input_fds (ipc_server_t *server, const fd_set *rfds)
+{
+    int i;
+    ipc_server_cli_t *cli, *cli_temp;
+
+    if (!server || !server->valid) {
+        return;
+    }
+
+    for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
+        LIST_FOREACH_SAFE(cli, cli_temp, server->clis[i]) {
+            ipc_server_handle_client_input(server, cli, rfds);
+        }
+    }
+
+    ipc_server_handle_new_connection(server, rfds);
+    ipc_server_handle_event_input(server, rfds);
 }
 
 /*
@@ -1392,7 +1530,10 @@ int ipc_server_poll(ipc_server_t *server, int timeout_ms)
     FD_ZERO(&fds);
     int max_fd = ipc_server_fds(server, &fds);
     // 阻塞空信号集，可以传递并中断所有信号
-    int cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
+    int cnt;
+    do {
+        cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
+    } while (cnt < 0 && errno == EINTR);
     if (cnt > 0) {
         ipc_server_input_fds(server, &fds);
         return 0;
@@ -1410,7 +1551,10 @@ void ipc_server_run(ipc_server_t *server)
         FD_ZERO(&fds);
         int max_fd = ipc_server_fds(server, &fds);
         // 阻塞空信号集，可以传递并中断所有信号
-        int cnt = pselect(max_fd + 1, &fds, NULL, NULL, NULL, &empty_mask);
+        int cnt;
+        do {
+            cnt = pselect(max_fd + 1, &fds, NULL, NULL, NULL, &empty_mask);
+        } while (cnt < 0 && errno == EINTR);
         if (cnt > 0) {
             ipc_server_input_fds(server, &fds);
             continue;
