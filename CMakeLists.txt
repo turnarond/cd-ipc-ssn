@@ -34,6 +34,7 @@ add_library(${PROJECT_NAME} SHARED
     src/ipc_server.c
     src/ipc_protocol.c
     src/ipc_error.c
+    src/ipc_cliauto.c
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -55,6 +56,9 @@ install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_error.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_global.h"
+    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
+)
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_cliauto.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/vsi/ipc_platform.h"
