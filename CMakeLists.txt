@@ -6,7 +6,8 @@ include(../../CMakeCommonLib)
 set(CMAKE_CXX_STANDARD 11)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_definitions(IPC_LOG_LEVEL=0)   # DEBUG
+    # add_compile_definitions(IPC_LOG_LEVEL=LOG_LEVEL_DEBUG)
+    add_definitions(-DNDEBUG)
 else()
     add_definitions(-DNDEBUG)
 endif()
@@ -34,6 +35,7 @@ add_library(${PROJECT_NAME} SHARED
     src/ipc_server.c
     src/ipc_protocol.c
     src/ipc_error.c
+    src/ipc_cliauto.c
 )
 
 install(TARGETS ${PROJECT_NAME}
@@ -57,6 +59,9 @@ install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_error.h"
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_global.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
 )
+install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_cliauto.h"
+    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
+)
 install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/vsi/ipc_platform.h"
     DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}/vsi
 )
@@ -70,3 +75,9 @@ target_link_libraries(test_ipc_client ${PROJECT_NAME})
 
 add_executable(test_ipc_comprehensive test/test_ipc_comprehensive.c)
 target_link_libraries(test_ipc_comprehensive ${PROJECT_NAME} pthread)
+
+add_executable(test_ipc_thread_safety test/test_ipc_thread_safety.c)
+target_link_libraries(test_ipc_thread_safety ${PROJECT_NAME} pthread)
+
+add_executable(test_ipc_stress test/test_ipc_stress.c)
+target_link_libraries(test_ipc_stress ${PROJECT_NAME} pthread)

@@ -557,6 +557,9 @@ void ipc_server_destroy(ipc_server_t *server)
 
     ipc_mutex_unlock(server->lock);
     ipc_mutex_destroy(server->lock);
+
+    unlink(server->srv_name);
+
     free(server);
     LOG_DEBUG("ipc server destory success.");
 }
@@ -1167,7 +1170,6 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server fds success max_fd is %d", max_fd);
     return  (max_fd);
 }
 
@@ -1346,8 +1348,6 @@ static bool ipc_server_input (ipc_header_t *ipc_hdr, void *arg)
     uint16_t seqno;
     ipc_url_ref_t url;
     ipc_data_ref_t data;
-
-    LOG_DEBUG("ipc server input: msg type is %d.", ipc_hdr->msg_type);
 
     seqno = ipc_get_seqno(ipc_hdr);
     ipc_get_url(ipc_hdr, &url);

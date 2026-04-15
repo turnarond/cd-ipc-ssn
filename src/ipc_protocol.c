@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include "ipc_protocol.h"
 #include "util/ipc_log.h"
+#include <errno.h>
 
 /* ------------------ Helper Functions ------------------ */
 static bool validate_and_get_total_length(const uint8_t *buf, size_t buf_size, size_t *out_total_len)
@@ -116,8 +117,12 @@ bool ipc_send_message(int sock, ipc_header_t *ipc_hdr,
         }
     }
 
-    // 发送消息
+    // 发送消息，使用MSG_NOSIGNAL防止SIGPIPE信号
+#if defined(MSG_NOSIGNAL)
+    send_len = sendmsg(sock, &msg, MSG_NOSIGNAL);
+#else
     send_len = sendmsg(sock, &msg, 0);
+#endif
 
     if (send_len < 0) {
         LOG_ERROR("ipc send message failed, errno %d", errno);
