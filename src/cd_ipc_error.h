@@ -1,10 +1,10 @@
 /**
- * @file ipc_error.h
+ * @file cd_ipc_error.h
  * @brief IPC错误码定义和错误处理函数
  */
 
-#ifndef IPC_ERROR_H
-#define IPC_ERROR_H
+#ifndef CD_IPC_ERROR_H
+#define CD_IPC_ERROR_H
 
 #include <stdint.h>
 
@@ -119,4 +119,4 @@ uint16_t ipc_error_code(ipc_error_t error);
  */
 void ipc_handle_error(ipc_error_t error, const char *file, int line, const char *func, const char *format, ...);
 
-#endif /* IPC_ERROR_H */
+#endif /* CD_IPC_ERROR_H */

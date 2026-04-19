@@ -2,15 +2,15 @@
  * IPC server
  */
 
-#ifndef IPC_SERVER_H
-#define IPC_SERVER_H
+#ifndef CD_IPC_SERVER_H
+#define CD_IPC_SERVER_H
 
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/un.h>
-#include "ipc_protocol.h"
-#include "ipc_global.h"
+#include "cd_ipc_protocol.h"
+#include "cd_ipc_global.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -82,7 +82,7 @@ int ipc_server_message(ipc_server_t *server, cli_id_t id, const ipc_url_ref_t *u
 }
 #endif
 
-#endif /* IPC_SERVER_H */
+#endif /* CD_IPC_SERVER_H */
 
 /*
  * end

@@ -3,8 +3,8 @@
  * @brief IPC协议定义和相关函数
  */
 
-#ifndef IPC_PROTOCOL_H
-#define IPC_PROTOCOL_H
+#ifndef CD_IPC_PROTOCOL_H
+#define CD_IPC_PROTOCOL_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -14,6 +14,7 @@
 #else
 #include <arpa/inet.h>
 #endif
+#include "transports/ssn_transport.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -216,7 +217,7 @@ ipc_header_t *ipc_packet_input(void *buf, size_t buf_len);
  * @param data 数据引用
  * @return 发送成功返回true，失败返回false
  */
-bool ipc_send_message(int sock, ipc_header_t *ipc_hdr, 
+bool ipc_send_message(ssn_transport_t *transport, ipc_header_t *ipc_hdr, 
     const ipc_url_ref_t *url, const ipc_data_ref_t *data);
 
 /** @} */
@@ -363,4 +364,4 @@ static inline void ipc_set_data_length(ipc_header_t *hdr, uint32_t data_len) {
 }
 #endif
 
-#endif /* IPC_PROTOCOL_H */
+#endif /* CD_IPC_PROTOCOL_H */

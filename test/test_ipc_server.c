@@ -6,7 +6,7 @@
 #include <string.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "ipc_server.h"
+#include "cd_ipc_server.h"
 #include "vsi/ipc_platform.h"
 
 #include <errno.h>

@@ -3,7 +3,7 @@
  * @brief 全局资源管理
  */
 
-#include "ipc_global.h"
+#include "cd_ipc_global.h"
 
 /* 定义全局变量（不再是 static！） */
 ipc_thread_t *g_ipc_client_timer = NULL;

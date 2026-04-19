@@ -1,4 +1,4 @@
-#include "ipc_protocol.h"
+#include "cd_ipc_protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +10,7 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "ipc_client.h"
+#include "cd_ipc_client.h"
 
 static ipc_client_t *client;
 

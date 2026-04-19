@@ -10,8 +10,8 @@
  *
  */
 
-#include "lwipcssn/ipc_cliauto.h"
-#include "lwipcssn/ipc_client.h"
+#include "cd_ipc_cliauto.h"
+#include "cd_ipc_client.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>

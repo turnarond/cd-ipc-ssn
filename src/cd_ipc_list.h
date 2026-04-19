@@ -1,9 +1,9 @@
 /*
- * IPC list
+ * CD-IPC list
  */
 
-#ifndef IPC_LIST_H
-#define IPC_LIST_H
+#ifndef CD_IPC_LIST_H
+#define CD_IPC_LIST_H
 
 /* List initialize */
 #define INIT_LIST(node) \
@@ -93,7 +93,7 @@
             } \
         } while (0)
 
-#endif /* IPC_LIST_H */
+#endif /* CD_IPC_LIST_H */
 /*
  * end
  */

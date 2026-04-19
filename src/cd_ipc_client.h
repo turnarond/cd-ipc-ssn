@@ -2,15 +2,15 @@
  * ipc_client.h
  */
 
-#ifndef IPC_CLIENT_H
-#define IPC_CLIENT_H
+#ifndef CD_IPC_CLIENT_H
+#define CD_IPC_CLIENT_H
 
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/un.h>
-#include "ipc_protocol.h"
-#include "ipc_global.h"
+#include "cd_ipc_protocol.h"
+#include "cd_ipc_global.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,7 +73,7 @@ void ipc_client_set_on_message(ipc_client_t *client, ipc_client_msg_handler_t ca
 }
 #endif
 
-#endif /* IPC_CLIENT_H */
+#endif /* CD_IPC_CLIENT_H */
 /*
  * end
  */

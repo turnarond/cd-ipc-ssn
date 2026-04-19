@@ -1,83 +1,84 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(lwipcssn)
+project(ssn_transport)
 
-include(../../CMakeCommonLib)
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_C_STANDARD 99)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # add_compile_definitions(IPC_LOG_LEVEL=LOG_LEVEL_DEBUG)
-    add_definitions(-DNDEBUG)
-else()
-    add_definitions(-DNDEBUG)
-endif()
-
-include_directories(
-    ${LW_INCLUDE_DIR}
-    ${LW_INCLUDE_DIR}/libevent
-    ./
-    ./src
+set(TRANSPORT_SOURCES
+    src/util/ssn_log.c
+    src/util/ssn_mutex.c
+    src/util/ssn_hash_table.c
+    src/transports/ssn_transport.c
+    src/transports/ssn_transport_unix.c
+    src/transports/ssn_transport_tcp.c
+    src/transports/ssn_transport_udp.c
+    src/transports/ssn_transport_factory.c
 )
 
-link_directories(
-    ${LW_LIB_DIR}
-)
-
-add_library(${PROJECT_NAME} SHARED
-    src/vsi/ipc_event.c
-    src/vsi/ipc_mutex.c
+set(IPC_SOURCES
+    src/cd_ipc_client.c
+    src/cd_ipc_server.c
+    src/cd_ipc_protocol.c
+    src/cd_ipc_cliauto.c
+    src/cd_ipc_global.c
+    src/cd_ipc_error.c
     src/vsi/ipc_platform.c
     src/vsi/ipc_socket.c
+    src/vsi/ipc_event.c
     src/vsi/ipc_thread.c
-    src/util/ipc_log.c
-    src/ipc_global.c
-    src/ipc_client.c
-    src/ipc_server.c
-    src/ipc_protocol.c
-    src/ipc_error.c
-    src/ipc_cliauto.c
+    src/vsi/ipc_mutex.c
 )
+
+add_library(${PROJECT_NAME} STATIC
+    ${TRANSPORT_SOURCES}
+    ${IPC_SOURCES}
+)
+
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(${PROJECT_NAME} pthread)
 
 install(TARGETS ${PROJECT_NAME}
-    ARCHIVE DESTINATION ${LW_LIB_DIR}
-    LIBRARY DESTINATION ${LW_LIB_DIR}
+    ARCHIVE DESTINATION lib
+    LIBRARY DESTINATION lib
 )
 
-## Mark cpp header files for installation
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_client.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_server.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_protocol.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_error.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_global.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/ipc_cliauto.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}
-)
-install(FILES  "${CMAKE_CURRENT_LIST_DIR}/src/vsi/ipc_platform.h"
-    DESTINATION ${LW_INCLUDE_DIR}/${PROJECT_NAME}/vsi
+install(FILES src/transports/ssn_transport.h
+    DESTINATION include
 )
 
-# Build test files
-add_executable(test_ipc_server test/test_ipc_server.c)
-target_link_libraries(test_ipc_server ${PROJECT_NAME})
+install(FILES src/util/ssn_log.h
+    DESTINATION include
+)
 
-add_executable(test_ipc_client test/test_ipc_client.c)
-target_link_libraries(test_ipc_client ${PROJECT_NAME})
+install(FILES src/util/ssn_mutex.h
+    DESTINATION include
+)
 
-add_executable(test_ipc_comprehensive test/test_ipc_comprehensive.c)
-target_link_libraries(test_ipc_comprehensive ${PROJECT_NAME} pthread)
+install(FILES src/util/ssn_hash_table.h
+    DESTINATION include
+)
 
-add_executable(test_ipc_thread_safety test/test_ipc_thread_safety.c)
-target_link_libraries(test_ipc_thread_safety ${PROJECT_NAME} pthread)
+install(FILES src/cd_ipc_client.h
+    DESTINATION include
+)
 
-add_executable(test_ipc_stress test/test_ipc_stress.c)
-target_link_libraries(test_ipc_stress ${PROJECT_NAME} pthread)
+install(FILES src/cd_ipc_server.h
+    DESTINATION include
+)
+
+install(FILES src/cd_ipc_protocol.h
+    DESTINATION include
+)
+
+install(FILES src/cd_ipc_cliauto.h
+    DESTINATION include
+)
+
+add_executable(test_transport test/test_transport.c)
+target_link_libraries(test_transport ${PROJECT_NAME} pthread)
+
+add_executable(test_transport_interface test_transport_interface.c)
+target_link_libraries(test_transport_interface ${PROJECT_NAME} pthread)

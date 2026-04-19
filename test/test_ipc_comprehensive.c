@@ -6,9 +6,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "ipc_server.h"
-#include "ipc_client.h"
-#include "ipc_error.h"
+#include "cd_ipc_server.h"
+#include "cd_ipc_client.h"
+#include "cd_ipc_error.h"
 
 #define SERVER_NAME "ipc-test-server"
 #define TEST_TIMEOUT 5000

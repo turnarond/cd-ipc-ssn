@@ -10,10 +10,10 @@
  *
  */
 
-#ifndef IPC_CLIAUTO_H
-#define IPC_CLIAUTO_H
+#ifndef CD_IPC_CLIAUTO_H
+#define CD_IPC_CLIAUTO_H
 
-#include "ipc_client.h"
+#include "cd_ipc_client.h"
 
 /* This module is a VSOA client extension module that provides automatic client connection, 
  * automatic handling of broken links, automatic subscribe to events, and automatic processing of event loops. 
@@ -84,7 +84,7 @@ ipc_client_t *ipc_client_auto_handle(ipc_client_auto_t *cliauto);
 }
 #endif
 
-#endif /* IPC_CLIAUTO_H */
+#endif /* CD_IPC_CLIAUTO_H */
 /*
  * end
  */

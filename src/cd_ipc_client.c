@@ -11,12 +11,13 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include "ipc_list.h"
-#include "ipc_client.h"
-#include "ipc_global.h"
-#include "ipc_protocol.h"
-#include "ipc_error.h"
-#include "util/ipc_log.h"
+#include "cd_ipc_list.h"
+#include "cd_ipc_client.h"
+#include "cd_ipc_global.h"
+#include "cd_ipc_protocol.h"
+#include "cd_ipc_error.h"
+#include "util/ssn_log.h"
+#include "transports/ssn_transport.h"
 
 static void free_pending_index(ipc_client_t *client, uint16_t index);
 
@@ -61,7 +62,7 @@ struct ipc_client {
     uint32_t cid;
     uint16_t seqno;
     uint16_t next_non_pending_seqno;
-    int sock;
+    ssn_transport_t *transport;
     ipc_event_pair_t *evtfd;
     int send_timeout;
     ipc_spinlock_t *spin;
@@ -192,10 +193,10 @@ void ipc_client_unref(ipc_client_t *client)
         client->connected = false;
         ipc_memory_barrier();
         
-        if (client->sock >= 0) {
-            ipc_socket_close(client->sock);
-            client->sock = -1;
-        }
+        if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
+    }
         
         ipc_event_pair_destroy(client->evtfd);
         free(client->sendbuf);
@@ -294,7 +295,7 @@ ipc_client_t *ipc_client_create(ipc_client_msg_handler_t onmsg, void *arg)
         client->pending_pool[i].index = i;
     }
 
-    client->sock = -1;
+    client->transport = NULL;
 
     if (ipc_event_pair_create(&client->evtfd) != 0) {
         LOG_ERROR("ipc client create: event pair create failed, errno %d", errno);
@@ -388,11 +389,11 @@ static bool ipc_client_send(ipc_client_t *client, size_t len)
     ssize_t num, total = 0;
 
     do {
-        num = send(client->sock, &buffer[total], len - total, MSG_NOSIGNAL);
+        num = ssn_transport_send(client->transport, &buffer[total], len - total);
         if (num > 0) {
             total += num;
         } else {
-            ipc_socket_shutdown(client->sock);
+            ssn_transport_disconnect(client->transport);
             break;
         }
     } while (total < len);
@@ -412,9 +413,9 @@ static bool ipc_client_send(ipc_client_t *client, size_t len)
 static bool ipc_client_sendmsg(ipc_client_t *client, ipc_header_t *ipc_hdr, 
     const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
-    bool ret = ipc_send_message(client->sock, ipc_hdr, url, data);
+    bool ret = ipc_send_message(client->transport, ipc_hdr, url, data);
     if (!ret) {
-        ipc_socket_shutdown(client->sock);
+        ssn_transport_disconnect(client->transport);
     }
     return ret;
 }
@@ -513,59 +514,62 @@ bool ipc_client_connect(ipc_client_t *client, const char* ipc_path,
     client->connected = false;
     ipc_memory_barrier();
 
-    if (client->sock >= 0) {
-        ipc_socket_close(client->sock);
-        client->sock = -1;
+    if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
     }
 
     ipc_client_timeout_all(client);
 
-    client->sock = ipc_socket_create(AF_UNIX, SOCK_STREAM, 0, true);
-    if (client->sock < 0) {
-        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "create socket failed, errno %d", errno);
+    // 创建transport配置
+    ssn_transport_config_t config = {
+        .non_blocking = true,
+        .send_timeout_ms = client->send_timeout,
+        .recv_timeout_ms = 1000,
+        .connect_timeout_ms = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000,
+        .enable_keepalive = true,
+        .keepalive_idle_sec = 60,
+        .keepalive_interval_sec = 10,
+        .keepalive_count = 3,
+        .enable_nagle = false,
+        .send_buffer_size = IPC_MAX_PACKET_SIZE,
+        .recv_buffer_size = IPC_MAX_PACKET_SIZE,
+        .reuse_address = true
+    };
+
+    // 解析地址，得到地址类型
+    ssn_address_t addr;
+    if (!ssn_address_parse(ipc_path, &addr)) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "parse address failed");
         ipc_client_unref(client);
         return (false);
     }
 
-    memset(&server, 0, sizeof(server));
-    strcpy(server.sun_path, ipc_path);
-    server.sun_family = AF_UNIX;
+    // 根据地址类型设置配置和创建transport
+    config.type = addr.type;
+    client->transport = ssn_transport_create(addr.type, &config);
+    if (!client->transport) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "create transport failed");
+        ipc_client_unref(client);
+        return (false);
+    }
+
+    // 连接到服务器
+    if (!ssn_transport_connect(client->transport, &addr, config.connect_timeout_ms)) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "connect failed");
+        ipc_client_unref(client);
+        return (false);
+    }
+
     ipc_hdr = ipc_create_header(client->sendbuf, IPC_MSG_TYPE_SERVICE_INFO, 0, 0);
 
-    ret = connect(client->sock, (struct sockaddr*)&server, sizeof(struct sockaddr_un));
-    if (ret) {
-        errcode = errno;
-        if (errcode != EINPROGRESS && errcode != EWOULDBLOCK) {
-            ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "connect failed, errno %d", errno);
-            ipc_client_unref(client);
-            return (false);
-        }
-    }
-
-    FD_ZERO(&fds);
-    FD_SET(client->sock, &fds);
-
-    ret = pselect(client->sock + 1, NULL, &fds, NULL, timeout, NULL);
-    if (ret <= 0 || !FD_ISSET(client->sock, &fds)) {
-        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "pselect failed, errno %d", errno);
-        ipc_client_unref(client);
-        return (false);
-    }
-
     if (!ipc_client_send(client, sizeof(ipc_header_t))) {
-        ipc_handle_error(IPC_ERR_NET_WRITE, __FILE__, __LINE__, __func__, "send failed, errno %d", errno);
+        ipc_handle_error(IPC_ERR_NET_WRITE, __FILE__, __LINE__, __func__, "send failed");
         ipc_client_unref(client);
         return (false);
     }
 
-    ret = pselect(client->sock + 1, &fds, NULL, NULL, timeout, NULL);
-    if (ret <= 0 || !FD_ISSET(client->sock, &fds)) {
-        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "pselect failed, errno %d", errno);
-        ipc_client_unref(client);
-        return (false);
-    }
-
-    num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_SIZE, 0);
+    num = ssn_transport_recv(client->transport, client->recvbuf, IPC_MAX_PACKET_SIZE, config.recv_timeout_ms);
 
     if (num > 0) {
         arg.client     = client;
@@ -585,7 +589,7 @@ bool ipc_client_connect(ipc_client_t *client, const char* ipc_path,
     ipc_memory_barrier();
 
     /* Set send timeout */
-    ipc_socket_set_send_timeout(client->sock, client->send_timeout);
+    // 发送超时已在transport创建时设置
     LOG_DEBUG("ipc client connect success.");
 
     ipc_client_unref(client);
@@ -615,8 +619,8 @@ bool ipc_client_disconnect(ipc_client_t *client)
     client->connected = false;
     ipc_memory_barrier();
 
-    if (client->sock >= 0) {
-        ipc_socket_shutdown(client->sock);
+    if (client->transport) {
+        ssn_transport_disconnect(client->transport);
     }
 
     ipc_mutex_unlock(client->lock);
@@ -664,8 +668,19 @@ bool ipc_client_send_timeout(ipc_client_t *client, const int timeout_ms)
         client->send_timeout = IPC_DEF_SEND_TIMEOUT;
     }
 
-    if (client->connected && client->sock >= 0) {
-        ipc_socket_set_send_timeout(client->sock, client->send_timeout);
+    if (client->connected && client->transport) {
+        ssn_transport_config_t config = client->transport->config;
+        config.send_timeout_ms = client->send_timeout;
+        // 使用transport的实际类型重新创建transport
+        ssn_transport_t *new_transport = ssn_transport_create(client->transport->type, &config);
+        if (new_transport) {
+            ssn_address_t addr;
+            if (ssn_transport_get_address(client->transport, &addr)) {
+                ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms);
+                ssn_transport_destroy(client->transport);
+                client->transport = new_transport;
+            }
+        }
     }
 
     LOG_DEBUG("set ipc client send timeout success.");
@@ -698,8 +713,13 @@ int ipc_client_fds(ipc_client_t *client, fd_set *rfds)
         return (evt_fd);
     }
 
-    FD_SET(client->sock, rfds);
-    max_fd = client->sock;
+    int sock_fd = ssn_transport_get_fd(client->transport);
+    if (sock_fd >= 0) {
+        FD_SET(sock_fd, rfds);
+        max_fd = sock_fd;
+    } else {
+        max_fd = -1;
+    }
 
     FD_SET(evt_fd, rfds);
     if (max_fd < evt_fd) {
@@ -838,9 +858,10 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
 
     if (client->connected) 
     {
-        if (FD_ISSET(client->sock, rfds)) {
+        int sock_fd = ssn_transport_get_fd(client->transport);
+        if (sock_fd >= 0 && FD_ISSET(sock_fd, rfds)) {
             pkt_e = false;
-            num = recv(client->sock, client->recvbuf, IPC_MAX_PACKET_SIZE, MSG_DONTWAIT);
+            num = ssn_transport_recv(client->transport, client->recvbuf, IPC_MAX_PACKET_SIZE, 0);
             if (num > 0) {
                 // TODO: deal recv msg;
                 if (!ipc_stream_feed(&client->recv, client->recvbuf,
@@ -850,7 +871,7 @@ static bool ipc_client_process_events (ipc_client_t *client, const fd_set *rfds)
                 }
             }
 
-            if (pkt_e || num == 0 || (num < 0 && errno != EWOULDBLOCK)) {
+            if (pkt_e || num == 0 || (num < 0)) {
                 client->connected = false;
                 ipc_memory_barrier();
 

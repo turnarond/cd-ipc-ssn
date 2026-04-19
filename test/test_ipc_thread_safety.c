@@ -1,10 +1,10 @@
-#include "ipc_protocol.h"
+#include "cd_ipc_protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
-#include "ipc_client.h"
+#include "cd_ipc_client.h"
 
 #define THREAD_COUNT 10
 #define TEST_ITERATIONS 100

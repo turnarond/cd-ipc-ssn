@@ -4,8 +4,8 @@
  */
 
 #include <stddef.h>
-#include "ipc_error.h"
-#include "util/ipc_log.h"
+#include "cd_ipc_error.h"
+#include "util/ssn_log.h"
 
 /**
  * @brief 带版本的错误码生成宏

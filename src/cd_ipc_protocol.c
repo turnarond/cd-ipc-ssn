@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include "ipc_protocol.h"
-#include "util/ipc_log.h"
+#include "cd_ipc_protocol.h"
+#include "util/ssn_log.h"
 #include <errno.h>
 
 /* ------------------ Helper Functions ------------------ */
@@ -66,7 +66,7 @@ static void ipc_print_error(const uint8_t *buffer, const char *info, size_t offs
  * @param data 数据引用
  * @return 发送成功返回true，失败返回false
  */
-bool ipc_send_message(int sock, ipc_header_t *ipc_hdr, 
+bool ipc_send_message(ssn_transport_t *transport, ipc_header_t *ipc_hdr, 
     const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
     ssize_t send_len;
@@ -90,42 +90,26 @@ bool ipc_send_message(int sock, ipc_header_t *ipc_hdr,
     }
 
     // 准备发送数据
-    struct iovec iov[3] = {
-        {
-            .iov_base = (void*)ipc_hdr,
-            .iov_len = sizeof(ipc_header_t)
-        }
-    };
+    uint8_t *buffer = (uint8_t *)ipc_hdr;
+    size_t pos = sizeof(ipc_header_t);
 
-    struct msghdr msg = {0};
-    msg.msg_iov = iov;
-    msg.msg_iovlen = 1;
-    
     // 添加URL数据
     if (url) {
-        iov[msg.msg_iovlen].iov_base = url->url;
-        iov[msg.msg_iovlen].iov_len = url->url_len;
-        msg.msg_iovlen++;
+        memcpy(buffer + pos, url->url, url->url_len);
+        pos += url->url_len;
     }
     
     // 添加实际数据
-    if (data) {
-        if (data->data) {
-            iov[msg.msg_iovlen].iov_base = data->data;
-            iov[msg.msg_iovlen].iov_len = data->length;
-            msg.msg_iovlen++;
-        }
+    if (data && data->data) {
+        memcpy(buffer + pos, data->data, data->length);
+        pos += data->length;
     }
 
-    // 发送消息，使用MSG_NOSIGNAL防止SIGPIPE信号
-#if defined(MSG_NOSIGNAL)
-    send_len = sendmsg(sock, &msg, MSG_NOSIGNAL);
-#else
-    send_len = sendmsg(sock, &msg, 0);
-#endif
+    // 发送消息
+    send_len = ssn_transport_send(transport, buffer, pos);
 
     if (send_len < 0) {
-        LOG_ERROR("ipc send message failed, errno %d", errno);
+        LOG_ERROR("ipc send message failed");
         return false;
     }
     LOG_DEBUG("ipc send message success, length is %lu", send_len);

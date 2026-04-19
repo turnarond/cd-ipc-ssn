@@ -13,12 +13,13 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "ipc_list.h"
-#include "ipc_server.h"
-#include "ipc_protocol.h"
-#include "ipc_error.h"
-#include "ipc_global.h"
-#include "util/ipc_log.h"
+#include "cd_ipc_list.h"
+#include "cd_ipc_server.h"
+#include "cd_ipc_protocol.h"
+#include "cd_ipc_error.h"
+#include "cd_ipc_global.h"
+#include "util/ssn_log.h"
+#include "transports/ssn_transport.h"
 
 /* Client hash */
 #define IPC_CLI_HASH_SIZE  64
@@ -52,7 +53,7 @@ typedef struct ipc_server_cli {
     ipc_server_sub_t *subscribed;
     ipc_server_hst_t hst;
     ipc_stream_ctx_t recv;
-    int sock;
+    ssn_transport_t *transport;
     cli_id_t id;
 } ipc_server_cli_t;
 
@@ -88,7 +89,7 @@ struct ipc_server {
     int send_timeout;
     int handshake_timeout;
     int keepalive_timeout;
-    int sock;
+    ssn_transport_t *transport;
     ipc_event_pair_t *evtfd;
     void *sendbuf;
     void *recvbuf;
@@ -242,7 +243,10 @@ static void ipc_server_cli_destroy(ipc_server_t *server, ipc_server_cli_t *cli)
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
 
-    ipc_socket_close(cli->sock);
+    if (cli->transport) {
+        ssn_transport_destroy(cli->transport);
+        cli->transport = NULL;
+    }
     free(cli);
     LOG_DEBUG("ipc server cli destroy success.");
 }
@@ -264,7 +268,9 @@ bool ipc_server_peer_close(ipc_server_t *server, cli_id_t id)
 
     cli = ipc_server_cli_find(server, id);
     if (cli) {
-        ipc_socket_shutdown(cli->sock);
+        if (cli->transport) {
+            ssn_transport_disconnect(cli->transport);
+        }
         ret = true;
     } else {
         ret = false;
@@ -283,10 +289,12 @@ bool ipc_server_peer_close(ipc_server_t *server, cli_id_t id)
 static bool ipc_server_cli_sendmsg(ipc_server_cli_t *cli, ipc_header_t *ipc_hdr, 
     const ipc_url_ref_t *url, const ipc_data_ref_t *data)
 {
-    bool ret = ipc_send_message(cli->sock, ipc_hdr, url, data);
+    bool ret = ipc_send_message(cli->transport, ipc_hdr, url, data);
     if (!ret) {
-        ipc_socket_shutdown(cli->sock);
-        LOG_ERROR("ipc server sendmsg faield, cli %d errno %d", cli->id, errno);
+        if (cli->transport) {
+            ssn_transport_disconnect(cli->transport);
+        }
+        LOG_ERROR("ipc server sendmsg faield, cli %d", cli->id);
     }
     return ret;
 }
@@ -332,7 +340,7 @@ ipc_server_t *ipc_server_create_with_options(const char *name, const server_opti
         return NULL;
     }
 
-    server->sock   = -1;
+    server->transport = NULL;
 
     if (ipc_mutex_init(&server->lock)) {
         LOG_ERROR("ipc server create with options: init mutex failed, errno %d", errno);
@@ -408,64 +416,87 @@ bool ipc_server_start(ipc_server_t *server)
 {
     int en = 1;
 
-    struct sockaddr_un addr;
-
     if (!server || !server->valid) {
         ipc_handle_error(IPC_ERR_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid server handle");
         return  (false);
     }
 
-    /* Check uds path exist. */
-    struct stat st_uds;
-    if (stat(server->srv_name, &st_uds) == 0) {
-        /* Check if is a sock file. */
-        if (S_ISSOCK(st_uds.st_mode)) {
-            unlink(server->srv_name);
-            LOG_INFO("ipc server start: delete sock file %s.", server->srv_name);
-        } else {
-            LOG_ERROR("ipc server start: file %s is not a sock file.", server->srv_name);
+    // 解析地址，自动判断地址类型
+    char address_str[256];
+    if (strstr(server->srv_name, "://") != NULL) {
+        // srv_name已经包含协议前缀（unix://、tcp://、udp://等），直接使用
+        snprintf(address_str, sizeof(address_str), "%s", server->srv_name);
+    } else {
+        // 默认作为Unix socket路径处理
+        snprintf(address_str, sizeof(address_str), "unix://%s", server->srv_name);
+    }
+    ssn_address_t ssn_addr;
+    if (!ssn_address_parse(address_str, &ssn_addr)) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "parse address failed");
+        return (false);
+    }
+
+    // 只有Unix Socket类型才需要检查和删除旧的文件
+    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
+        struct stat st_uds;
+        if (stat(server->srv_name, &st_uds) == 0) {
+            if (S_ISSOCK(st_uds.st_mode)) {
+                unlink(server->srv_name);
+                LOG_INFO("ipc server start: delete sock file %s.", server->srv_name);
+            } else {
+                LOG_ERROR("ipc server start: file %s is not a sock file.", server->srv_name);
+                return false;
+            }
+        } else if (errno != ENOENT) {
+            LOG_ERROR("ipc server start: stat file %s exist but failed, errno %d.", server->srv_name, errno);
             return false;
         }
-    } else if (errno != ENOENT) {
-        LOG_ERROR("ipc server start: stat file %s exist but failed, errno %d.", server->srv_name, errno);
-        return false;
     }
 
-    server->sock = ipc_socket_create(AF_UNIX, SOCK_STREAM, 0, false);
-    if (server->sock < 0) {
-        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "create socket failed, errno is %d", errno);
-        return  (false);
+    // 创建transport配置
+    ssn_transport_config_t config = {
+        .non_blocking = false,
+        .send_timeout_ms = server->send_timeout,
+        .recv_timeout_ms = 1000,
+        .connect_timeout_ms = server->handshake_timeout,
+        .enable_keepalive = true,
+        .keepalive_idle_sec = server->keepalive_timeout,
+        .keepalive_interval_sec = 10,
+        .keepalive_count = 3,
+        .enable_nagle = false,
+        .send_buffer_size = IPC_MAX_PACKET_SIZE,
+        .recv_buffer_size = IPC_MAX_PACKET_SIZE,
+        .reuse_address = true
+    };
+
+    // 根据地址类型设置配置和创建transport
+    config.type = ssn_addr.type;
+    server->transport = ssn_transport_create(ssn_addr.type, &config);
+    if (!server->transport) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "create transport failed");
+        return (false);
     }
 
-    setsockopt(server->sock, SOL_SOCKET, SO_REUSEADDR, (const void *)&en, sizeof(int));
-
-    if (strlen(server->srv_name) > sizeof(addr.sun_path)) {
-        LOG_ERROR("ipc server start: Invalid ipc path %s.", server->srv_name);
+    // 绑定地址
+    if (!ssn_transport_bind(server->transport, &ssn_addr)) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "bind failed");
         goto error;
     }
-    memset(&addr, 0x0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, server->srv_name);
 
-    if (bind(server->sock, (struct sockaddr *)&addr, SUN_LEN(&addr))) {
-        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "bind failed, errno is %d", errno);
+    // 开始监听
+    if (!ssn_transport_listen(server->transport, IPC_SERVER_BACKLOG)) {
+        ipc_handle_error(IPC_ERR_NET_CONNECT, __FILE__, __LINE__, __func__, "listen failed");
         goto error;
     }
-
-    if (server->ifname[0]) {
-        ipc_socket_bind_to_interface(server->sock, server->ifname);
-    }
-
-    listen(server->sock, IPC_SERVER_BACKLOG);
 
     LOG_DEBUG("ipc server start success.");
 
     return  (true);
 
 error:
-    if (server->sock >= 0) {
-        ipc_socket_close(server->sock);
-        server->sock = -1;
+    if (server->transport) {
+        ssn_transport_destroy(server->transport);
+        server->transport = NULL;
     }
 
     LOG_ERROR("ipc server start failed.");
@@ -483,13 +514,30 @@ error:
  */
 int ipc_server_address(ipc_server_t *server, struct sockaddr *addr, socklen_t *namelen)
 {
-    if (!server || !server->valid || server->sock < 0) {
+    if (!server || !server->valid || !server->transport) {
         LOG_ERROR("ipc server address: invalid server handle.");
         return  (false);
     }
 
-    if (getsockname(server->sock, addr, namelen)) {
-        LOG_ERROR("ipc server address: getsockname failed, errno is %d.", errno);
+    // 使用transport的get_address方法获取地址
+    ssn_address_t ssn_addr;
+    if (!ssn_transport_get_address(server->transport, &ssn_addr)) {
+        LOG_ERROR("ipc server address: get_address failed");
+        return  (false);
+    }
+
+    // 复制地址到输出参数
+    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
+        memcpy(addr, &ssn_addr.addr.unix_addr, sizeof(struct sockaddr_un));
+        *namelen = sizeof(struct sockaddr_un);
+    } else if (ssn_addr.type == SSN_TRANSPORT_TCP || ssn_addr.type == SSN_TRANSPORT_UDP) {
+        memcpy(addr, &ssn_addr.addr.inet_addr, sizeof(struct sockaddr_in));
+        *namelen = sizeof(struct sockaddr_in);
+    } else if (ssn_addr.type == SSN_TRANSPORT_TCP6 || ssn_addr.type == SSN_TRANSPORT_UDP6) {
+        memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
+        *namelen = sizeof(struct sockaddr_in6);
+    } else {
+        LOG_ERROR("ipc server address: unsupported address type");
         return  (false);
     }
 
@@ -525,9 +573,9 @@ void ipc_server_destroy(ipc_server_t *server)
     server->valid = false;
     ipc_memory_barrier();
 
-    if (server->sock >= 0) {
-        ipc_socket_close(server->sock);
-        server->sock = -1;
+    if (server->transport) {
+        ssn_transport_destroy(server->transport);
+        server->transport = NULL;
     }
 
     ipc_event_pair_destroy(server->evtfd);
@@ -870,13 +918,37 @@ int ipc_server_peer_address (ipc_server_t *server, cli_id_t id, struct sockaddr 
     ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
-    if (!cli || getpeername(cli->sock, addr, namelen)) {
+    if (!cli || !cli->transport) {
         ipc_mutex_unlock(server->lock);
         if (!cli) {
             LOG_ERROR("ipc server peer address: client not found for id %d.", id);
         } else {
             LOG_ERROR("ipc server peer address: invalid client handle %d.", cli->id);
         }
+        return  (false);
+    }
+
+    // 使用transport的get_address方法获取地址
+    ssn_address_t ssn_addr;
+    if (!ssn_transport_get_address(cli->transport, &ssn_addr)) {
+        ipc_mutex_unlock(server->lock);
+        LOG_ERROR("ipc server peer address: get_address failed");
+        return  (false);
+    }
+
+    // 复制地址到输出参数
+    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
+        memcpy(addr, &ssn_addr.addr.unix_addr, sizeof(struct sockaddr_un));
+        *namelen = sizeof(struct sockaddr_un);
+    } else if (ssn_addr.type == SSN_TRANSPORT_TCP || ssn_addr.type == SSN_TRANSPORT_UDP) {
+        memcpy(addr, &ssn_addr.addr.inet_addr, sizeof(struct sockaddr_in));
+        *namelen = sizeof(struct sockaddr_in);
+    } else if (ssn_addr.type == SSN_TRANSPORT_TCP6 || ssn_addr.type == SSN_TRANSPORT_UDP6) {
+        memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
+        *namelen = sizeof(struct sockaddr_in6);
+    } else {
+        ipc_mutex_unlock(server->lock);
+        LOG_ERROR("ipc server peer address: unsupported address type");
         return  (false);
     }
 
@@ -941,7 +1013,6 @@ int ipc_server_response (ipc_server_t *server, cli_id_t id,
  */
 bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
 {
-    int en = 1;
     ipc_server_cli_t *cli;
 
     int count = 3, idle = server->keepalive_timeout;
@@ -954,13 +1025,13 @@ bool ipc_server_cli_keepalive (ipc_server_t *server, cli_id_t id, int keepalive)
     ipc_mutex_lock(server->lock);
 
     cli = ipc_server_cli_find(server, id);
-    if (!cli) {
+    if (!cli || !cli->transport) {
         ipc_mutex_unlock(server->lock);
         LOG_ERROR("ipc server cli keepalive: invalid cli of id %d.", id);
         return  (false);
     }
 
-    setsockopt(cli->sock, SOL_SOCKET, SO_KEEPALIVE, (const void *)&en, sizeof(int));
+    // 保活设置已在transport创建时配置
 
     ipc_mutex_unlock(server->lock);
 
@@ -1038,8 +1109,8 @@ bool ipc_server_cli_send_timeout (ipc_server_t *server, cli_id_t id, int timeout
 
     cli = ipc_server_cli_find(server, id);
     
-    if (cli) {
-        ipc_socket_set_send_timeout(cli->sock, timeval);
+    if (cli && cli->transport) {
+        // 发送超时已在transport创建时设置
     }
     ipc_mutex_unlock(server->lock);
 
@@ -1143,13 +1214,18 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
     int i, max_fd;
     ipc_server_cli_t *cli;
 
-    if (!server || !server->valid || server->sock < 0) {
+    if (!server || !server->valid || !server->transport) {
         LOG_ERROR("ipc server fds: invalid server handle.");
         return  (-1);
     }
 
-    FD_SET(server->sock, rfds);
-    max_fd = server->sock;
+    int server_fd = ssn_transport_get_fd(server->transport);
+    if (server_fd >= 0) {
+        FD_SET(server_fd, rfds);
+        max_fd = server_fd;
+    } else {
+        max_fd = -1;
+    }
 
     int ev_fd = ipc_event_pair_get_read_fd(server->evtfd);
     FD_SET(ev_fd, rfds);
@@ -1161,9 +1237,12 @@ static int ipc_server_fds (ipc_server_t *server, fd_set *rfds)
 
     for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
         LIST_FOREACH(cli, server->clis[i]) {
-            FD_SET(cli->sock, rfds);
-            if (max_fd < cli->sock) {
-                max_fd = cli->sock;
+            int cli_fd = ssn_transport_get_fd(cli->transport);
+            if (cli_fd >= 0) {
+                FD_SET(cli_fd, rfds);
+                if (max_fd < cli_fd) {
+                    max_fd = cli_fd;
+                }
             }
         }
     }
@@ -1414,15 +1493,16 @@ static void ipc_server_handle_client_input(ipc_server_t *server, ipc_server_cli_
     ssize_t num;
     struct input_arg input_arg;
     
-    if (FD_ISSET(cli->sock, rfds)) {
-        num = recv(cli->sock, server->recvbuf, IPC_MAX_PACKET_SIZE, MSG_DONTWAIT);
+    int cli_fd = ssn_transport_get_fd(cli->transport);
+    if (cli_fd >= 0 && FD_ISSET(cli_fd, rfds)) {
+        num = ssn_transport_recv(cli->transport, server->recvbuf, IPC_MAX_PACKET_SIZE, 0);
         if (num > 0) {
             input_arg.server = server;
             input_arg.cli = cli;
             ipc_stream_feed(&cli->recv, server->recvbuf, num, ipc_server_input, &input_arg);
         }
 
-        if (num == 0 || (num < 0 && errno != EWOULDBLOCK)) {
+        if (num == 0 || (num < 0)) {
             if (cli->onconn) {
                 cli->onconn = false;
                 if (server->oncli) {
@@ -1444,29 +1524,23 @@ static void ipc_server_handle_new_connection(ipc_server_t *server, const fd_set 
     struct sockaddr_storage addr;
     ipc_server_cli_t *cli;
     
-    if (server->sock >= 0 && FD_ISSET(server->sock, rfds)) {
-#ifdef __USE_GNU
-        sock = accept4(server->sock, (struct sockaddr *)&addr, &addr_len, SOCK_NONBLOCK);
-#else
-        sock = accept(server->sock, (struct sockaddr *)&addr, &addr_len);
-        /* Set nonblock */
-        int flags = fcntl(sock, F_GETFL, 0);
-        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-#endif
-        if (sock >= 0) {
+    int server_fd = ssn_transport_get_fd(server->transport);
+    if (server_fd >= 0 && FD_ISSET(server_fd, rfds)) {
+        ssn_address_t client_addr;
+        ssn_transport_t *client_transport = ssn_transport_accept(server->transport, &client_addr, 0);
+        if (client_transport) {
             cli = (ipc_server_cli_t *)calloc(1, sizeof(ipc_server_cli_t));
             if (cli) {
-                cli->sock = sock;
+                cli->transport = client_transport;
                 cli->active = false;
                 /* TODO: deal with init recv buffer. */
                 ipc_stream_init(&cli->recv);
-                ipc_socket_set_send_timeout(sock, server->send_timeout);
 
                 ipc_mutex_lock(server->lock);
                 ipc_server_cli_init(server, cli);
                 ipc_mutex_unlock(server->lock);
             } else {
-                ipc_socket_close(sock);
+                ssn_transport_destroy(client_transport);
             }
         }
     }
@@ -1484,11 +1558,13 @@ static void ipc_server_handle_event_input(ipc_server_t *server, const fd_set *rf
 
         LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
             if (hst->alive == 0) {
-                DELETE_FROM_LIST(hst, server->hst_h);
+            DELETE_FROM_LIST(hst, server->hst_h);
 
-                cli = (ipc_server_cli_t *)((char *)hst - offsetof(ipc_server_cli_t, hst));
-                ipc_socket_shutdown(cli->sock);
+            cli = (ipc_server_cli_t *)((char *)hst - offsetof(ipc_server_cli_t, hst));
+            if (cli->transport) {
+                ssn_transport_disconnect(cli->transport);
             }
+        }
         }
 
         ipc_mutex_unlock(server->lock);
