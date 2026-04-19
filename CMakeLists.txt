@@ -8,6 +8,7 @@ set(TRANSPORT_SOURCES
     src/util/ssn_log.c
     src/util/ssn_mutex.c
     src/util/ssn_hash_table.c
+    src/version/ssn_version.c
     src/transports/ssn_transport.c
     src/transports/ssn_transport_unix.c
     src/transports/ssn_transport_tcp.c
@@ -22,6 +23,8 @@ set(IPC_SOURCES
     src/cd_ipc_cliauto.c
     src/cd_ipc_global.c
     src/cd_ipc_error.c
+    src/node/ipc_node.c
+    src/node/ipc_node_comm.c
     src/vsi/ipc_platform.c
     src/vsi/ipc_socket.c
     src/vsi/ipc_event.c
@@ -43,6 +46,10 @@ target_link_libraries(${PROJECT_NAME} pthread)
 install(TARGETS ${PROJECT_NAME}
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
+)
+
+install(FILES src/version/ssn_version.h
+    DESTINATION include
 )
 
 install(FILES src/transports/ssn_transport.h
@@ -82,3 +89,9 @@ target_link_libraries(test_transport ${PROJECT_NAME} pthread)
 
 add_executable(test_transport_interface test_transport_interface.c)
 target_link_libraries(test_transport_interface ${PROJECT_NAME} pthread)
+
+add_executable(test_node test/test_node.c)
+target_link_libraries(test_node ${PROJECT_NAME} pthread)
+
+add_executable(test_node_basic test/test_node_basic.c)
+target_link_libraries(test_node_basic ${PROJECT_NAME} pthread)

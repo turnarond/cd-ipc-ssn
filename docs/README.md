@@ -22,6 +22,50 @@
 | [protocol_adapter_design.md](protocol_adapter_design.md) | 协议适配层实现方案，包含Unix Socket/TCP/UDP/TLS适配器 |
 | [node_discovery_design.md](node_discovery_design.md) | 节点发现机制设计，包含组播发现、目录服务、心跳检测 |
 | [qos_framework_design.md](qos_framework_design.md) | QoS服务质量框架设计，包含可靠性等级、优先级调度、带宽控制 |
+| [api_usage_guide.md](api_usage_guide.md) | API使用指南，包含核心API的详细说明和使用示例 |
+| [transport_layer_design.md](transport_layer_design.md) | 传输层设计，包含各种传输协议的实现细节 |
+| [migration_guide.md](migration_guide.md) | 迁移指南，帮助现有代码从旧版本迁移到新版本 |
+
+### 示例代码
+
+我们提供了丰富的示例代码，展示了库的各种功能和使用场景。所有示例都位于 `examples` 目录中，按照功能和复杂度进行了分类：
+
+#### 基础示例
+- **01_hello_world** - 基础的客户端-服务器通信
+- **02_rpc_call** - RPC 功能演示
+- **03_pubsub** - 发布/订阅模式
+- **04_node_basic** - 节点抽象层基础
+
+#### 高级示例
+- **01_multithread** - 多线程 IPC
+- **02_error_handling** - 错误处理
+- **03_timeout** - 超时管理
+- **04_transport_selection** - 传输协议选择
+
+#### 协议示例
+- **01_unix_socket** - Unix Socket 使用
+- **02_tcp** - TCP 使用
+- **03_udp** - UDP 使用
+
+#### 节点示例
+- **01_node_lifecycle** - 节点生命周期管理
+- **02_node_comm** - 节点间通信
+- **03_node_rpc** - 节点 RPC 功能
+- **04_node_pubsub** - 节点发布/订阅
+
+#### 运行示例
+
+```bash
+# 构建所有示例
+./examples/utils/build_examples.sh
+
+# 运行示例
+./examples/utils/run_examples.sh
+
+# 运行特定示例
+cd examples/basic/01_hello_world
+make run
+```
 
 ## 系统总体架构
 
