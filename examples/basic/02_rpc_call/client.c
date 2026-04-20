@@ -12,7 +12,7 @@
 #include "cd_ipc_client.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/rpc_server"
+#define SERVER_NAME "unix:///tmp/rpc_server"
 
 /**
  * @brief RPC reply handler

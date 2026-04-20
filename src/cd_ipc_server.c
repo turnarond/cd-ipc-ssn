@@ -1297,7 +1297,6 @@ static bool ipc_server_handle_service_info(ipc_server_t *server, ipc_server_cli_
     send_hdr = ipc_create_header(server->sendbuf, ipc_hdr->msg_type, 0, seqno);
     reply.data = &cid;
     reply.length = sizeof(uint32_t);
-    ipc_server_cli_sendmsg(cli, send_hdr, NULL, &reply);
     
     if (cli->hst.alive) {
         cli->hst.alive = 0;
@@ -1305,6 +1304,9 @@ static bool ipc_server_handle_service_info(ipc_server_t *server, ipc_server_cli_
     }
     
     ipc_mutex_unlock(server->lock);
+    
+    // 释放锁之后再发送响应，避免死锁
+    ipc_server_cli_sendmsg(cli, send_hdr, NULL, &reply);
     
     if (!cli->onconn) {
         cli->onconn = true;
@@ -1539,6 +1541,16 @@ static void ipc_server_handle_new_connection(ipc_server_t *server, const fd_set 
                 ipc_mutex_lock(server->lock);
                 ipc_server_cli_init(server, cli);
                 ipc_mutex_unlock(server->lock);
+                
+                // 立即处理客户端发送的第一个消息（服务信息请求）
+                struct input_arg input_arg;
+                input_arg.server = server;
+                input_arg.cli = cli;
+                
+                ssize_t num = ssn_transport_recv(cli->transport, server->recvbuf, IPC_MAX_PACKET_SIZE, 0);
+                if (num > 0) {
+                    ipc_stream_feed(&cli->recv, server->recvbuf, num, ipc_server_input, &input_arg);
+                }
             } else {
                 ssn_transport_destroy(client_transport);
             }

@@ -62,6 +62,7 @@ bool ssn_mutex_try_lock(ssn_mutex_t* mutex)
     return (pthread_mutex_trylock(&mutex->mutex) == 0);
 }
 
+/*
 void ssn_spinlock_init(ssn_spinlock_t* spinlock)
 {
     if (!spinlock) {
@@ -102,4 +103,5 @@ void ssn_spinlock_unlock(ssn_spinlock_t* spinlock)
 
     pthread_spin_unlock(&spinlock->spinlock);
 }
+*/
 

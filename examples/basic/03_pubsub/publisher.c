@@ -12,7 +12,7 @@
 #include "cd_ipc_server.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/pubsub_server"
+#define SERVER_NAME "unix:///tmp/pubsub_server"
 
 /**
  * @brief Publish a message to a topic
@@ -101,30 +101,44 @@ int main(void)
 
     // Wait for subscribers to connect
     LOG_INFO("Waiting for subscribers to connect...");
-    sleep(5);
+    int wait_time = 5;
+    while (wait_time > 0) {
+        ipc_server_poll(server, 100);
+        sleep(1);
+        wait_time--;
+    }
 
     // Publish messages
     LOG_INFO("\nPublishing messages...");
 
     // Publish news message
+    ipc_server_poll(server, 100);
     publish_message(server, "/news", "Breaking news! Server is online");
     sleep(2);
 
     // Publish weather message
+    ipc_server_poll(server, 100);
     publish_message(server, "/weather", "Today's weather is sunny");
     sleep(2);
 
     // Publish another news message
+    ipc_server_poll(server, 100);
     publish_message(server, "/news", "Another breaking news story");
     sleep(2);
 
     // Publish sports message
+    ipc_server_poll(server, 100);
     publish_message(server, "/sports", "Sports update: Team won the game");
     sleep(2);
 
     // Wait for messages to be delivered
     LOG_INFO("\nWaiting for messages to be delivered...");
-    sleep(5);
+    int deliver_time = 5;
+    while (deliver_time > 0) {
+        ipc_server_poll(server, 100);
+        sleep(1);
+        deliver_time--;
+    }
 
     // Server is stopped automatically when destroyed
     LOG_INFO("Stopping publisher...");

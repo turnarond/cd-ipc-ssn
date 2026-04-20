@@ -15,7 +15,7 @@
 #include "util/ssn_log.h"
 #include "util/ssn_mutex.h"
 
-#define SERVER_NAME "/tmp/multithread_server"
+#define SERVER_NAME "unix:///tmp/multithread_server"
 #define MAX_THREADS 4
 
 /**

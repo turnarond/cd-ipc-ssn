@@ -12,7 +12,7 @@
 #include "cd_ipc_server.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/rpc_server"
+#define SERVER_NAME "unix:///tmp/rpc_server"
 
 /**
  * @brief Add RPC method handler
@@ -261,7 +261,12 @@ int main(void)
 
     // Run server for 15 seconds
     LOG_INFO("Server running for 15 seconds...");
-    sleep(15);
+    int elapsed = 0;
+    while (elapsed < 15) {
+        ipc_server_poll(server, 100);
+        sleep(1);
+        elapsed++;
+    }
 
     // Server is stopped automatically when destroyed
     LOG_INFO("Stopping RPC server...");

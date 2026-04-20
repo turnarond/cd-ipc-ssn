@@ -14,7 +14,8 @@
 #include "cd_ipc_server.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/unix_socket_server"
+#define SERVER_SOCKET_PATH "/tmp/unix_socket_server"
+#define SERVER_NAME "unix:///tmp/unix_socket_server"
 
 /**
  * @brief Message handler callback
@@ -66,10 +67,10 @@ int main(void)
 
     // Check if socket file exists and remove it if necessary
     struct stat st;
-    if (stat(SERVER_NAME, &st) == 0) {
+    if (stat(SERVER_SOCKET_PATH, &st) == 0) {
         // Just remove the file if it exists
-        unlink(SERVER_NAME);
-        LOG_INFO("Removed existing file: %s", SERVER_NAME);
+        unlink(SERVER_SOCKET_PATH);
+        LOG_INFO("Removed existing file: %s", SERVER_SOCKET_PATH);
     }
 
     // Create server options
@@ -115,8 +116,8 @@ int main(void)
     ipc_server_destroy(server);
 
     // Clean up socket file
-    unlink(SERVER_NAME);
-    LOG_INFO("Cleaned up socket file: %s", SERVER_NAME);
+    unlink(SERVER_SOCKET_PATH);
+    LOG_INFO("Cleaned up socket file: %s", SERVER_SOCKET_PATH);
 
     return 0;
 }

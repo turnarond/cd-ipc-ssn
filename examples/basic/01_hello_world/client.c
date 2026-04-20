@@ -13,7 +13,7 @@
 #include "cd_ipc_client.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/hello_server"
+#define SERVER_NAME "unix:///tmp/hello_server"
 
 /**
  * @brief Message handler callback

@@ -13,8 +13,8 @@
 #include "cd_ipc_server.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/timeout_server"
-#define NON_EXISTENT_SERVER "/tmp/non_existent_server"
+#define SERVER_NAME "unix:///tmp/timeout_server"
+#define NON_EXISTENT_SERVER "unix:///tmp/non_existent_server"
 
 /**
  * @brief Test 1: Connection timeout

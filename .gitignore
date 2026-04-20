@@ -1,1 +1,17 @@
 build/**
+.clang-format
+examples/advanced/01_multithread/client
+examples/advanced/01_multithread/server
+examples/advanced/02_error_handling/error_handling
+examples/advanced/03_timeout/timeout
+examples/basic/01_hello_world/client
+examples/basic/01_hello_world/server
+examples/basic/02_rpc_call/client
+examples/basic/02_rpc_call/server
+examples/basic/03_pubsub/build.log
+examples/basic/03_pubsub/publisher
+examples/basic/03_pubsub/subscriber
+examples/basic/03_pubsub/subscriber2
+examples/protocols/01_unix_socket/build.log
+examples/protocols/01_unix_socket/client
+examples/protocols/01_unix_socket/server

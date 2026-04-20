@@ -13,7 +13,7 @@
 #include "cd_ipc_server.h"
 #include "util/ssn_log.h"
 
-#define SERVER_NAME "/tmp/hello_server"
+#define SERVER_NAME "unix:///tmp/hello_server"
 
 /**
  * @brief Message handler callback
@@ -100,7 +100,12 @@ int main(void)
 
     // Run server for 10 seconds
     LOG_INFO("Server running for 10 seconds...");
-    sleep(10);
+    int elapsed = 0;
+    while (elapsed < 10) {
+        ipc_server_poll(server, 100);
+        sleep(1);
+        elapsed++;
+    }
 
     // Server is stopped automatically when destroyed
     LOG_INFO("Stopping IPC server...");

@@ -11,6 +11,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include "cd_ipc_list.h"
 #include "cd_ipc_client.h"
 #include "cd_ipc_global.h"
@@ -261,11 +262,10 @@ static void free_pending_index(ipc_client_t *client, uint16_t index)
         return;
     }
 
-    ipc_mutex_lock(client->lock);
+    // 注意：此函数假设调用者已经持有 client->lock 锁
     int w = index / 32;
     int b = index % 32;
     client->pending_bitmap[w] &= ~(1U << b);
-    ipc_mutex_unlock(client->lock);
 }
 
 /**
@@ -525,7 +525,7 @@ bool ipc_client_connect(ipc_client_t *client, const char* ipc_path,
     ssn_transport_config_t config = {
         .non_blocking = true,
         .send_timeout_ms = client->send_timeout,
-        .recv_timeout_ms = 1000,
+        .recv_timeout_ms = 5000, // 增加接收超时时间到5秒
         .connect_timeout_ms = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000,
         .enable_keepalive = true,
         .keepalive_idle_sec = 60,
@@ -569,18 +569,48 @@ bool ipc_client_connect(ipc_client_t *client, const char* ipc_path,
         return (false);
     }
 
-    num = ssn_transport_recv(client->transport, client->recvbuf, IPC_MAX_PACKET_SIZE, config.recv_timeout_ms);
-
-    if (num > 0) {
-        arg.client     = client;
-        arg.packet_cnt = 0;
-        if (!ipc_stream_feed(&client->recv, client->recvbuf,
-                            num, ipc_client_conn_input, &arg)) {
-            num = -1;
+    // 重试接收，处理非阻塞套接字的 EAGAIN 错误
+    int retries = 0;
+    const int max_retries = 5;
+    const int retry_delay_ms = 100;
+    
+    while (retries < max_retries) {
+        num = ssn_transport_recv(client->transport, client->recvbuf, IPC_MAX_PACKET_SIZE, config.recv_timeout_ms);
+        
+        if (num > 0) {
+            arg.client     = client;
+            arg.packet_cnt = 0;
+            if (!ipc_stream_feed(&client->recv, client->recvbuf,
+                                num, ipc_client_conn_input, &arg)) {
+                num = -1;
+            } else if (arg.packet_cnt > 0) {
+                // 成功接收到并处理了服务端响应
+                break;
+            }
         }
+        
+        if (num == 0) {
+            // 连接被关闭
+            LOG_ERROR("recv failed, connection closed by peer");
+            ipc_handle_error(IPC_ERR_NET_READ, __FILE__, __LINE__, __func__, "recv failed, connection closed by peer");
+            ipc_client_unref(client);
+            return (false);
+        } else if (num < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+            // 发生了真正的错误
+            LOG_ERROR("recv failed, errno %d: %s", errno, strerror(errno));
+            ipc_handle_error(IPC_ERR_NET_READ, __FILE__, __LINE__, __func__, "recv failed");
+            ipc_client_unref(client);
+            return (false);
+        }
+        
+        // 非阻塞套接字没有可用数据，重试
+        retries++;
+        usleep(retry_delay_ms * 1000);
     }
-    if (num <= 0 || !arg.packet_cnt) {
-        ipc_handle_error(IPC_ERR_NET_READ, __FILE__, __LINE__, __func__, "recv failed, errno %d", errno);
+    
+    if (retries >= max_retries || !arg.packet_cnt) {
+        LOG_ERROR("recv failed after %d retries", max_retries);
+        ipc_handle_error(IPC_ERR_NET_READ, __FILE__, __LINE__, __func__, "recv failed after multiple retries");
         ipc_client_unref(client);
         return (false);
     }
@@ -827,7 +857,10 @@ static bool ipc_client_input(ipc_header_t *ipc_hdr, void *varg)
             break;
         }
 
+        // 加锁保护 free_pending_index 操作
+        ipc_mutex_lock(client->lock);
         free_pending_index(client, pendq->index);
+        ipc_mutex_unlock(client->lock);
         LOG_DEBUG("ipc client input free seqno pend %d, index %d.", pendq->seqno, pendq->index);
     }
 
@@ -940,7 +973,7 @@ static uint16_t ipc_client_prepare_seqno (ipc_client_t *client)
  */
 static int alloc_pending_index (ipc_client_t *client)
 {
-    ipc_mutex_lock(client->lock);
+    // 注意：此函数假设调用者已经持有 client->lock 锁
     for (int w = 0; w < IPC_CLIENT_MAX_PENDING_BITMAP; w++) {
         uint32_t word = client->pending_bitmap[w];
         if (word != 0xFFFFFFFFU) {  // 有空闲位
@@ -950,14 +983,12 @@ static int alloc_pending_index (ipc_client_t *client)
                 if (!(word & mask)) {
                     int idx = w * 32 + b;
                     client->pending_bitmap[w] |= mask;  // 标记为已用
-                    ipc_mutex_unlock(client->lock);
                     return idx;
                 }
                 mask <<= 1;
             }
         }
     }
-    ipc_mutex_unlock(client->lock);
     return -1; // full
 }
 
@@ -1027,7 +1058,10 @@ error:
     ipc_mutex_unlock(client->lock);
 
     if (pendq) {
+        // 重新加锁保护 free_pending_index 操作
+        ipc_mutex_lock(client->lock);
         free_pending_index(client, pendq->index);
+        ipc_mutex_unlock(client->lock);
     }
 
     ipc_client_unref(client);
