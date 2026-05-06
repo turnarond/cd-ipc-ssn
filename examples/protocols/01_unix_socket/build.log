@@ -1,2 +1,1 @@
-gcc -std=c99 -Wall -Wextra -Werror -I../../../src -o server server.c -L../../../build -lssn_transport -lpthread
-gcc -std=c99 -Wall -Wextra -Werror -I../../../src -o client client.c -L../../../build -lssn_transport -lpthread
+make: 对“all”无需做任何事。

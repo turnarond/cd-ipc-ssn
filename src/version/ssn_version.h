@@ -1,5 +1,5 @@
 /*
- * ssn_version.h - Version information for cd-ipc-ssn
+ * ssn_version.h - Version information for ssn
  *
  * This file contains version information for the library.
  */
@@ -8,6 +8,7 @@
 #define SSN_VERSION_H
 
 #include <stdbool.h>
+#include "ssn_export.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,12 +22,12 @@ extern "C" {
 /**
  * @brief Major version number
  */
-#define SSN_VERSION_MAJOR 1
+#define SSN_VERSION_MAJOR 2
 
 /**
  * @brief Minor version number
  */
-#define SSN_VERSION_MINOR 0
+#define SSN_VERSION_MINOR 2
 
 /**
  * @brief Patch version number
@@ -36,7 +37,7 @@ extern "C" {
 /**
  * @brief Version string
  */
-#define SSN_VERSION_STRING "1.0.0"
+#define SSN_VERSION_STRING "2.2.0"
 
 /**
  * @brief Version number (encoded as MNNPP)
@@ -50,28 +51,28 @@ extern "C" {
  * 
  * @return Version string
  */
-const char *ssn_version_get_string(void);
+SSN_API const char *ssn_version_get_string(void);
 
 /**
  * @brief Get major version number
  * 
  * @return Major version
  */
-int ssn_version_get_major(void);
+SSN_API int ssn_version_get_major(void);
 
 /**
  * @brief Get minor version number
  * 
  * @return Minor version
  */
-int ssn_version_get_minor(void);
+SSN_API int ssn_version_get_minor(void);
 
 /**
  * @brief Get patch version number
  * 
  * @return Patch version
  */
-int ssn_version_get_patch(void);
+SSN_API int ssn_version_get_patch(void);
 
 /**
  * @brief Check if version is compatible
@@ -80,7 +81,7 @@ int ssn_version_get_patch(void);
  * @param minor Minor version to check
  * @return true if compatible, false otherwise
  */
-bool ssn_version_is_compatible(int major, int minor);
+SSN_API bool ssn_version_is_compatible(int major, int minor);
 
 /** @} */
 

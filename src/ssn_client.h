@@ -1,0 +1,80 @@
+/*
+ * ipc_client.h
+ */
+
+#ifndef SSN_CLIENT_H
+#define SSN_CLIENT_H
+
+#include <time.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/un.h>
+#include "ssn_export.h"
+#include "ssn_frame.h"
+#include "ssn_global.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Client RPC callback (`ipc_hdr` NULL means server not responding)
+ * The memory pointed to by `ipc_hdr` and `data` will be invalidated when the callback function returns */
+typedef void (*ssn_client_rpcreply_handler_t)(ssn_client_t *client, ssn_header_t *ipc_hdr, ssn_data_ref_t *data, void *arg);
+
+/* Client subscribe, unsubscribe and ping callback */
+typedef void (*ssn_client_result_handler_t)(ssn_client_t *client, bool success, void *arg);
+
+/* Client on message callback, for subscribe and onmessage. */
+typedef void (*ssn_client_msg_handler_t)(ssn_client_t *client, ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg);
+
+/* Create IPC client , Callback for subscribed (published) messages */
+SSN_API ssn_client_t *ssn_client_create(ssn_client_msg_handler_t on_publish, void *arg);
+
+/* Close IPC client */
+SSN_API void ssn_client_close(ssn_client_t *client);
+
+/* Connect to server (Synchronous) */
+SSN_API bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
+                         const struct timespec *timeout);
+
+/* Disconnect from server
+ * After disconnect, the `ssn_client_connect` function can be called again */
+SSN_API bool ssn_client_disconnect(ssn_client_t *client);
+
+/* IPC client is connect with server */
+SSN_API bool ssn_client_is_connect(ssn_client_t *client);
+
+/* IPC client send timeout
+ * `timeout` NULL means use IPC_DEF_SEND_TIMEOUT */
+SSN_API bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms);
+
+SSN_API int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms);
+
+SSN_API void ssn_client_run(ssn_client_t *client);
+
+/* Subscribe URL */
+SSN_API bool ssn_client_subscribe(ssn_client_t *client, const ssn_url_ref_t *url,
+                           ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
+
+/* Unsubscribe URL */
+SSN_API bool ssn_client_unsubscribe(ssn_client_t *client, const ssn_url_ref_t *url,
+                             ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
+
+/* RPC call */
+SSN_API int ssn_client_call(ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                      ssn_client_rpcreply_handler_t callback, void *arg, uint64_t timeout_ms);
+
+/* Send message to server */
+SSN_API int ssn_client_message(ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data);
+
+/* IPC client set on message callback */
+SSN_API void ssn_client_set_on_message(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SSN_CLIENT_H */
+/*
+ * end
+ */

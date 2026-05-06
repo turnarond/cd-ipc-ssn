@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "../src/node/ipc_node.h"
+#include "../src/node/ssn_node.h"
 #include "../src/util/ssn_log.h"
 
 /**
@@ -21,17 +21,17 @@ static bool test_node_creation(void)
     LOG_INFO("=== Test 1: Node creation and destruction ===");
     
     // Create node configuration
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "test",
         .node_name = "test-node",
         .listen_address = "127.0.0.1",
         .listen_port = 8888,
-        .capabilities = IPC_NODE_CAP_RPC | IPC_NODE_CAP_PUBSUB | 
-                       IPC_NODE_CAP_SERVER | IPC_NODE_CAP_CLIENT
+        .capabilities = SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB | 
+                       SSN_NODE_CAP_SERVER | SSN_NODE_CAP_CLIENT
     };
     
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create node");
         return false;
@@ -41,23 +41,23 @@ static bool test_node_creation(void)
              node->node_id, node->node_type, node->node_name);
     
     // Check node state
-    if (ipc_node_get_state(node) != IPC_NODE_STATE_STOPPED) {
+    if (ssn_node_get_state(node) != SSN_NODE_STATE_STOPPED) {
         LOG_ERROR("Node state is not STOPPED");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     // Check node capabilities
-    uint32_t capabilities = ipc_node_get_capabilities(node);
-    if (!(capabilities & IPC_NODE_CAP_SERVER) || 
-        !(capabilities & IPC_NODE_CAP_CLIENT)) {
+    uint32_t capabilities = ssn_node_get_capabilities(node);
+    if (!(capabilities & SSN_NODE_CAP_SERVER) || 
+        !(capabilities & SSN_NODE_CAP_CLIENT)) {
         LOG_ERROR("Node capabilities incorrect");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Node destroyed successfully");
     
     return true;
@@ -71,56 +71,56 @@ static bool test_node_start_stop(void)
     LOG_INFO("=== Test 2: Node start and stop ===");
     
     // Create node configuration
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "test",
         .node_name = "test-node",
         .listen_address = "127.0.0.1",
         .listen_port = 8888,
-        .capabilities = IPC_NODE_CAP_SERVER
+        .capabilities = SSN_NODE_CAP_SERVER
     };
     
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create node");
         return false;
     }
     
     // Start node
-    if (!ipc_node_start(node)) {
+    if (!ssn_node_start(node)) {
         LOG_ERROR("Failed to start node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     LOG_INFO("Node started successfully");
     
     // Check node state
-    if (ipc_node_get_state(node) != IPC_NODE_STATE_ACTIVE) {
+    if (ssn_node_get_state(node) != SSN_NODE_STATE_ACTIVE) {
         LOG_ERROR("Node state is not ACTIVE");
-        ipc_node_stop(node);
-        ipc_node_destroy(node);
+        ssn_node_stop(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     // Stop node
-    if (!ipc_node_stop(node)) {
+    if (!ssn_node_stop(node)) {
         LOG_ERROR("Failed to stop node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     LOG_INFO("Node stopped successfully");
     
     // Check node state
-    if (ipc_node_get_state(node) != IPC_NODE_STATE_STOPPED) {
+    if (ssn_node_get_state(node) != SSN_NODE_STATE_STOPPED) {
         LOG_ERROR("Node state is not STOPPED");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Node destroyed successfully");
     
     return true;
@@ -134,23 +134,23 @@ static bool test_node_stats(void)
     LOG_INFO("=== Test 3: Node statistics ===");
     
     // Create node
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "test",
         .node_name = "stats-node",
         .listen_address = "127.0.0.1",
         .listen_port = 8888,
-        .capabilities = IPC_NODE_CAP_SERVER
+        .capabilities = SSN_NODE_CAP_SERVER
     };
     
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create node");
         return false;
     }
     
-    if (!ipc_node_start(node)) {
+    if (!ssn_node_start(node)) {
         LOG_ERROR("Failed to start node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
     
@@ -158,10 +158,10 @@ static bool test_node_stats(void)
     int active_connections = -1;
     uint64_t total_messages = 0;
     
-    if (!ipc_node_get_stats(node, &active_connections, &total_messages)) {
+    if (!ssn_node_get_stats(node, &active_connections, &total_messages)) {
         LOG_ERROR("Failed to get node statistics");
-        ipc_node_stop(node);
-        ipc_node_destroy(node);
+        ssn_node_stop(node);
+        ssn_node_destroy(node);
         return false;
     }
     
@@ -169,8 +169,8 @@ static bool test_node_stats(void)
              active_connections, total_messages);
     
     // Cleanup
-    ipc_node_stop(node);
-    ipc_node_destroy(node);
+    ssn_node_stop(node);
+    ssn_node_destroy(node);
     
     return true;
 }

@@ -1,0 +1,1494 @@
+/*
+ * IPC client
+ */
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include "ssn_list.h"
+#include "ssn_client.h"
+#include "ssn_global.h"
+#include "ssn_frame.h"
+#include "ssn_error.h"
+#include "util/ssn_log.h"
+#include "transports/ssn_transport.h"
+#include "protocol/ssn_protocol.h"
+#include "protocol/rpc/ssn_rpc.h"
+#include "protocol/pubsub/ssn_pubsub.h"
+#include "protocol/msg/ssn_msg.h"
+
+static void free_pending_index(ssn_client_t *client, uint16_t index);
+
+
+/* Callback function type */
+#define SSN_CLIENT_FTYPE_RPC  1  // RPC
+#define SSN_CLIENT_FTYPE_RES  2  // 订阅、PING 的应答
+
+/* Client fast pending buffer */
+#define SSN_CLIENT_MAX_PENDING  1024
+#define SSN_CLIENT_MAX_PENDING_BITMAP (SSN_CLIENT_MAX_PENDING / 32)
+
+/* Client callback union. */
+typedef union {
+    ssn_client_rpcreply_handler_t rpc;
+    ssn_client_result_handler_t res;
+    ssn_client_msg_handler_t msg;
+} ssn_client_callback_u;
+
+/* Client pending queue */
+typedef struct ssn_pending_request {
+    uint16_t index;          // pending 序号
+    uint16_t seqno;          // 请求序列号（唯一标识）
+    uint32_t timeout_ms;     // 超时值
+    uint32_t ftype;          // 回调类型：RPC / RES（subscribe等）
+    ssn_client_callback_u callback;
+    void *arg;
+} ssn_pending_request_t;
+
+/* Client */
+struct ssn_client {
+    bool valid;
+    bool connected;
+    ssn_client_t *next;
+    ssn_client_t *prev;
+    ssn_pending_request_t pending_pool[SSN_CLIENT_MAX_PENDING];
+    uint32_t pending_bitmap[SSN_CLIENT_MAX_PENDING_BITMAP];
+    uint16_t seqno_to_index[65536];
+    void *sendbuf;
+    void *recvbuf;
+    ssn_stream_ctx_t recv;
+    bool cid_valid;
+    uint32_t cid;
+    uint16_t seqno;
+    uint16_t next_non_pending_seqno;
+    ssn_transport_t *transport;
+    ipc_event_pair_t *evtfd;
+    int send_timeout;
+    ipc_spinlock_t *spin;
+    ipc_mutex_t *lock;
+    int ref_count;  // 引用计数
+    ssn_client_msg_handler_t onsub;
+    void *sub_arg;
+    ssn_client_msg_handler_t onmsg;
+    void *msg_arg;
+
+    /* 协议层实例 */
+    ssn_rpc_req_t *rpc_req;
+    ssn_pubsub_sub_t *pubsub_sub;
+    ssn_msg_send_t *msg_send;
+
+    /* RPC 回调适配 */
+    ssn_client_rpcreply_handler_t onrpc;
+    void *rpc_arg;
+};
+/*
+ * 协议层回调适配器 —— 将新协议层的回调转换为旧 client API 的回调格式
+ */
+
+/* RPC 应答适配: ssn_rpc_reply_handler_t → ssn_client_rpcreply_handler_t */
+static void rpc_reply_adaptor(uint16_t seqno, uint32_t status,
+                              const void *data, size_t data_len, void *arg)
+{
+    ssn_client_t *client = (ssn_client_t *)arg;
+    if (!client || !client->onrpc) return;
+
+    ssn_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    ssn_set_seqno(&hdr, seqno);
+    ssn_set_status(&hdr, status);
+
+    ssn_data_ref_t data_ref = {
+        .data = (void *)data,
+        .length = data_len
+    };
+    client->onrpc(client, &hdr, &data_ref, client->rpc_arg);
+}
+
+/* PubSub 消息适配: ssn_pubsub_msg_handler_t → ssn_client_msg_handler_t */
+static void pubsub_msg_adaptor(const char *topic,
+                               const void *data, size_t data_len, void *arg)
+{
+    ssn_client_t *client = (ssn_client_t *)arg;
+    if (!client || !client->onsub) return;
+
+    ssn_url_ref_t url_ref = {
+        .url = (char *)topic,
+        .url_len = strlen(topic)
+    };
+    ssn_data_ref_t data_ref = {
+        .data = (void *)data,
+        .length = data_len
+    };
+    client->onsub(client, &url_ref, &data_ref, client->sub_arg);
+}
+
+/* Connect input argument */
+struct conn_input_arg {
+    ssn_client_t *client;
+    int packet_cnt;
+    char *info;
+    size_t sz_info;
+};
+
+/**
+ * @brief 检查位图中指定位置的位是否设置
+ * 
+ * @param bit_map 位图指针
+ * @param i 要检查的位位置
+ * @return true 位已设置，false 位未设置
+ */
+static bool is_bit_set(uint32_t *bit_map, int i) {
+    return (bit_map[i / 32] & (1U << (i % 32)));
+}
+
+/**
+ * @brief IPC 客户端定时器线程处理函数
+ * 
+ * @param arg 线程参数（未使用）
+ * @return NULL
+ */
+void *ssn_client_timer_handle(void *arg)
+{
+    bool emit;
+    ssn_client_t *client;
+    ssn_pending_request_t *pendq, *tmp;
+
+    (void)arg;
+
+    do {
+        ipc_thread_msleep(IPC_TIMER_PERIOD);
+
+        ipc_mutex_lock(g_ssn_client_lock);
+
+        if (!g_ssn_client_list) {
+            ipc_mutex_unlock(g_ssn_client_lock);
+            break;
+        }
+
+        LIST_FOREACH(client, g_ssn_client_list) {
+            emit = false;
+
+            ipc_mutex_lock(client->lock);
+            for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
+                if (is_bit_set(client->pending_bitmap, i)) {
+                    pendq = &client->pending_pool[i];
+                    if (pendq->timeout_ms > IPC_TIMER_PERIOD) {
+                        pendq->timeout_ms -= IPC_TIMER_PERIOD;
+                    } else {
+                        pendq->timeout_ms = 0;
+                        emit = true;
+                        LOG_INFO("seqno %d of client %d timeout", pendq->seqno, client->cid);
+                    }
+                }
+            }
+            ipc_mutex_unlock(client->lock);
+
+            if (emit) {
+                ipc_event_pair_signal(client->evtfd);
+            }
+        }
+
+        ipc_mutex_unlock(g_ssn_client_lock);
+
+    } while (true);
+
+    ipc_thread_exit();
+
+    return (NULL);
+}
+
+/**
+ * @brief 增加客户端引用计数
+ * 
+ * @param client 客户端实例
+ */
+void ssn_client_ref(ssn_client_t *client)
+{
+    if (!client) {
+        return;
+    }
+    ipc_mutex_lock(client->lock);
+    client->ref_count++;
+    ipc_mutex_unlock(client->lock);
+}
+
+/**
+ * @brief 减少客户端引用计数
+ * 
+ * @param client 客户端实例
+ */
+void ssn_client_unref(ssn_client_t *client)
+{
+    if (!client) {
+        return;
+    }
+    
+    bool should_free = false;
+    
+    ipc_mutex_lock(client->lock);
+    if (client->ref_count > 0) {
+        client->ref_count--;
+        if (client->ref_count == 0 && !client->valid) {
+            should_free = true;
+        }
+    }
+    ipc_mutex_unlock(client->lock);
+    
+    if (should_free) {
+        // 真正释放资源
+        ssn_pending_request_t *pendq;
+
+        client->connected = false;
+        ipc_memory_barrier();
+
+        /* 销毁协议层实例 */
+        if (client->msg_send) {
+            ssn_msg_destroy((ssn_protocol_ctx_t *)client->msg_send);
+            client->msg_send = NULL;
+        }
+        if (client->pubsub_sub) {
+            ssn_pubsub_destroy((ssn_protocol_ctx_t *)client->pubsub_sub);
+            client->pubsub_sub = NULL;
+        }
+        if (client->rpc_req) {
+            ssn_rpc_destroy((ssn_protocol_ctx_t *)client->rpc_req);
+            client->rpc_req = NULL;
+        }
+
+        if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
+    }
+
+        ipc_event_pair_destroy(client->evtfd);
+        free(client->sendbuf);
+        
+        ipc_mutex_lock(client->lock);
+        for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
+            if (is_bit_set(client->pending_bitmap, i)) {
+                pendq = &client->pending_pool[i];
+                if (pendq->ftype == SSN_CLIENT_FTYPE_RPC && pendq->callback.rpc) {
+                    pendq->callback.rpc(client, NULL, NULL, pendq->arg);
+                } else if (pendq->ftype == SSN_CLIENT_FTYPE_RES && pendq->callback.res) {
+                    pendq->callback.res(client, false, pendq->arg);
+                }
+                free_pending_index(client, pendq->index);
+            }
+        }
+        ipc_mutex_unlock(client->lock);
+        
+        ipc_mutex_destroy(client->lock);
+        ipc_spinlock_destroy(client->spin);
+        free(client);
+        LOG_DEBUG("ip client close success.");
+    }
+}
+
+/**
+ * @brief 根据序列号获取待处理请求
+ * 
+ * @param client 客户端实例
+ * @param seqno 请求序列号
+ * @return 待处理请求指针，失败返回 NULL
+ */
+static ssn_pending_request_t *get_pending_by_seqno(ssn_client_t *client, uint16_t seqno)
+{
+    // TODO: list mapping to find pending's seqno.
+    uint16_t index = client->seqno_to_index[seqno];
+    if (index == 0xFFFF || index >= SSN_CLIENT_MAX_PENDING) {
+        return NULL;
+    }
+    
+    ipc_mutex_lock(client->lock);
+    if (!is_bit_set(client->pending_bitmap, index)) {
+        ipc_mutex_unlock(client->lock);
+        return NULL;
+    }
+
+    ssn_pending_request_t *pendq = &client->pending_pool[index];
+    ipc_mutex_unlock(client->lock);
+    return pendq;
+}
+
+/**
+ * @brief 释放待处理请求的索引
+ * 
+ * @param client 客户端实例
+ * @param index 待处理请求的索引
+ */
+static void free_pending_index(ssn_client_t *client, uint16_t index)
+{
+    if (index >= SSN_CLIENT_MAX_PENDING) {
+        LOG_ERROR("free pending index: invalid index %d", index);
+        return;
+    }
+
+    // 注意：此函数假设调用者已经持有 client->lock 锁
+    int w = index / 32;
+    int b = index % 32;
+    client->pending_bitmap[w] &= ~(1U << b);
+}
+
+/**
+ * @brief 创建IPC客户端
+ * 
+ * @param onmsg 消息处理回调函数
+ * @param arg 回调函数参数
+ * @return 客户端实例指针，失败返回NULL
+ * @warning 此函数必须与ssn_client_close()调用互斥
+ */
+ssn_client_t *ssn_client_create(ssn_client_msg_handler_t onmsg, void *arg)
+{
+    int i, err = 0;
+    ssn_client_t *client;
+
+    client = (ssn_client_t *)malloc(sizeof(ssn_client_t));
+    if (!client) {
+        LOG_ERROR("ipc client create: malloc errno %d", errno);
+        return (NULL);
+    }
+
+    memset(client, 0, sizeof(ssn_client_t));
+    memset(client->seqno_to_index, 0xFF, sizeof(client->seqno_to_index));
+
+    // 初始化pendings
+    for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
+        client->pending_pool[i].index = i;
+    }
+
+    client->transport = NULL;
+
+    if (ipc_event_pair_create(&client->evtfd) != 0) {
+        LOG_ERROR("ipc client create: event pair create failed, errno %d", errno);
+        err = 1;
+        goto error;
+    }
+
+    client->sendbuf = malloc(SSN_MAX_PACKET_SIZE * 2);
+    if (!client->sendbuf) {
+        err = 2;
+        LOG_ERROR("ipc client create: sendbuf malloc, errno %d", errno);
+        goto error;
+    }
+
+    ipc_spinlock_init(&client->spin);
+
+    if (ipc_mutex_init(&client->lock)) {
+        err = 3;
+        LOG_ERROR("ipc client create: mutex init failed, errno %d", errno);
+        goto error;
+    }
+
+    ssn_stream_init(&client->recv);
+    client->recvbuf      = (uint8_t *)client->sendbuf + SSN_MAX_PACKET_SIZE;
+    client->onsub        = onmsg;
+    client->sub_arg      = arg;
+    client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+    client->valid        = true;
+    client->ref_count    = 1;  // 初始化引用计数为1
+
+    /* 创建协议层实例 */
+    client->rpc_req = ssn_rpc_req_create(rpc_reply_adaptor, client);
+    if (!client->rpc_req) {
+        err = 4;
+        LOG_ERROR("ipc client create: rpc_req create failed");
+        goto error;
+    }
+
+    client->pubsub_sub = ssn_pubsub_sub_create(pubsub_msg_adaptor, client);
+    if (!client->pubsub_sub) {
+        err = 5;
+        LOG_ERROR("ipc client create: pubsub_sub create failed");
+        goto error;
+    }
+
+    client->msg_send = ssn_msg_send_create();
+    if (!client->msg_send) {
+        err = 6;
+        LOG_ERROR("ipc client create: msg_send create failed");
+        goto error;
+    }
+
+    ipc_mutex_lock(g_ssn_client_lock);
+
+    INSERT_TO_HEADER(client, g_ssn_client_list);
+
+    ipc_mutex_unlock(g_ssn_client_lock);
+
+    LOG_DEBUG("ipc client create success.");
+    return (client);
+
+error:
+    if (err > 5) {
+        ssn_msg_destroy((ssn_protocol_ctx_t *)client->msg_send);
+    }
+    if (err > 4) {
+        ssn_pubsub_destroy((ssn_protocol_ctx_t *)client->pubsub_sub);
+    }
+    if (err > 3) {
+        ssn_rpc_destroy((ssn_protocol_ctx_t *)client->rpc_req);
+    }
+    if (err > 2) {
+        ipc_mutex_destroy(client->lock);
+    }
+    if (err > 1) {
+        free(client->sendbuf);
+    }
+    if (err > 0) {
+        ipc_event_pair_destroy(client->evtfd);
+    }
+
+    free(client);
+    return (NULL);
+}
+
+/**
+ * @brief 关闭IPC客户端
+ * 
+ * @param client 客户端实例指针
+ * @warning 此函数必须与ssn_client_create()调用互斥
+ */
+void ssn_client_close(ssn_client_t *client)
+{
+    if (!client || !client->valid) {
+        return;
+    }
+
+    /* Set client to invalid state, so that no new operations can be performed.
+     * This is necessary to ensure that the client is not used after closing.
+     */
+    client->valid = false;
+
+    ipc_mutex_lock(g_ssn_client_lock);
+    DELETE_FROM_LIST(client, g_ssn_client_list);
+    ipc_mutex_unlock(g_ssn_client_lock);
+
+    // 减少引用计数，当引用计数为0时会真正释放资源
+    ssn_client_unref(client);
+    LOG_DEBUG("ip client close initiated.");
+}
+
+/**
+ * @brief 客户端发送数据包
+ * 
+ * @param client 客户端实例指针
+ * @param len 数据包长度
+ * @return 发送成功返回true，失败返回false
+ */
+static bool ssn_client_send(ssn_client_t *client, size_t len)
+{
+    uint8_t *buffer = (uint8_t *)client->sendbuf;
+    ssize_t num, total = 0;
+
+    do {
+        num = ssn_transport_send(client->transport, &buffer[total], len - total);
+        if (num > 0) {
+            total += num;
+        } else {
+            ssn_transport_disconnect(client->transport);
+            break;
+        }
+    } while (total < len);
+
+    return (total == len);
+}
+
+/**
+ * @brief 客户端发送消息
+ * 
+ * @param client 客户端实例指针
+ * @param ipc_hdr IPC消息头部
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发送成功返回true，失败返回false
+ */
+static bool ssn_client_sendmsg(ssn_client_t *client, ssn_header_t *ipc_hdr, 
+    const ssn_url_ref_t *url, const ssn_data_ref_t *data)
+{
+    bool ret = ssn_send_message(client->transport, ipc_hdr, url, data);
+    if (!ret) {
+        ssn_transport_disconnect(client->transport);
+    }
+    return ret;
+}
+
+/**
+ * @brief 所有RPC回调超时处理
+ * 
+ * @param client 客户端实例指针
+ */
+static void ssn_client_timeout_all (ssn_client_t *client)
+{
+    ssn_pending_request_t *pendq;
+
+    ipc_mutex_lock(client->lock);
+    for (int i = 0; i < SSN_CLIENT_MAX_PENDING; i++) {
+        if (is_bit_set(client->pending_bitmap, i)) { // used
+            pendq = &client->pending_pool[i];
+            if (pendq->ftype == SSN_CLIENT_FTYPE_RPC && pendq->callback.rpc) {
+                pendq->callback.rpc(client, NULL, NULL, pendq->arg);
+            } else if (pendq->ftype == SSN_CLIENT_FTYPE_RES && pendq->callback.res) {
+                pendq->callback.res(client, false, pendq->arg);
+            }
+            free_pending_index(client, pendq->index);
+        }
+    }
+    ipc_mutex_unlock(client->lock);
+}
+
+/**
+ * @brief 连接输入回调函数
+ * 
+ * @param ipc_hdr IPC消息头部
+ * @param varg 回调参数
+ * @return 处理成功返回true，失败返回false
+ */
+static bool ssn_client_conn_input(ssn_header_t *ipc_hdr, void *varg)
+{
+    struct conn_input_arg *arg = (struct conn_input_arg *)varg;
+    ssn_data_ref_t data;
+    size_t length;
+    uint8_t *nid;
+
+    if (ipc_hdr->msg_type != SSN_MSG_TYPE_SERVICE_INFO) {
+        return (true);
+    }
+    if (ssn_get_status(ipc_hdr)) {
+        return (true);
+    }
+
+    if (!ssn_get_data(ipc_hdr, &data) || !data.length) {
+        return (true);
+    }
+
+    arg->packet_cnt++;
+
+    if (data.length >= sizeof(uint32_t)) {
+        nid = (uint8_t *)data.data;
+        arg->client->cid = ((uint32_t)nid[0] << 24) + ((uint32_t)nid[1] << 16)
+                        + ((uint32_t)nid[2] << 8)  +  (uint32_t)nid[3];
+        arg->client->cid_valid = true;
+    }
+
+    return (true);
+}
+
+/**
+ * @brief 连接到服务器（同步）
+ * 
+ * @param client 客户端实例指针
+ * @param ipc_path IPC路径
+ * @param timeout 超时时间
+ * @return 连接成功返回true，失败返回false
+ */
+bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
+                        const struct timespec *timeout)
+{
+    int errcode, ret, on = 1, off = 0;
+    bool suc = false;
+    char *opt;
+    fd_set fds;
+    size_t len = 0;
+    ssize_t num;
+    ssn_header_t *ipc_hdr;
+    ssn_data_ref_t data;
+    struct sockaddr_un server;
+    struct conn_input_arg arg;
+
+    if (!client || !client->valid) {
+        ssn_handle_error(SSN_ECODE_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid client handle");
+        return (false);
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    client->connected = false;
+    ipc_memory_barrier();
+
+    if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
+    }
+
+    ssn_client_timeout_all(client);
+
+    if (timeout == NULL) {
+        struct timespec default_timeout = {3, 0}; // 默认超时5秒
+        timeout = &default_timeout;
+    }
+    // 创建transport配置
+    ssn_transport_config_t config = {
+        .non_blocking = true,
+        .send_timeout_ms = client->send_timeout,
+        .recv_timeout_ms = 5000, // 增加接收超时时间到5秒
+        .connect_timeout_ms = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000,
+        .enable_keepalive = true,
+        .keepalive_idle_sec = 60,
+        .keepalive_interval_sec = 10,
+        .keepalive_count = 3,
+        .enable_nagle = false,
+        .send_buffer_size = SSN_MAX_PACKET_SIZE,
+        .recv_buffer_size = SSN_MAX_PACKET_SIZE,
+        .reuse_address = true
+    };
+
+    // 解析地址，得到地址类型
+    ssn_address_t addr;
+    if (!ssn_address_parse(ipc_path, &addr)) {
+        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "parse address failed");
+        ssn_client_unref(client);
+        return (false);
+    }
+
+    // 根据地址类型设置配置和创建transport
+    config.type = addr.type;
+    client->transport = ssn_transport_create(addr.type, &config);
+    if (!client->transport) {
+        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "create transport failed");
+        ssn_client_unref(client);
+        return (false);
+    }
+
+    // 连接到服务器
+    if (!ssn_transport_connect(client->transport, &addr, config.connect_timeout_ms)) {
+        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "connect failed");
+        ssn_client_unref(client);
+        return (false);
+    }
+
+    ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_SERVICE_INFO, 0, 0);
+
+    if (!ssn_client_send(client, sizeof(ssn_header_t))) {
+        ssn_handle_error(SSN_ECODE_NET_WRITE, __FILE__, __LINE__, __func__, "send failed");
+        ssn_client_unref(client);
+        return (false);
+    }
+
+    // 重试接收，处理非阻塞套接字的 EAGAIN 错误
+    int retries = 0;
+    const int max_retries = 5;
+    const int retry_delay_ms = 100;
+    
+    while (retries < max_retries) {
+        num = ssn_transport_recv(client->transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
+        
+        if (num > 0) {
+            arg.client     = client;
+            arg.packet_cnt = 0;
+            if (!ssn_stream_feed(&client->recv, client->recvbuf,
+                                num, ssn_client_conn_input, &arg)) {
+                num = -1;
+            } else if (arg.packet_cnt > 0) {
+                // 成功接收到并处理了服务端响应
+                break;
+            }
+        }
+        
+        if (num == 0) {
+            // 连接被关闭
+            LOG_ERROR("recv failed, connection closed by peer");
+            ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed, connection closed by peer");
+            ssn_client_unref(client);
+            return (false);
+        } else if (num < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+            // 发生了真正的错误
+            LOG_ERROR("recv failed, errno %d: %s", errno, strerror(errno));
+            ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed");
+            ssn_client_unref(client);
+            return (false);
+        }
+        
+        // 非阻塞套接字没有可用数据，重试
+        retries++;
+        usleep(retry_delay_ms * 1000);
+    }
+    
+    if (retries >= max_retries || !arg.packet_cnt) {
+        LOG_ERROR("recv failed after %d retries", max_retries);
+        ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed after multiple retries");
+        ssn_client_unref(client);
+        return (false);
+    }
+
+    client->connected = true;
+    ipc_memory_barrier();
+
+    /* 绑定协议层实例到传输层 */
+    ssn_rpc_connect((ssn_protocol_ctx_t *)client->rpc_req, client->transport);
+    ssn_pubsub_sub_connect(client->pubsub_sub, client->transport);
+    ssn_msg_send_connect(client->msg_send, client->transport);
+
+    /* Set send timeout */
+    // 发送超时已在transport创建时设置
+    LOG_DEBUG("ipc client connect success.");
+
+    ssn_client_unref(client);
+    return (true);
+}
+
+/**
+ * @brief 从服务器断开连接
+ * 
+ * 断开连接后，可以再次调用`ssn_client_connect`函数
+ * 
+ * @param client 客户端实例指针
+ * @return 断开连接成功返回true，失败返回false
+ */
+bool ssn_client_disconnect(ssn_client_t *client)
+{
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client disconnect failed: invalid client handle.");
+        return (false);
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    ipc_mutex_lock(client->lock);
+
+    client->connected = false;
+    ipc_memory_barrier();
+
+    if (client->transport) {
+        ssn_transport_disconnect(client->transport);
+    }
+
+    ipc_mutex_unlock(client->lock);
+
+    ssn_client_timeout_all(client);
+
+    LOG_DEBUG("ipc client disconnect success.");
+
+    // 减少引用计数
+    ssn_client_unref(client);
+    return (true);
+}
+
+/**
+ * @brief 检查IPC客户端是否已连接到服务器
+ * 
+ * @param client 客户端实例指针
+ * @return 已连接返回true，未连接返回false
+ */
+bool ssn_client_is_connect(ssn_client_t *client)
+{
+    return (client ? (client->valid && client->connected) : false);
+}
+
+/**
+ * @brief 设置IPC客户端发送超时
+ * 
+ * @param client 客户端实例指针
+ * @param timeout_ms 超时时间（毫秒）
+ * @return 设置成功返回true，失败返回false
+ */
+bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
+{
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client send timeout failed: invalid client handle.");
+        return (false);
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    if (timeout_ms > 0) {
+        client->send_timeout  = timeout_ms;
+    } else {
+        client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+    }
+
+    if (client->connected && client->transport) {
+        ssn_transport_config_t config = client->transport->config;
+        config.send_timeout_ms = client->send_timeout;
+        // 使用transport的实际类型重新创建transport
+        ssn_transport_t *new_transport = ssn_transport_create(client->transport->type, &config);
+        if (new_transport) {
+            ssn_address_t addr;
+            if (ssn_transport_get_address(client->transport, &addr)) {
+                ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms);
+                ssn_transport_destroy(client->transport);
+                client->transport = new_transport;
+            }
+        }
+    }
+
+    LOG_DEBUG("set ipc client send timeout success.");
+    
+    // 减少引用计数
+    ssn_client_unref(client);
+    return (true);
+}
+
+/**
+ * @brief 获取IPC客户端文件描述符
+ * 
+ * @param client 客户端实例指针
+ * @param rfds 文件描述符集
+ * @return 最大文件描述符，失败返回-1
+ */
+int ssn_client_fds(ssn_client_t *client, fd_set *rfds)
+{
+    int max_fd;
+    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
+
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client fds failed: invalid client handle.");
+        return (-1);
+    }
+
+    if (!client->connected) {
+        FD_SET(evt_fd, rfds);
+        LOG_ERROR("ipc client fds failed: client not connected.");
+        return (evt_fd);
+    }
+
+    int sock_fd = ssn_transport_get_fd(client->transport);
+    if (sock_fd >= 0) {
+        FD_SET(sock_fd, rfds);
+        max_fd = sock_fd;
+    } else {
+        max_fd = -1;
+    }
+
+    FD_SET(evt_fd, rfds);
+    if (max_fd < evt_fd) {
+        max_fd = evt_fd;
+    }
+
+    return (max_fd);
+}
+
+/**
+ * @brief 客户端输入回调函数
+ * 
+ * @param ipc_hdr IPC消息头部
+ * @param varg 回调参数
+ * @return 处理成功返回true，失败返回false
+ */
+static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hdr)
+{
+    ssn_url_ref_t url;
+    ssn_data_ref_t data;
+    
+    ssn_get_url(ipc_hdr, &url);
+    ssn_get_data(ipc_hdr, &data);
+    
+    LOG_DEBUG("ipc client input: get publish msg.");
+    if (client->onsub) {
+        client->onsub(client, &url, &data, client->sub_arg);
+    }
+    
+    return true;
+}
+
+static bool ssn_client_handle_message(ssn_client_t *client, ssn_header_t *ipc_hdr)
+{
+    ssn_url_ref_t url;
+    ssn_data_ref_t data;
+    
+    ssn_get_url(ipc_hdr, &url);
+    ssn_get_data(ipc_hdr, &data);
+    
+    LOG_DEBUG("ipc client input: get message msg.");
+    if (client->onmsg) {
+        client->onmsg(client, &url, &data, client->msg_arg);
+    }
+    
+    return true;
+}
+
+static bool ssn_client_handle_response(ssn_client_t *client, ssn_header_t *ipc_hdr, ssn_pending_request_t *pendq)
+{
+    if (pendq->ftype == SSN_CLIENT_FTYPE_RES) {
+        if (pendq->callback.res) {
+            pendq->callback.res(client, ssn_get_status(ipc_hdr) == 0, pendq->arg);
+        }
+    }
+    
+    return true;
+}
+
+static bool ssn_client_handle_rpc_response(ssn_client_t *client, ssn_header_t *ipc_hdr, ssn_pending_request_t *pendq)
+{
+    ssn_data_ref_t data;
+    
+    if (pendq->ftype == SSN_CLIENT_FTYPE_RPC) {
+        if (pendq->callback.rpc) {
+            ssn_get_data(ipc_hdr, &data);
+            pendq->callback.rpc(client, ipc_hdr, &data, pendq->arg);
+        }
+    }
+    
+    return true;
+}
+
+static bool ssn_client_input(ssn_header_t *ipc_hdr, void *varg)
+{
+    ssn_client_t *client = (ssn_client_t *)varg;
+    ssn_pending_request_t *pendq;
+    uint16_t seqno;
+
+    if (ipc_hdr->msg_type == SSN_MSG_TYPE_PUBLISH) {
+        ssn_client_handle_publish(client, ipc_hdr);
+        goto out;
+    } else if (ipc_hdr->msg_type == SSN_MSG_TYPE_MESSAGE) {
+        ssn_client_handle_message(client, ipc_hdr);
+        goto out;
+    }
+
+    seqno = ssn_get_seqno(ipc_hdr);
+    pendq = get_pending_by_seqno(client, seqno);
+
+    if (pendq) {
+        switch (ipc_hdr->msg_type) {
+
+        case SSN_MSG_TYPE_SUBSCRIBE:
+        case SSN_MSG_TYPE_UNSUBSCRIBE:
+        case SSN_MSG_TYPE_PING_ECHO:
+            ssn_client_handle_response(client, ipc_hdr, pendq);
+            break;
+
+        case SSN_MSG_TYPE_RPC_REQUEST:
+            ssn_client_handle_rpc_response(client, ipc_hdr, pendq);
+            break;
+
+        default:
+            break;
+        }
+
+        // 加锁保护 free_pending_index 操作
+        ipc_mutex_lock(client->lock);
+        free_pending_index(client, pendq->index);
+        ipc_mutex_unlock(client->lock);
+        LOG_DEBUG("ipc client input free seqno pend %d, index %d.", pendq->seqno, pendq->index);
+    }
+
+    LOG_DEBUG("ipc client input finished.");
+
+out:
+    return (client->valid);
+}
+
+/**
+ * @brief IPC客户端输入事件处理
+ * 
+ * @param client 客户端实例指针
+ * @param rfds 文件描述符集
+ * @return 处理成功返回true，失败返回false
+ */
+static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
+{
+    bool pkt_e;
+    ssize_t num;
+    ssn_header_t *ipc_hdr;
+    ssn_pending_request_t *pendq;
+
+    if (!client || !client->valid) {
+        LOG_DEBUG("ipc client process event failed: invalid client handle.");
+        return (false);
+    }
+
+    if (client->connected) 
+    {
+        int sock_fd = ssn_transport_get_fd(client->transport);
+        if (sock_fd >= 0 && FD_ISSET(sock_fd, rfds)) {
+            pkt_e = false;
+            num = ssn_transport_recv(client->transport, client->recvbuf, SSN_MAX_PACKET_SIZE, 0);
+            if (num > 0) {
+                // TODO: deal recv msg;
+                if (!ssn_stream_feed(&client->recv, client->recvbuf,
+                                    num, ssn_client_input, client)) {
+                    LOG_ERROR("ipc client process event failed: stream feed failed.");
+                    pkt_e = true;
+                }
+            }
+
+            if (pkt_e || num == 0) {
+                // Connection closed or stream error
+                client->connected = false;
+                ipc_memory_barrier();
+
+                ssn_client_timeout_all(client);
+                LOG_ERROR("ipc client process event failed: connection lost.");
+                return (false);
+            } else if (num < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                // Real error (not just "no data available yet")
+                client->connected = false;
+                ipc_memory_barrier();
+
+                ssn_client_timeout_all(client);
+                LOG_ERROR("ipc client process event failed: recv error %s.", strerror(errno));
+                return (false);
+            }
+        }
+    }
+
+    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
+    if (FD_ISSET(evt_fd, rfds)) 
+    {
+        ipc_event_pair_drain(client->evtfd);
+
+        ipc_mutex_lock(client->lock);
+        for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
+            if (is_bit_set(client->pending_bitmap, i)) {
+                pendq = &client->pending_pool[i];
+                if (pendq->timeout_ms == 0) {
+                    if (pendq->ftype == SSN_CLIENT_FTYPE_RPC && pendq->callback.rpc) {
+                        pendq->callback.rpc(client, NULL, NULL, pendq->arg);
+                    } else if (pendq->ftype == SSN_CLIENT_FTYPE_RES && pendq->callback.res) {
+                        pendq->callback.res(client, false, pendq->arg);
+                    }
+                    free_pending_index(client, pendq->index);
+                }
+            }
+        }
+        ipc_mutex_unlock(client->lock);
+    }
+
+    return (true);
+}
+
+/**
+ * @brief 准备一个非队列序列号
+ * 
+ * @param client 客户端实例指针
+ * @return 非队列序列号
+ */
+static uint16_t ssn_client_prepare_seqno (ssn_client_t *client)
+{
+    uint16_t seqno;
+
+    ipc_spinlock_lock(client->spin);
+
+    if (client->next_non_pending_seqno == 0) {
+        seqno = 1;
+        client->next_non_pending_seqno = 2;
+    } else {
+        seqno = client->next_non_pending_seqno;
+        client->next_non_pending_seqno++;
+    }
+
+    ipc_spinlock_unlock(client->spin);
+
+    return (seqno);
+}
+
+/**
+ * @brief 分配待处理请求索引
+ * 
+ * @param client 客户端实例指针
+ * @return 成功返回索引，失败返回-1
+ */
+static int alloc_pending_index (ssn_client_t *client)
+{
+    // 注意：此函数假设调用者已经持有 client->lock 锁
+    for (int w = 0; w < SSN_CLIENT_MAX_PENDING_BITMAP; w++) {
+        uint32_t word = client->pending_bitmap[w];
+        if (word != 0xFFFFFFFFU) {  // 有空闲位
+            // 找第一个 0 位
+            uint32_t mask = 1U;
+            for (int b = 0; b < 32; b++) {
+                if (!(word & mask)) {
+                    int idx = w * 32 + b;
+                    client->pending_bitmap[w] |= mask;  // 标记为已用
+                    return idx;
+                }
+                mask <<= 1;
+            }
+        }
+    }
+    return -1; // full
+}
+
+/**
+ * @brief 发送请求
+ * 
+ * @param client 客户端实例指针
+ * @param type 请求类型
+ * @param url URL引用
+ * @param data 数据引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @param timeout_ms 超时时间
+ * @return 发送成功返回true，失败返回false
+ */
+static bool ssn_client_request (ssn_client_t *client, uint8_t type, 
+                                const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                                ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    size_t len;
+    uint16_t seqno;
+    ssn_header_t *ipc_hdr;
+    ssn_pending_request_t *pendq;
+
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client request: invalid client handle.");
+        return (false);
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    if (callback) {
+        int index = alloc_pending_index(client);
+        if (index < 0) {
+            LOG_ERROR("ipc client request: prepare pendq failed.");
+            return (false);
+        }
+        pendq = &client->pending_pool[index];
+        pendq->callback.res = callback;
+        seqno = pendq->seqno = client->seqno++;
+        pendq->timeout_ms = timeout_ms;
+        pendq->ftype = type;
+        pendq->arg = arg;
+        client->seqno_to_index[seqno] = index;
+    } else {
+        pendq = NULL;
+        seqno = ssn_client_prepare_seqno(client);
+    }
+
+    ipc_mutex_lock(client->lock);
+
+    ipc_hdr = ssn_create_header(client->sendbuf, type, 0, seqno);
+
+    if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
+        LOG_ERROR("ipc client request: sendmsg failed.");
+        goto error;
+    }
+
+    ipc_mutex_unlock(client->lock);
+
+    LOG_DEBUG("ipc client request success.");
+    ssn_client_unref(client);
+    return (true);
+
+error:
+    ipc_mutex_unlock(client->lock);
+
+    if (pendq) {
+        // 重新加锁保护 free_pending_index 操作
+        ipc_mutex_lock(client->lock);
+        free_pending_index(client, pendq->index);
+        ipc_mutex_unlock(client->lock);
+    }
+
+    ssn_client_unref(client);
+    return (false);
+}
+
+/**
+ * @brief 订阅URL
+ * 
+ * @param client 客户端实例指针
+ * @param url URL引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @param timeout_ms 超时时间
+ * @return 订阅成功返回true，失败返回false
+ */
+bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
+                            ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client subscribe failed: invalid client handle.");
+        return (false);
+    }
+    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
+        LOG_ERROR("ipc client subscribe failed: invalid url.");
+        return (false);
+    }
+
+    return (ssn_client_request(client, SSN_MSG_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout_ms));
+}
+
+/**
+ * @brief 取消订阅URL
+ * 
+ * @param client 客户端实例指针
+ * @param url URL引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @param timeout_ms 超时时间
+ * @return 取消订阅成功返回true，失败返回false
+ */
+bool ssn_client_unsubscribe (ssn_client_t *client, const ssn_url_ref_t *url,
+                            ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client unsubscribe failed: invalid client handle.");
+        return (false);
+    }
+    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
+        LOG_ERROR("ipc client unsubscribe failed: invalid url.");
+        return (false);
+    }
+
+    return (ssn_client_request(client, SSN_MSG_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout_ms));
+}
+
+/**
+ * @brief 带外部参数的RPC调用
+ * 
+ * @param client 客户端实例指针
+ * @param url URL引用
+ * @param data 数据引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @param timeout_ms 超时时间
+ * @param arg_ex 外部参数
+ * @return 调用成功返回0，失败返回-1
+ */
+static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                        ssn_client_rpcreply_handler_t callback, void *arg, uint64_t timeout_ms, void *arg_ex)
+{
+    size_t len;
+    uint8_t flag;
+    uint16_t seqno;
+    ssn_header_t *ipc_hdr;
+    ssn_pending_request_t *pendq;
+
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client call failed: invalid client handle.");
+        return -1;
+    }
+    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
+        LOG_ERROR("ipc client call failed: invalid url.");
+        return -1;
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    ipc_mutex_lock(client->lock);
+    
+    if (callback) {
+        int index = alloc_pending_index(client);
+        if (index < 0) {
+            ipc_mutex_unlock(client->lock);
+            LOG_ERROR("ipc client call failed: prepare pendq failed");
+            ssn_client_unref(client);
+            return -1;
+        }
+        pendq = &client->pending_pool[index];
+        seqno = pendq->seqno = client->seqno++;
+        pendq->callback.rpc = callback;
+        pendq->timeout_ms = timeout_ms;
+        pendq->ftype = SSN_CLIENT_FTYPE_RPC;
+        pendq->arg = arg;
+        client->seqno_to_index[seqno] = index;
+    } else {
+        pendq = NULL;
+        seqno = ssn_client_prepare_seqno(client);
+    }
+
+    ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_RPC_REQUEST, 0, seqno);
+
+    ipc_mutex_unlock(client->lock);
+
+    if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
+        LOG_ERROR("ipc client call failed: send msg failed.");
+        if (pendq) {
+            ipc_mutex_lock(client->lock);
+            free_pending_index(client, pendq->index);
+            ipc_mutex_unlock(client->lock);
+        }
+        ssn_client_unref(client);
+        return -1;
+    }
+
+    LOG_DEBUG("ipc client call success.");
+
+    ssn_client_unref(client);
+    return 0;
+}
+
+/**
+ * @brief RPC调用
+ * 
+ * @param client 客户端实例指针
+ * @param url URL引用
+ * @param data 数据引用
+ * @param callback 回调函数
+ * @param arg 回调参数
+ * @param timeout_ms 超时时间
+ * @return 调用成功返回0，失败返回-1
+ */
+int ssn_client_call (ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                    ssn_client_rpcreply_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    return (ssn_client_call_ex(client, url, data, callback, arg, timeout_ms, NULL));
+}
+
+/**
+ * @brief 发送消息到服务器
+ * 
+ * @param client 客户端实例指针
+ * @param url URL引用
+ * @param data 数据引用
+ * @return 发送成功返回0，失败返回-1
+ */
+int ssn_client_message (ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data)
+{
+    bool ret;
+    size_t len;
+    ssn_header_t *ipc_hdr;
+
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ipc client message: invalid client handle.");
+        return -1;
+    }
+    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
+        LOG_ERROR("ipc client message: invalid url.");
+        return -1;
+    }
+    if (!data) {
+        LOG_ERROR("ipc client message: invalid data.");
+        return -1;
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    ipc_mutex_lock(client->lock);
+
+    ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_MESSAGE, 0, 0);
+
+    ret = ssn_client_sendmsg(client, ipc_hdr, url, data);
+
+    ipc_mutex_unlock(client->lock);
+
+    if (ret) {
+        LOG_DEBUG("ipc client message success.");
+        ssn_client_unref(client);
+        return 0;
+    } else {
+        LOG_ERROR("ipc client message failed.");
+        ssn_client_unref(client);
+        return -1;
+    }
+}
+
+/**
+ * @brief 设置消息处理回调函数
+ * 
+ * @param client 客户端实例指针
+ * @param callback 消息处理回调函数
+ * @param arg 回调参数
+ */
+void ssn_client_set_on_message (ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg)
+{
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client set on message: invalid client handle.");
+        return;
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    client->onmsg = callback;
+    client->onsub = callback;
+    client->msg_arg  = arg;
+    client->sub_arg  = arg;
+
+    // 减少引用计数
+    ssn_client_unref(client);
+}
+
+/**
+ * @brief 轮询客户端事件
+ * 
+ * @param client 客户端实例指针
+ * @param timeout_ms 超时时间
+ * @return 成功返回0，失败返回-1
+ */
+int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
+{
+    int max_fd, cnt;
+    fd_set fds;
+    sigset_t empty_mask;
+    struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
+
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client poll: invalid client handle.");
+        return -1;
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    FD_ZERO(&fds);
+    max_fd = ssn_client_fds(client, &fds);
+
+    sigemptyset(&empty_mask);
+
+    // 阻塞空信号集，可以传递并中断所有信号
+    cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
+    if (cnt > 0) {
+        if (!ssn_client_process_events(client, &fds)) {
+            ssn_client_close(client);
+            LOG_ERROR("ipc client poll: connection of client %d lost", client->cid);
+        }
+        cnt = 0;
+    }
+
+    // 减少引用计数
+    ssn_client_unref(client);
+    return cnt;
+}
+
+/**
+ * @brief 运行客户端事件循环
+ * 
+ * @param client 客户端实例指针
+ */
+void ssn_client_run(ssn_client_t *client)
+{
+    int max_fd, cnt;
+    fd_set fds;
+    sigset_t empty_mask;
+
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client run: invalid client handle.");
+        return;
+    }
+
+    // 增加引用计数
+    ssn_client_ref(client);
+
+    sigemptyset(&empty_mask);
+
+    while(true) {
+        
+        FD_ZERO(&fds);
+        max_fd = ssn_client_fds(client, &fds);
+        if (max_fd < 0) break;
+
+        cnt = pselect(max_fd + 1, &fds, NULL, NULL, NULL, &empty_mask);
+        if (cnt > 0) {
+            if (!ssn_client_process_events(client, &fds)) {
+                ssn_client_close(client);
+                LOG_ERROR("ipc client run: connection of client %d lost", client->cid);
+                // 减少引用计数
+                ssn_client_unref(client);
+                return;
+            }
+        }
+    }
+    LOG_ERROR("ipc client run: exit invalid.");
+    
+    // 减少引用计数
+    ssn_client_unref(client);
+}
+
+/*
+* end
+*/

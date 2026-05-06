@@ -12,6 +12,8 @@
 #include <sys/types.h>
 #include <stdio.h>
 
+#include "../ssn_export.h"
+
 typedef enum {
     SSN_LOG_LEVEL_DEBUG = 0,
     SSN_LOG_LEVEL_INFO,
@@ -37,16 +39,16 @@ typedef enum {
 #define LOG_FATAL(fmt, ...) \
     ssn_log_write(SSN_LOG_LEVEL_FATAL, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
 
-void ssn_log_write(ssn_log_level_t level,
+SSN_API void ssn_log_write(ssn_log_level_t level,
                    const char* file,
                    int line,
                    const char* func,
                    const char* fmt, ...);
 
-void ssn_log_set_level(ssn_log_level_t level);
-ssn_log_level_t ssn_log_get_level(void);
-void ssn_log_set_file(FILE* file);
-FILE* ssn_log_get_file(void);
+SSN_API void ssn_log_set_level(ssn_log_level_t level);
+SSN_API ssn_log_level_t ssn_log_get_level(void);
+SSN_API void ssn_log_set_file(FILE* file);
+SSN_API FILE* ssn_log_get_file(void);
 
 #endif
 

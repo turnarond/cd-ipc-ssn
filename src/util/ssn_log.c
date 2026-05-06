@@ -3,13 +3,14 @@
  */
 
 #include "ssn_log.h"
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-static ssn_log_level_t g_log_level = SSN_LOG_LEVEL_INFO;
+static ssn_log_level_t g_log_level = SSN_LOG_LEVEL_DEBUG;
 static FILE* g_log_file = NULL;
 
 const char* g_log_level_strings[] = {
@@ -37,8 +38,8 @@ void ssn_log_write(ssn_log_level_t level,
     char time_str[32];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
 
-    fprintf(output, "[%s] [%s] [%s:%d] %s(): ",
-            time_str, g_log_level_strings[level], file, line, func);
+    fprintf(output, "[%s] [%s] [%lx] [%s:%d] %s(): ",
+            time_str, g_log_level_strings[level], pthread_self(), file, line, func);
 
     va_list args;
     va_start(args, fmt);

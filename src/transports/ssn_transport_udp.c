@@ -310,9 +310,13 @@ static bool udp_transport_get_option(const ssn_transport_t* transport,
     const udp_transport_impl_t* impl =
         (const udp_transport_impl_t*)transport->impl_data;
 
-    (void)impl;
-
     switch (option) {
+        case 0:
+            if (value) {
+                *(int*)value = impl->sock_fd;
+                return true;
+            }
+            return false;
         default:
             return false;
     }

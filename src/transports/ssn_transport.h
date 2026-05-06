@@ -15,6 +15,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include "ssn_export.h"
 #include "util/ssn_log.h"
 #include "util/ssn_mutex.h"
 #include "util/ssn_hash_table.h"
@@ -134,49 +135,49 @@ struct ssn_transport {
     bool valid;
 };
 
-bool ssn_address_parse(const char* address_str, ssn_address_t* addr);
-bool ssn_address_to_string(const ssn_address_t* addr,
+SSN_API bool ssn_address_parse(const char* address_str, ssn_address_t* addr);
+SSN_API bool ssn_address_to_string(const ssn_address_t* addr,
                             char* buffer,
                             size_t size);
-bool ssn_address_copy(const ssn_address_t* src, ssn_address_t* dst);
-bool ssn_address_equal(const ssn_address_t* addr1, const ssn_address_t* addr2);
+SSN_API bool ssn_address_copy(const ssn_address_t* src, ssn_address_t* dst);
+SSN_API bool ssn_address_equal(const ssn_address_t* addr1, const ssn_address_t* addr2);
 
-ssn_transport_t* ssn_transport_create(ssn_transport_type_t type,
+SSN_API ssn_transport_t* ssn_transport_create(ssn_transport_type_t type,
                                        const ssn_transport_config_t* config);
-void ssn_transport_destroy(ssn_transport_t* transport);
+SSN_API void ssn_transport_destroy(ssn_transport_t* transport);
 
-bool ssn_transport_bind(ssn_transport_t* transport,
+SSN_API bool ssn_transport_bind(ssn_transport_t* transport,
                         const ssn_address_t* addr);
-bool ssn_transport_connect(ssn_transport_t* transport,
+SSN_API bool ssn_transport_connect(ssn_transport_t* transport,
                            const ssn_address_t* addr,
                            int timeout_ms);
-bool ssn_transport_disconnect(ssn_transport_t* transport);
-bool ssn_transport_is_connected(const ssn_transport_t* transport);
-int ssn_transport_send(ssn_transport_t* transport,
+SSN_API bool ssn_transport_disconnect(ssn_transport_t* transport);
+SSN_API bool ssn_transport_is_connected(const ssn_transport_t* transport);
+SSN_API int ssn_transport_send(ssn_transport_t* transport,
                        const void* data,
                        size_t len);
-int ssn_transport_recv(ssn_transport_t* transport,
+SSN_API int ssn_transport_recv(ssn_transport_t* transport,
                        void* buffer,
                        size_t size,
                        int timeout_ms);
-bool ssn_transport_listen(ssn_transport_t* transport, int backlog);
-ssn_transport_t* ssn_transport_accept(ssn_transport_t* transport,
+SSN_API bool ssn_transport_listen(ssn_transport_t* transport, int backlog);
+SSN_API ssn_transport_t* ssn_transport_accept(ssn_transport_t* transport,
                                        ssn_address_t* client_addr,
                                        int timeout_ms);
-bool ssn_transport_set_option(ssn_transport_t* transport,
+SSN_API bool ssn_transport_set_option(ssn_transport_t* transport,
                                int option,
                                const void* value);
-bool ssn_transport_get_option(const ssn_transport_t* transport,
+SSN_API bool ssn_transport_get_option(const ssn_transport_t* transport,
                               int option,
                               void* value);
-bool ssn_transport_get_stats(const ssn_transport_t* transport,
+SSN_API bool ssn_transport_get_stats(const ssn_transport_t* transport,
                              ssn_transport_stats_t* stats);
-bool ssn_transport_get_address(const ssn_transport_t* transport,
+SSN_API bool ssn_transport_get_address(const ssn_transport_t* transport,
                                ssn_address_t* addr);
-int ssn_transport_get_fd(const ssn_transport_t* transport);
+SSN_API int ssn_transport_get_fd(const ssn_transport_t* transport);
 
-const char* ssn_transport_type_to_string(ssn_transport_type_t type);
-ssn_transport_type_t ssn_transport_type_from_string(const char* type_str);
+SSN_API const char* ssn_transport_type_to_string(ssn_transport_type_t type);
+SSN_API ssn_transport_type_t ssn_transport_type_from_string(const char* type_str);
 
 #endif
 

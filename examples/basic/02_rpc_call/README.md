@@ -1,68 +1,166 @@
-# RPC Call Example
+# 02_rpc_call 示例
 
-This example demonstrates how to use the RPC (Remote Procedure Call) functionality of cd-ipc-ssn library.
+## 示例说明
 
-## Overview
+本示例展示了 cd-ipc-ssn 库的 RPC（远程过程调用）功能。它演示了如何创建一个 RPC 服务器，注册 RPC 方法，以及如何创建一个客户端调用这些 RPC 方法。
 
-The example consists of two programs:
-1. `server.c` - Creates an IPC server that provides RPC methods
-2. `client.c` - Creates an IPC client that calls RPC methods on the server
+## 功能特性
 
-## Features Demonstrated
+- 创建 RPC 服务器
+- 注册 RPC 方法（加法、减法、乘法、除法）
+- 创建 RPC 客户端
+- 客户端连接到服务器
+- 客户端调用 RPC 方法
+- 服务器处理 RPC 请求并返回结果
+- 客户端处理 RPC 响应
 
-- RPC method registration on server
-- RPC method invocation from client
-- Synchronous RPC calls
-- RPC response handling
-- Error handling in RPC
+## 代码结构
 
-## Build and Run
+```
+02_rpc_call/
+├── client.c      # 客户端代码
+├── server.c      # 服务器代码
+├── Makefile      # 构建脚本
+└── README.md     # 本说明文档
+```
 
-### Build
+## 核心代码解析
+
+### 服务器端 (server.c)
+
+1. **服务器创建与启动**
+   - 使用 `ipc_server_create_with_options` 创建服务器
+   - 设置服务器地址为 `unix:///tmp/rpc_server`
+   - 启动服务器并开始监听
+
+2. **RPC 方法注册**
+   - 注册 `add_handler` 处理 `/math/add` 方法
+   - 注册 `subtract_handler` 处理 `/math/subtract` 方法
+   - 注册 `multiply_handler` 处理 `/math/multiply` 方法
+   - 注册 `divide_handler` 处理 `/math/divide` 方法
+
+3. **RPC 方法实现**
+   - `add_handler`：实现两个数的加法
+   - `subtract_handler`：实现两个数的减法
+   - `multiply_handler`：实现两个数的乘法
+   - `divide_handler`：实现两个数的除法，处理除零错误
+
+### 客户端 (client.c)
+
+1. **客户端创建与连接**
+   - 使用 `ipc_client_create` 创建客户端
+   - 连接到服务器地址 `unix:///tmp/rpc_server`
+
+2. **RPC 调用**
+   - 调用 `/math/add` 方法，计算 5 + 3
+   - 调用 `/math/subtract` 方法，计算 10 - 4
+   - 调用 `/math/multiply` 方法，计算 6 * 7
+   - 调用 `/math/divide` 方法，计算 20 / 4
+   - 调用 `/math/divide` 方法，测试除零错误
+
+3. **响应处理**
+   - 注册 RPC 响应处理回调函数 `rpc_reply_handler`
+   - 当接收到 RPC 响应时，打印响应结果
+
+## 运行示例
+
+### 构建示例
 
 ```bash
 cd examples/basic/02_rpc_call
 make
 ```
 
-### Run
+### 运行示例
 
-1. Start the server:
-   ```bash
-   ./server
-   ```
-
-2. In another terminal, start the client:
-   ```bash
-   ./client
-   ```
-
-## Expected Output
-
-### Server Output
-
-```
-[INFO] RPC server created successfully
-[INFO] RPC server started on /tmp/rpc_server
-[INFO] Client connected: id=1
-[INFO] RPC method called: /math/add with parameters: {"a": 5, "b": 3}
-[INFO] RPC method /math/add returned: 8
-[INFO] RPC server stopped
-[INFO] RPC server destroyed
+```bash
+make run
 ```
 
-### Client Output
+或者分别运行服务器和客户端：
+
+```bash
+# 运行服务器
+./server
+
+# 运行客户端（在另一个终端）
+./client
+```
+
+## 预期输出
+
+### 服务器输出
 
 ```
-[INFO] RPC client created successfully
-[INFO] Connected to server: /tmp/rpc_server
-[INFO] RPC call /math/add successful, result: 8
-[INFO] RPC client destroyed
+[INFO] [server.c:218] main(): Starting RPC server...
+[INFO] [server.c:235] main(): RPC server created successfully
+[INFO] [server.c:251] main(): RPC methods registered successfully
+[INFO] [server.c:260] main(): RPC server started on unix:///tmp/rpc_server
+[INFO] [server.c:263] main(): Server running for 15 seconds...
+[INFO] [server.c:207] connect_handler(): Client connected: id=0
+[INFO] [server.c:33] add_handler(): RPC method called: /math/add with parameters: {"a": 5, "b": 3}
+[INFO] [server.c:55] add_handler(): RPC method /math/add returned: 8
+[INFO] [server.c:74] subtract_handler(): RPC method called: /math/subtract with parameters: {"a": 10, "b": 4}
+[INFO] [server.c:96] subtract_handler(): RPC method /math/subtract returned: 6
+[INFO] [server.c:115] multiply_handler(): RPC method called: /math/multiply with parameters: {"a": 6, "b": 7}
+[INFO] [server.c:137] multiply_handler(): RPC method /math/multiply returned: 42
+[INFO] [server.c:156] divide_handler(): RPC method called: /math/divide with parameters: {"a": 20, "b": 4}
+[INFO] [server.c:190] divide_handler(): RPC method /math/divide returned: 5
+[INFO] [server.c:156] divide_handler(): RPC method called: /math/divide with parameters: {"a": 10, "b": 0}
+[ERROR] [server.c:168] divide_handler(): Division by zero
+[INFO] [server.c:272] main(): Stopping RPC server...
+[INFO] [server.c:277] main(): RPC server destroyed
 ```
 
-## RPC Methods
+### 客户端输出
 
-- `/math/add` - Adds two numbers
-- `/math/subtract` - Subtracts two numbers
-- `/math/multiply` - Multiplies two numbers
-- `/math/divide` - Divides two numbers
+```
+[INFO] [client.c:92] main(): Starting RPC client...
+[INFO] [client.c:101] main(): RPC client created successfully
+[INFO] [client.c:116] main(): Connected to server: unix:///tmp/rpc_server
+[INFO] [client.c:119] main(): Testing RPC methods...
+[INFO] [client.c:122] main():
+Testing /math/add
+
+[INFO] [client.c:36] rpc_reply_handler(): RPC call successful, result: 8
+[INFO] [client.c:126] main():
+Testing /math/subtract
+
+[INFO] [client.c:36] rpc_reply_handler(): RPC call successful, result: 6
+[INFO] [client.c:130] main():
+Testing /math/multiply
+
+[INFO] [client.c:36] rpc_reply_handler(): RPC call successful, result: 42
+[INFO] [client.c:134] main():
+Testing /math/divide
+
+[INFO] [client.c:36] rpc_reply_handler(): RPC call successful, result: 5
+[INFO] [client.c:138] main():
+Testing /math/divide (division by zero)
+
+[INFO] [client.c:36] rpc_reply_handler(): RPC call successful, result: Error: Division by zero
+[INFO] [client.c:142] main():
+Waiting for all responses...
+[INFO] [client.c:151] main(): RPC client closed
+```
+
+## 注意事项
+
+- 本示例使用 Unix Socket 作为传输协议
+- 服务器地址为 `unix:///tmp/rpc_server`
+- 服务器运行 15 秒后自动停止
+- 客户端发送所有 RPC 请求后等待 5 秒后退出
+
+## 相关 API
+
+- `ipc_server_create_with_options` - 创建 IPC 服务器
+- `ipc_server_start` - 启动 IPC 服务器
+- `ipc_server_add_method` - 添加 RPC 方法
+- `ipc_server_set_connect_handler` - 设置连接处理回调
+- `ipc_server_poll` - 轮询服务器事件
+- `ipc_server_destroy` - 销毁 IPC 服务器
+- `ipc_client_create` - 创建 IPC 客户端
+- `ipc_client_connect` - 连接到服务器
+- `ipc_client_call` - 调用 RPC 方法
+- `ipc_client_poll` - 轮询客户端事件
+- `ipc_client_close` - 关闭 IPC 客户端

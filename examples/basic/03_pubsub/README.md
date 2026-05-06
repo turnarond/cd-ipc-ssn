@@ -1,85 +1,166 @@
-# Publish/Subscribe Example
+# 03_pubsub 示例
 
-This example demonstrates how to use the publish/subscribe functionality of cd-ipc-ssn library.
+## 示例说明
 
-## Overview
+本示例展示了 cd-ipc-ssn 库的发布/订阅（Publish/Subscribe）功能。它演示了如何创建一个发布者服务器，以及如何创建多个订阅者客户端订阅不同的主题。
 
-The example consists of three programs:
-1. `publisher.c` - Creates an IPC server that publishes messages to topics
-2. `subscriber.c` - Creates an IPC client that subscribes to topics
-3. `subscriber2.c` - Another subscriber to demonstrate multiple subscribers
+## 功能特性
 
-## Features Demonstrated
+- 创建发布者服务器
+- 创建订阅者客户端
+- 订阅者订阅不同的主题（/news, /weather, /sports）
+- 发布者向不同主题发布消息
+- 订阅者接收并处理订阅的消息
 
-- Topic publishing from server
-- Topic subscription from clients
-- Multiple subscribers receiving the same message
-- Message filtering by topic
-- Clean shutdown of publisher and subscribers
+## 代码结构
 
-## Build and Run
+```
+03_pubsub/
+├── publisher.c   # 发布者代码
+├── subscriber.c  # 订阅者1代码
+├── subscriber2.c # 订阅者2代码
+├── Makefile      # 构建脚本
+└── README.md     # 本说明文档
+```
 
-### Build
+## 核心代码解析
+
+### 发布者 (publisher.c)
+
+1. **发布者创建与启动**
+   - 使用 `ipc_server_create_with_options` 创建服务器
+   - 设置服务器地址为 `unix:///tmp/pubsub_server`
+   - 启动服务器并开始监听
+
+2. **消息发布**
+   - 向 `/news` 主题发布新闻消息
+   - 向 `/weather` 主题发布天气消息
+   - 向 `/sports` 主题发布体育消息
+
+### 订阅者1 (subscriber.c)
+
+1. **订阅者创建与连接**
+   - 使用 `ipc_client_create` 创建客户端
+   - 连接到服务器地址 `unix:///tmp/pubsub_server`
+
+2. **主题订阅**
+   - 订阅 `/news` 主题
+   - 订阅 `/weather` 主题
+
+3. **消息处理**
+   - 注册消息处理回调函数 `message_handler`
+   - 当接收到订阅的消息时，打印消息内容
+
+### 订阅者2 (subscriber2.c)
+
+1. **订阅者创建与连接**
+   - 使用 `ipc_client_create` 创建客户端
+   - 连接到服务器地址 `unix:///tmp/pubsub_server`
+
+2. **主题订阅**
+   - 订阅 `/sports` 主题
+
+3. **消息处理**
+   - 注册消息处理回调函数 `message_handler`
+   - 当接收到订阅的消息时，打印消息内容
+
+## 运行示例
+
+### 构建示例
 
 ```bash
 cd examples/basic/03_pubsub
 make
 ```
 
-### Run
+### 运行示例
 
-1. Start the publisher:
-   ```bash
-   ./publisher
-   ```
-
-2. In another terminal, start the first subscriber:
-   ```bash
-   ./subscriber
-   ```
-
-3. In a third terminal, start the second subscriber:
-   ```bash
-   ./subscriber2
-   ```
-
-## Expected Output
-
-### Publisher Output
-
-```
-[INFO] Publisher created successfully
-[INFO] Publisher started on /tmp/pubsub_server
-[INFO] Publishing message to /news: Breaking news! Server is online
-[INFO] Publishing message to /weather: Today's weather is sunny
-[INFO] Publishing message to /news: Another breaking news story
-[INFO] Publisher stopped
-[INFO] Publisher destroyed
+```bash
+make run
 ```
 
-### Subscriber Output
+或者分别运行发布者和订阅者：
 
-```
-[INFO] Subscriber created successfully
-[INFO] Connected to publisher: /tmp/pubsub_server
-[INFO] Subscribed to topic: /news
-[INFO] Received message on /news: Breaking news! Server is online
-[INFO] Received message on /news: Another breaking news story
-[INFO] Subscriber destroyed
-```
+```bash
+# 运行发布者
+./publisher
 
-### Subscriber2 Output
+# 运行订阅者1（在另一个终端）
+./subscriber
 
-```
-[INFO] Subscriber2 created successfully
-[INFO] Connected to publisher: /tmp/pubsub_server
-[INFO] Subscribed to topic: /weather
-[INFO] Received message on /weather: Today's weather is sunny
-[INFO] Subscriber2 destroyed
+# 运行订阅者2（在另一个终端）
+./subscriber2
 ```
 
-## Topics
+## 预期输出
 
-- `/news` - News messages
-- `/weather` - Weather information
-- `/sports` - Sports updates (not used in this example)
+### 发布者输出
+
+```
+[INFO] [publisher.c:160] main(): Starting pubsub publisher...
+[INFO] [publisher.c:177] main(): Publisher created successfully
+[INFO] [publisher.c:187] main(): Publisher started on unix:///tmp/pubsub_server
+[INFO] [publisher.c:190] main(): Waiting for subscribers to connect...
+[INFO] [publisher.c:146] connect_handler(): Client connected: id=0
+[INFO] [publisher.c:146] connect_handler(): Client connected: id=1
+[INFO] [publisher.c:197] main(): Publishing messages...
+[INFO] [publisher.c:55] publish_message(): Publishing to /news: Breaking news! Server is online
+[INFO] [publisher.c:55] publish_message(): Publishing to /weather: Today's weather is sunny
+[INFO] [publisher.c:55] publish_message(): Publishing to /news: Another breaking news story
+[INFO] [publisher.c:55] publish_message(): Publishing to /sports: Sports update: Team won the game
+[INFO] [publisher.c:205] main(): Waiting for messages to be delivered...
+[INFO] [publisher.c:146] connect_handler(): Client disconnected: id=0
+[INFO] [publisher.c:146] connect_handler(): Client disconnected: id=1
+[INFO] [publisher.c:211] main(): Publisher stopped
+```
+
+### 订阅者1输出
+
+```
+[INFO] [subscriber.c:86] main(): Starting pubsub subscriber 1...
+[INFO] [subscriber.c:95] main(): Subscriber created successfully
+[INFO] [subscriber.c:105] main(): Connected to publisher: unix:///tmp/pubsub_server
+[INFO] [subscriber.c:110] main(): Subscribing to topics...
+[INFO] [subscriber.c:113] main(): Subscribed to /news
+[INFO] [subscriber.c:117] main(): Subscribed to /weather
+[INFO] [subscriber.c:121] main(): Waiting for messages...
+[INFO] [subscriber.c:47] message_handler(): Received message on /news: Breaking news! Server is online
+[INFO] [subscriber.c:47] message_handler(): Received message on /weather: Today's weather is sunny
+[INFO] [subscriber.c:47] message_handler(): Received message on /news: Another breaking news story
+[INFO] [subscriber.c:125] main(): Subscriber 1 closed
+```
+
+### 订阅者2输出
+
+```
+[INFO] [subscriber2.c:76] main(): Starting pubsub subscriber 2...
+[INFO] [subscriber2.c:85] main(): Subscriber created successfully
+[INFO] [subscriber2.c:95] main(): Connected to publisher: unix:///tmp/pubsub_server
+[INFO] [subscriber2.c:100] main(): Subscribing to topics...
+[INFO] [subscriber2.c:103] main(): Subscribed to /sports
+[INFO] [subscriber2.c:107] main(): Waiting for messages...
+[INFO] [subscriber2.c:47] message_handler(): Received message on /sports: Sports update: Team won the game
+[INFO] [subscriber2.c:111] main(): Subscriber 2 closed
+```
+
+## 注意事项
+
+- 本示例使用 Unix Socket 作为传输协议
+- 服务器地址为 `unix:///tmp/pubsub_server`
+- 发布者运行 15 秒后自动停止
+- 订阅者等待 10 秒后退出
+
+## 相关 API
+
+- `ipc_server_create_with_options` - 创建 IPC 服务器
+- `ipc_server_start` - 启动 IPC 服务器
+- `ipc_server_publish` - 发布消息到主题
+- `ipc_server_set_connect_handler` - 设置连接处理回调
+- `ipc_server_poll` - 轮询服务器事件
+- `ipc_server_destroy` - 销毁 IPC 服务器
+- `ipc_client_create` - 创建 IPC 客户端
+- `ipc_client_connect` - 连接到服务器
+- `ipc_client_subscribe` - 订阅主题
+- `ipc_client_set_on_message` - 设置消息处理回调
+- `ipc_client_poll` - 轮询客户端事件
+- `ipc_client_close` - 关闭 IPC 客户端
