@@ -2,6 +2,35 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.3.0] - 2026-05-07
+
+### Added
+- **driver-sdk Phase 3: Architecture Upgrades**
+  - `CollectionScheduler`: unified scan scheduler with priority queues and scan groups for shared-bus devices (e.g., RS-485), replaces naive `sleep(3)` in main loop
+  - `DataPipeline`: ring buffer + reporter thread between collection and IPC send; supports store-and-forward for disconnected scenarios
+  - `DeviceStateMachine`: explicit `DeviceState` enum (Disconnected→Connecting→Connected→Idle→Error) with exponential backoff reconnection
+  - `DiagnosticsCollector`: atomic counters per-device and per-driver (connects, collections, IPC sends, errors, latency); configurable periodic log output
+- **driver-sdk Phase 2: Feature Completeness**
+  - XML config parsing via Poco DOM (previously empty stub, config was SQLite-only)
+  - Resource ownership clarified: `shared_ptr<CDevice>` throughout `CDriver` and `ResourceManager`
+- **driver-sdk Phase 1: Stability Fixes**
+  - `std::atomic<bool>` for main loop stop flag (was plain `bool` — UB at high optimization)
+  - `ipc_mutex_` protects concurrent `obj_mapper_`/`client_handle_` access in `UpdateTagsData`
+  - Designated-initializer UB in `ssn_url_ref_t` fixed (moved to constructor init list)
+  - `CDevice::DestroyTimers()` implemented; `CUserTimer` destructor now calls `vsoa_timer_stop`/`vsoa_timer_delete`
+  - `drv_destroy_timer` implemented; `drv_settagdata_text` boundary checks added
+- **Unit tests**: 4 new test suites (diagnostics, state machine, data pipeline, scheduler) with 36 tests
+
+### Changed
+- `CDriver::devices_` migrated from raw `CDevice*` to `std::shared_ptr<CDevice>`
+- `CMainTask` main loop uses `CollectionScheduler::Tick()` for dynamic-interval sleep
+- `CDevice::SetDeviceConnected()` now drives state machine transitions
+- `PocoXML` and `PocoFoundation` added to link list
+
+### Fixed
+- `new[]`/`free` allocator mismatch risk in `ConfigLoader::FreeDrivers` (changed to `delete[]`)
+- `conn_type` in `InitDeviceInterface` now correctly parsed from string to int
+
 ## [2.2.0] - 2026-05-06
 
 ### Added
