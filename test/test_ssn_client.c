@@ -60,7 +60,7 @@ static void stop_test_server(ssn_server_t *srv, pthread_t tid)
 static int test_create_destroy(void)
 {
     printf("  Test 1: Client create/destroy... ");
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     if (!cli) { printf("FAIL\n"); return 1; }
     if (!ssn_client_is_connect(cli)) {
         /* Expected: not connected yet */
@@ -78,7 +78,7 @@ static int test_connect_disconnect(void)
     pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/connect");
     if (!srv) { printf("FAIL (server)\n"); return 1; }
 
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     if (!cli) { stop_test_server(srv, tid); printf("FAIL (create)\n"); return 1; }
 
     {
@@ -125,7 +125,7 @@ static int test_rpc_call(void)
     pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/rpc");
     if (!srv) { printf("FAIL (server)\n"); return 1; }
 
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
     if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
         if (cli) ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (connect)\n"); return 1;
@@ -159,7 +159,7 @@ static int test_subscribe(void)
     pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/topic");
     if (!srv) { printf("FAIL (server)\n"); return 1; }
 
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     {
         struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
         if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
@@ -186,7 +186,7 @@ static int test_send_message(void)
     pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/msg");
     if (!srv) { printf("FAIL (server)\n"); return 1; }
 
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     {
         struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
         if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {

@@ -183,7 +183,7 @@ static void test_publish_subscribe(void)
     sleep(1);
     
     // Unsubscribe
-    ret = ssn_client_unsubscribe(client, &url, NULL, NULL, TEST_TIMEOUT);
+    ret = ssn_client_unsubscribe(client, &url, TEST_TIMEOUT);
     if (!ret) {
         fprintf(stderr, "Unsubscribe failed\n");
     }
@@ -292,7 +292,7 @@ int main(int argc, char **argv)
     sleep(1);
     
     // Create client
-    client = ssn_client_create(test_publish_handler, NULL);
+    client = ssn_client_create();
     if (!client) {
         fprintf(stderr, "Failed to create client\n");
         server_running = false;

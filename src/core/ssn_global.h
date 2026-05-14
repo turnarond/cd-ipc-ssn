@@ -64,7 +64,7 @@ typedef struct server_options {
     char ifname[64];
 } server_options_t;
 
-ssn_client_t* ssn_client_create(ssn_client_msg_handler_t onmsg, void* arg);
+ssn_client_t* ssn_client_create(void);
 void ssn_client_close(ssn_client_t* client);
 bool ssn_client_connect(ssn_client_t* client,
                         const char* address,
@@ -84,13 +84,11 @@ bool ssn_client_message(ssn_client_t* client,
                        size_t len);
 bool ssn_client_subscribe(ssn_client_t* client,
                          const char* url,
-                         ssn_client_result_handler_t callback,
+                         ssn_client_msg_handler_t callback,
                          void* arg,
                          int timeout_ms);
 bool ssn_client_unsubscribe(ssn_client_t* client,
                            const char* url,
-                           ssn_client_result_handler_t callback,
-                           void* arg,
                            int timeout_ms);
 void ssn_client_set_on_message(ssn_client_t* client,
                                ssn_client_msg_handler_t callback,

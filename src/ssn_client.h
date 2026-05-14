@@ -28,7 +28,7 @@ typedef void (*ssn_client_result_handler_t)(ssn_client_t *client, bool success, 
 typedef void (*ssn_client_msg_handler_t)(ssn_client_t *client, ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg);
 
 /* Create IPC client , Callback for subscribed (published) messages */
-SSN_API ssn_client_t *ssn_client_create(ssn_client_msg_handler_t on_publish, void *arg);
+SSN_API ssn_client_t *ssn_client_create();
 
 /* Close IPC client */
 SSN_API void ssn_client_close(ssn_client_t *client);
@@ -54,11 +54,10 @@ SSN_API void ssn_client_run(ssn_client_t *client);
 
 /* Subscribe URL */
 SSN_API bool ssn_client_subscribe(ssn_client_t *client, const ssn_url_ref_t *url,
-                           ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
+                           ssn_client_msg_handler_t callback, void *arg, uint64_t timeout_ms);
 
 /* Unsubscribe URL */
-SSN_API bool ssn_client_unsubscribe(ssn_client_t *client, const ssn_url_ref_t *url,
-                             ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms);
+SSN_API bool ssn_client_unsubscribe(ssn_client_t *client, const ssn_url_ref_t *url, uint64_t timeout_ms);
 
 /* RPC call */
 SSN_API int ssn_client_call(ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data,
@@ -67,8 +66,12 @@ SSN_API int ssn_client_call(ssn_client_t *client, const ssn_url_ref_t *url, cons
 /* Send message to server */
 SSN_API int ssn_client_message(ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data);
 
-/* IPC client set on message callback */
+/* IPC client set MESSAGE-type handler (for error / unhandled messages) */
 SSN_API void ssn_client_set_on_message(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
+
+/* IPC client set PUBLISH-type handler (for incoming publish messages).
+ * This is typically set internally by ssn_client_auto, not by user code. */
+SSN_API void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
 
 #ifdef __cplusplus
 }

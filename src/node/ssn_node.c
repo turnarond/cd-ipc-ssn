@@ -367,7 +367,7 @@ ssn_client_t *ssn_node_get_client(ssn_node_t *node)
 
     // Create client if not exists and client capability is enabled
     if (!node->client && (node->capabilities & SSN_NODE_CAP_CLIENT)) {
-        node->client = ssn_client_create(NULL, NULL);
+        node->client = ssn_client_create();
         if (!node->client) {
             LOG_ERROR("ssn_node_get_client: failed to create client");
             return NULL;
@@ -438,6 +438,7 @@ void ssn_node_set_client_message_handler(ssn_node_t *node, ssn_client_msg_handle
     }
     ipc_mutex_unlock(node->lock);
 }
+
 
 /**
  * @brief Add RPC method to the node

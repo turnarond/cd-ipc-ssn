@@ -10,7 +10,7 @@
 #include <string.h>
 #include <time.h>
 
-static ssn_log_level_t g_log_level = SSN_LOG_LEVEL_DEBUG;
+static ssn_log_level_t g_log_level = SSN_LOG_LEVEL_ERROR;
 static FILE* g_log_file = NULL;
 
 const char* g_log_level_strings[] = {

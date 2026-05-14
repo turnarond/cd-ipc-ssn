@@ -45,9 +45,10 @@ typedef struct ssn_client_auto ssn_client_auto_t;
  * When the connection is successful, `info` indicates the server information */
 typedef void (*ssn_client_conn_func_t)(void *arg, ssn_client_auto_t *cliauto, bool connect);
 
-/* SSN client auto create 
- * The callback function will be called in the client auto thread context */
-SSN_API ssn_client_auto_t *ssn_client_auto_create(ssn_client_msg_handler_t onmsg, void *arg);
+/* SSN client auto create.
+ * Use ssn_client_set_on_message() or ssn_client_subscribe() on the returned
+ * handle to register callbacks after creation and connection. */
+SSN_API ssn_client_auto_t *ssn_client_auto_create(void);
 
 /* SSN client auto delete
  * After this function is called, the `cliauto` object becomes invalid and is not allowed to be used again */

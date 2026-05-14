@@ -61,23 +61,21 @@ static void ssn_client_auto_msg_cb(ssn_client_t *client, ssn_url_ref_t *url, ssn
 static void ssn_client_auto_conn_cb(ssn_client_t *client, bool connected, void *arg);
 
 /* Create client auto object */
-ssn_client_auto_t *ssn_client_auto_create(ssn_client_msg_handler_t onmsg, void *arg)
+ssn_client_auto_t *ssn_client_auto_create(void)
 {
     ssn_client_auto_t *cliauto = (ssn_client_auto_t *)malloc(sizeof(ssn_client_auto_t));
     if (!cliauto) {
         return NULL;
     }
-    
+
     memset(cliauto, 0, sizeof(ssn_client_auto_t));
-    cliauto->onmsg = onmsg;
-    cliauto->arg = arg;
     cliauto->state = SSN_CLIENT_AUTO_STATE_IDLE;
     cliauto->running = 0;
     cliauto->ping_lost = 0;
-    
+
     pthread_mutex_init(&cliauto->mutex, NULL);
     pthread_cond_init(&cliauto->cond, NULL);
-    
+
     return cliauto;
 }
 
@@ -170,8 +168,11 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
     cliauto->conn_timeout = conn_timeout < 20 ? 20 : conn_timeout;
     cliauto->reconn_delay = reconn_delay < 20 ? 20 : reconn_delay;
     
-    /* Create SSN client */
-    cliauto->client = ssn_client_create(ssn_client_auto_msg_cb, cliauto);
+    /* Create SSN client and wire internal publish routing */
+    cliauto->client = ssn_client_create();
+    if (cliauto->client) {
+        ssn_client_set_on_publish(cliauto->client, ssn_client_auto_msg_cb, cliauto);
+    }
     if (!cliauto->client) {
         if (cliauto->urls) {
             for (int i = 0; i < cliauto->url_cnt; i++) {
@@ -321,23 +322,19 @@ static void *ssn_client_auto_thread(void *arg)
                 
             case SSN_CLIENT_AUTO_STATE_CONNECTED:
                 {
+                    /* Block in poll for keepalive interval to detect
+                     * disconnection and process incoming messages */
+                    ssn_client_poll(cliauto->client, cliauto->keepalive);
+
                     /* Check if connection is still alive */
                     if (!ssn_client_is_connect(cliauto->client)) {
                         cliauto->state = SSN_CLIENT_AUTO_STATE_DISCONNECTED;
-                        
+
                         /* Call connection callback */
                         if (cliauto->onconn) {
                             cliauto->onconn(cliauto->conn_arg, cliauto, false);
                         }
-                        break;
                     }
-                    
-                    /* Send ping to keep connection alive */
-                    // Note: SSN client might have its own ping mechanism
-                    // For now, we just check connection status
-                    
-                    /* Wait for keepalive interval */
-                    usleep(cliauto->keepalive * 1000);
                 }
                 break;
                 
@@ -369,8 +366,8 @@ static void *ssn_client_auto_thread(void *arg)
 static void ssn_client_auto_msg_cb(ssn_client_t *client, ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     ssn_client_auto_t *cliauto = (ssn_client_auto_t *)arg;
-    
-    /* Forward message to user callback */
+
+    /* Route through auto-client's onmsg if set, otherwise fall through */
     if (cliauto->onmsg) {
         cliauto->onmsg(client, url, data, cliauto->arg);
     }

@@ -52,6 +52,15 @@ typedef struct ssn_pending_request {
     void *arg;
 } ssn_pending_request_t;
 
+/* Per-URL publish handler (subscribed via ssn_client_subscribe) */
+typedef struct ssn_sub_handler {
+    struct ssn_sub_handler *next;
+    ssn_client_msg_handler_t callback;
+    void *arg;
+    size_t url_len;
+    char url[1];
+} ssn_sub_handler_t;
+
 /* Client */
 struct ssn_client {
     bool valid;
@@ -78,6 +87,8 @@ struct ssn_client {
     void *sub_arg;
     ssn_client_msg_handler_t onmsg;
     void *msg_arg;
+
+    ssn_sub_handler_t *sub_handlers;
 
     /* 协议层实例 */
     ssn_rpc_req_t *rpc_req;
@@ -248,6 +259,16 @@ void ssn_client_unref(ssn_client_t *client)
         client->connected = false;
         ipc_memory_barrier();
 
+        /* 清理 per-URL 订阅处理器 */
+        {
+            ssn_sub_handler_t *h, *next;
+            for (h = client->sub_handlers; h; h = next) {
+                next = h->next;
+                free(h);
+            }
+            client->sub_handlers = NULL;
+        }
+
         /* 销毁协议层实例 */
         if (client->msg_send) {
             ssn_msg_destroy((ssn_protocol_ctx_t *)client->msg_send);
@@ -344,7 +365,7 @@ static void free_pending_index(ssn_client_t *client, uint16_t index)
  * @return 客户端实例指针，失败返回NULL
  * @warning 此函数必须与ssn_client_close()调用互斥
  */
-ssn_client_t *ssn_client_create(ssn_client_msg_handler_t onmsg, void *arg)
+ssn_client_t *ssn_client_create(void)
 {
     int i, err = 0;
     ssn_client_t *client;
@@ -388,8 +409,9 @@ ssn_client_t *ssn_client_create(ssn_client_msg_handler_t onmsg, void *arg)
 
     ssn_stream_init(&client->recv);
     client->recvbuf      = (uint8_t *)client->sendbuf + SSN_MAX_PACKET_SIZE;
-    client->onsub        = onmsg;
-    client->sub_arg      = arg;
+    client->onmsg        = NULL;
+    client->msg_arg      = NULL;
+    client->sub_handlers = NULL;
     client->send_timeout = IPC_DEF_SEND_TIMEOUT;
     client->valid        = true;
     client->ref_count    = 1;  // 初始化引用计数为1
@@ -878,15 +900,28 @@ static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hd
 {
     ssn_url_ref_t url;
     ssn_data_ref_t data;
-    
+    ssn_sub_handler_t *h;
+
     ssn_get_url(ipc_hdr, &url);
     ssn_get_data(ipc_hdr, &data);
-    
-    LOG_DEBUG("ipc client input: get publish msg.");
-    if (client->onsub) {
-        client->onsub(client, &url, &data, client->sub_arg);
+
+    LOG_DEBUG("ipc client input: get publish msg, url=%.*s",
+              (int)url.url_len, url.url);
+
+    /* Look up per-URL handler registered via ssn_client_subscribe() */
+    for (h = client->sub_handlers; h; h = h->next) {
+        if (h->url_len == url.url_len &&
+            memcmp(h->url, url.url, url.url_len) == 0) {
+            h->callback(client, &url, &data, h->arg);
+            return true;
+        }
     }
-    
+
+    /* Fallback: call the error/unhandled-message callback */
+    if (client->onmsg) {
+        client->onmsg(client, &url, &data, client->msg_arg);
+    }
+
     return true;
 }
 
@@ -1196,8 +1231,10 @@ error:
  * @return 订阅成功返回true，失败返回false
  */
 bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
-                            ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+                            ssn_client_msg_handler_t callback, void *arg, uint64_t timeout_ms)
 {
+    ssn_sub_handler_t *h;
+
     if (!client || !client->valid || !client->connected) {
         LOG_ERROR("ipc client subscribe failed: invalid client handle.");
         return (false);
@@ -1207,22 +1244,26 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
         return (false);
     }
 
-    return (ssn_client_request(client, SSN_MSG_TYPE_SUBSCRIBE, url, NULL, callback, arg, timeout_ms));
+    /* Register per-URL handler */
+    h = (ssn_sub_handler_t *)malloc(sizeof(ssn_sub_handler_t) + url->url_len);
+    if (!h) return false;
+    h->callback  = callback;
+    h->arg       = arg;
+    h->url_len   = url->url_len;
+    memcpy(h->url, url->url, url->url_len);
+    h->url[url->url_len] = '\0';
+    h->next = client->sub_handlers;
+    client->sub_handlers = h;
+
+    /* Send SUBSCRIBE request to server */
+    return (ssn_client_request(client, SSN_MSG_TYPE_SUBSCRIBE, url, NULL, NULL, NULL, timeout_ms));
 }
 
-/**
- * @brief 取消订阅URL
- * 
- * @param client 客户端实例指针
- * @param url URL引用
- * @param callback 回调函数
- * @param arg 回调参数
- * @param timeout_ms 超时时间
- * @return 取消订阅成功返回true，失败返回false
- */
 bool ssn_client_unsubscribe (ssn_client_t *client, const ssn_url_ref_t *url,
-                            ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+                             uint64_t timeout_ms)
 {
+    ssn_sub_handler_t **prev, *h;
+
     if (!client || !client->valid || !client->connected) {
         LOG_ERROR("ipc client unsubscribe failed: invalid client handle.");
         return (false);
@@ -1232,7 +1273,19 @@ bool ssn_client_unsubscribe (ssn_client_t *client, const ssn_url_ref_t *url,
         return (false);
     }
 
-    return (ssn_client_request(client, SSN_MSG_TYPE_UNSUBSCRIBE, url, NULL, callback, arg, timeout_ms));
+    /* Remove per-URL handler */
+    prev = &client->sub_handlers;
+    while ((h = *prev)) {
+        if (h->url_len == url->url_len &&
+            memcmp(h->url, url->url, url->url_len) == 0) {
+            *prev = h->next;
+            free(h);
+            break;
+        }
+        prev = &h->next;
+    }
+
+    return (ssn_client_request(client, SSN_MSG_TYPE_UNSUBSCRIBE, url, NULL, NULL, NULL, timeout_ms));
 }
 
 /**
@@ -1395,11 +1448,23 @@ void ssn_client_set_on_message (ssn_client_t *client, ssn_client_msg_handler_t c
     ssn_client_ref(client);
 
     client->onmsg = callback;
-    client->onsub = callback;
+    // client->onsub = callback;
     client->msg_arg  = arg;
-    client->sub_arg  = arg;
+    // client->sub_arg  = arg;
 
     // 减少引用计数
+    ssn_client_unref(client);
+}
+
+void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg)
+{
+    if (!client || !client->valid) {
+        LOG_ERROR("ipc client set on publish: invalid client handle.");
+        return;
+    }
+    ssn_client_ref(client);
+    client->onsub   = callback;
+    client->sub_arg = arg;
     ssn_client_unref(client);
 }
 
@@ -1434,7 +1499,13 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
     cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
     if (cnt > 0) {
         if (!ssn_client_process_events(client, &fds)) {
-            ssn_client_close(client);
+            /* Connection lost but keep client valid so auto-client can reconnect */
+            client->connected = false;
+            ipc_memory_barrier();
+            if (client->transport) {
+                ssn_transport_destroy(client->transport);
+                client->transport = NULL;
+            }
             LOG_ERROR("ipc client poll: connection of client %d lost", client->cid);
         }
         cnt = 0;

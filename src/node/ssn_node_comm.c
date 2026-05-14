@@ -141,13 +141,8 @@ bool ssn_node_subscribe(ssn_node_t *node, const char *peer_address,
         return false;
     }
 
-    // Set message handler if provided
-    if (callback) {
-        ssn_client_set_on_message(node->client, callback, arg);
-    }
-
-    // Subscribe to topic
-    bool result = ssn_client_subscribe(node->client, url, NULL, NULL, timeout_ms);
+    // Subscribe to topic with per-URL handler
+    bool result = ssn_client_subscribe(node->client, url, callback, arg, timeout_ms);
     if (!result) {
         LOG_ERROR("ssn_node_subscribe: failed to subscribe to topic %s", url->url);
         ipc_mutex_unlock(node->lock);
@@ -165,7 +160,6 @@ bool ssn_node_subscribe(ssn_node_t *node, const char *peer_address,
  * @brief Unsubscribe from a topic
  */
 bool ssn_node_unsubscribe(ssn_node_t *node, const ssn_url_ref_t *url,
-                         ssn_client_result_handler_t callback, void *arg,
                          uint64_t timeout_ms)
 {
     if (!node || !url) {
@@ -182,7 +176,7 @@ bool ssn_node_unsubscribe(ssn_node_t *node, const ssn_url_ref_t *url,
     }
 
     // Unsubscribe from topic
-    bool result = ssn_client_unsubscribe(node->client, url, callback, arg, timeout_ms);
+    bool result = ssn_client_unsubscribe(node->client, url, timeout_ms);
     if (!result) {
         LOG_ERROR("ssn_node_unsubscribe: failed to unsubscribe from topic %s", url->url);
         ipc_mutex_unlock(node->lock);

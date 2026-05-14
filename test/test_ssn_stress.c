@@ -115,7 +115,7 @@ int main(int argc, char **argv)
 
     // 创建多个客户端
     for (i = 0; i < THREAD_COUNT; i++) {
-        clients[i] = ssn_client_create(NULL, NULL);
+        clients[i] = ssn_client_create();
         if (!clients[i]) {
             fprintf(stderr, "Can not create client %ld!\n", i);
             return -1;

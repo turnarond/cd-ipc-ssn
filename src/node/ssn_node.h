@@ -250,16 +250,13 @@ SSN_API bool ssn_node_subscribe(ssn_node_t *node, const char *peer_address,
 
 /**
  * @brief Unsubscribe from a topic
- * 
+ *
  * @param node Node instance
  * @param url URL reference
- * @param callback Result handler callback
- * @param arg Callback argument
  * @param timeout_ms Timeout in milliseconds
  * @return true on success, false on failure
  */
 SSN_API bool ssn_node_unsubscribe(ssn_node_t *node, const ssn_url_ref_t *url,
-                         ssn_client_result_handler_t callback, void *arg,
                          uint64_t timeout_ms);
 
 /**

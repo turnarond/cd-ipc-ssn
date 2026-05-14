@@ -115,7 +115,7 @@ static int test_rpc_echo(void)
     usleep(100000); /* Give server time to start */
 
     /* Create client and connect */
-    ssn_client_t *cli = ssn_client_create(NULL, NULL);
+    ssn_client_t *cli = ssn_client_create();
     if (!cli) { printf("FAIL (create client)\n"); goto cleanup; }
 
     struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
