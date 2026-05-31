@@ -4,6 +4,8 @@
  */
 
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include "ssn_error.h"
 #include "util/ssn_log.h"
 
@@ -107,5 +109,10 @@ uint16_t ssn_ecode_code(ssn_ecode_t error) {
  */
 void ssn_handle_error(ssn_ecode_t error, const char *file, int line, const char *func, const char *format, ...) {
     const char *error_msg = ssn_ecode_message(error);
-    LOG_ERROR("[%s:%d] %s: %s - %s", file, line, func, error_msg, format);
+    char buf[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+    LOG_ERROR("[%s:%d] %s: %s - %s", file, line, func, error_msg, buf);
 }

@@ -665,7 +665,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     // 解析地址，得到地址类型
     ssn_address_t addr;
     if (!ssn_address_parse(ipc_path, &addr)) {
-        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "parse address failed");
+        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "parse address failed: '%s'", ipc_path);
         ssn_client_unref(client);
         return (false);
     }
@@ -681,7 +681,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 
     // 连接到服务器
     if (!ssn_transport_connect(client->transport, &addr, config.connect_timeout_ms)) {
-        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "connect failed");
+        ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "connect to '%s' failed", ipc_path);
         ssn_client_unref(client);
         return (false);
     }
@@ -1236,7 +1236,7 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
     ssn_sub_handler_t *h;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client subscribe failed: invalid client handle.");
+        LOG_ERROR("ipc client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
         return (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {

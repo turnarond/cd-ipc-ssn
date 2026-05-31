@@ -55,7 +55,7 @@ static bool unix_transport_connect(ssn_transport_t* transport,
     if (connect(impl->sock_fd, (struct sockaddr*)&impl->addr,
                 sizeof(struct sockaddr_un)) < 0) {
         if (errno != EINPROGRESS) {
-            LOG_ERROR("Failed to connect Unix socket: %s", strerror(errno));
+            LOG_ERROR("Failed to connect Unix socket '%s': %s", impl->addr.sun_path, strerror(errno));
             close(impl->sock_fd);
             impl->sock_fd = -1;
             return false;
