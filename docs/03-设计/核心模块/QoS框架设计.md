@@ -64,7 +64,7 @@ typedef enum {
     IPC_RELIABILITY_AT_MOST_ONCE,        // 至多一次
     IPC_RELIABILITY_EXACTLY_ONCE,        // 精确一次
     IPC_RELIABILITY_RELIABLE             // 可靠传输
-} ipc_reliability_level_t;
+} ssn_reliability_level_t;
 
 // QoS优先级
 typedef enum {
@@ -73,18 +73,18 @@ typedef enum {
     IPC_PRIORITY_NORMAL,                 // 普通优先级
     IPC_PRIORITY_LOW,                    // 低优先级
     IPC_PRIORITY_BACKGROUND             // 后台优先级
-} ipc_priority_level_t;
+} ssn_priority_level_t;
 
 // QoS配置
 typedef struct {
     // 可靠性配置
-    ipc_reliability_level_t reliability;    // 可靠性等级
+    ssn_reliability_level_t reliability;    // 可靠性等级
     uint32_t max_retries;                   // 最大重试次数
     uint32_t retry_timeout_ms;              // 重试超时时间(ms)
     bool enable_deduplication;              // 启用去重
     
     // 优先级配置
-    ipc_priority_level_t priority;          // 传输优先级
+    ssn_priority_level_t priority;          // 传输优先级
     uint32_t deadline_ms;                   // 截止时间(ms)
     uint32_t max_delay_ms;                 // 最大延迟(ms)
     
@@ -181,7 +181,7 @@ static const ssn_qos_config_t IPC_QOS_THROUGHPUT = {
 ```c
 // 尽力而为可靠性模块
 typedef struct best_effort_reliability {
-    ipc_reliability_module_t base;  // 基类
+    ssn_reliability_module_t base;  // 基类
     
     // 统计
     uint64_t packets_sent;
@@ -189,11 +189,11 @@ typedef struct best_effort_reliability {
 } best_effort_reliability_t;
 
 // 尽力而为发送
-static int best_effort_send(best_effort_reliability_t* mod, ipc_message_t* msg) {
+static int best_effort_send(best_effort_reliability_t* mod, ssn_message_t* msg) {
     mod->packets_sent++;
     
     // 直接发送，不等待确认
-    int result = ipc_transport_send(mod->transport, msg->data, msg->size);
+    int result = ssn_transport_send(mod->transport, msg->data, msg->size);
     
     if (result < 0) {
         mod->packets_lost++;
@@ -208,11 +208,11 @@ static int best_effort_send(best_effort_reliability_t* mod, ipc_message_t* msg) 
 ```c
 // 至少一次可靠性模块
 typedef struct at_least_once_reliability {
-    ipc_reliability_module_t base;
+    ssn_reliability_module_t base;
     
     // 重传队列
-    ipc_list_t* pending_acks;        // 等待确认的消息
-    ipc_hash_table_t* retry_timers; // 重试定时器
+    ssn_list_t* pending_acks;        // 等待确认的消息
+    ssn_hash_table_t* retry_timers; // 重试定时器
     
     // 配置
     uint32_t max_retries;
@@ -226,7 +226,7 @@ typedef struct at_least_once_reliability {
 } at_least_once_reliability_t;
 
 // 至少一次发送
-static int at_least_once_send(at_least_once_reliability_t* mod, ipc_message_t* msg) {
+static int at_least_once_send(at_least_once_reliability_t* mod, ssn_message_t* msg) {
     // 为消息分配序列号
     uint16_t seqno = atomic_increment(&mod->base.next_seqno);
     msg->sequence = seqno;
@@ -238,7 +238,7 @@ static int at_least_once_send(at_least_once_reliability_t* mod, ipc_message_t* m
     mod->packets_sent++;
     
     // 发送消息
-    int result = ipc_transport_send(mod->transport, msg->data, msg->size);
+    int result = ssn_transport_send(mod->transport, msg->data, msg->size);
     
     if (result < 0) {
         mod->packets_dropped++;
@@ -277,7 +277,7 @@ static void at_least_once_retry(void* arg) {
     
     ipc_mutex_lock(mod->base.lock);
     
-    ipc_list_node_t* node = mod->pending_acks->head;
+    ssn_list_node_t* node = mod->pending_acks->head;
     while (node) {
         pending_ack_t* ack_record = (pending_ack_t*)node->data;
         
@@ -285,7 +285,7 @@ static void at_least_once_retry(void* arg) {
             LOG_WARN("Message seqno %d exceeded max retries, dropping", ack_record->sequence);
             mod->packets_dropped++;
             
-            ipc_list_node_t* next = node->next;
+            ssn_list_node_t* next = node->next;
             remove_pending_ack(mod, ack_record->sequence);
             node = next;
             continue;
@@ -296,7 +296,7 @@ static void at_least_once_retry(void* arg) {
             LOG_DEBUG("Retrying message seqno %d, attempt %d", 
                      ack_record->sequence, ack_record->retry_count + 1);
             
-            ipc_transport_send(mod->transport, ack_record->message->data, 
+            ssn_transport_send(mod->transport, ack_record->message->data, 
                              ack_record->message->size);
             
             ack_record->retry_count++;
@@ -315,20 +315,20 @@ static void at_least_once_retry(void* arg) {
 ```c
 // 精确一次可靠性模块
 typedef struct exactly_once_reliability {
-    ipc_reliability_module_t base;
+    ssn_reliability_module_t base;
     
     // 消息ID生成器
     uint64_t message_id_counter;
     
     // 已处理消息缓存（用于去重）
-    ipc_hash_table_t* processed_messages; // message_id -> 处理时间
+    ssn_hash_table_t* processed_messages; // message_id -> 处理时间
     uint32_t deduplication_window_sec;     // 去重窗口
     
     // 待确认消息
-    ipc_list_t* pending_final_acks;
+    ssn_list_t* pending_final_acks;
     
     // 两阶段提交状态
-    ipc_hash_table_t* transaction_states; // transaction_id -> state
+    ssn_hash_table_t* transaction_states; // transaction_id -> state
     
     // 统计
     uint64_t transactions_started;
@@ -337,7 +337,7 @@ typedef struct exactly_once_reliability {
 } exactly_once_reliability_t;
 
 // 精确一次发送 - 第一阶段：准备
-static int exactly_once_send_prepare(exactly_once_reliability_t* mod, ipc_message_t* msg) {
+static int exactly_once_send_prepare(exactly_once_reliability_t* mod, ssn_message_t* msg) {
     // 生成唯一消息ID
     uint64_t message_id = atomic_increment(&mod->message_id_counter);
     msg->message_id = message_id;
@@ -347,30 +347,30 @@ static int exactly_once_send_prepare(exactly_once_reliability_t* mod, ipc_messag
     
     // 创建事务状态
     transaction_state_t* tx_state = create_transaction_state(message_id, msg);
-    ipc_hash_table_set(mod->transaction_states, (void*)message_id, tx_state);
+    ssn_hash_table_set(mod->transaction_states, (void*)message_id, tx_state);
     
     mod->transactions_started++;
     
     // 发送准备消息
-    return ipc_transport_send(mod->transport, msg->data, msg->size);
+    return ssn_transport_send(mod->transport, msg->data, msg->size);
 }
 
 // 精确一次发送 - 第二阶段：提交
 static int exactly_once_send_commit(exactly_once_reliability_t* mod, uint64_t message_id) {
-    transaction_state_t* tx_state = ipc_hash_table_get(mod->transaction_states, (void*)message_id);
+    transaction_state_t* tx_state = ssn_hash_table_get(mod->transaction_states, (void*)message_id);
     if (!tx_state) {
         LOG_ERROR("Transaction %lu not found", message_id);
         return -1;
     }
     
     // 发送提交消息
-    ipc_message_t commit_msg;
+    ssn_message_t commit_msg;
     commit_msg.message_id = message_id;
     commit_msg.flags = IPC_MSG_FLAG_COMMIT;
     memcpy(commit_msg.data, tx_state->original_message->data, tx_state->original_message->size);
     commit_msg.size = tx_state->original_message->size;
     
-    int result = ipc_transport_send(mod->transport, commit_msg.data, commit_msg.size);
+    int result = ssn_transport_send(mod->transport, commit_msg.data, commit_msg.size);
     
     if (result >= 0) {
         mod->transactions_completed++;
@@ -378,7 +378,7 @@ static int exactly_once_send_commit(exactly_once_reliability_t* mod, uint64_t me
     
     // 清理事务状态
     destroy_transaction_state(tx_state);
-    ipc_hash_table_remove(mod->transaction_states, (void*)message_id);
+    ssn_hash_table_remove(mod->transaction_states, (void*)message_id);
     
     return result;
 }
@@ -386,7 +386,7 @@ static int exactly_once_send_commit(exactly_once_reliability_t* mod, uint64_t me
 // 处理重复消息
 static bool exactly_once_check_duplicate(exactly_once_reliability_t* mod, uint64_t message_id) {
     // 检查是否已处理过
-    time_t* processed_time = (time_t*)ipc_hash_table_get(mod->processed_messages, (void*)message_id);
+    time_t* processed_time = (time_t*)ssn_hash_table_get(mod->processed_messages, (void*)message_id);
     
     if (processed_time) {
         mod->duplicates_detected++;
@@ -396,7 +396,7 @@ static bool exactly_once_check_duplicate(exactly_once_reliability_t* mod, uint64
     
     // 添加到已处理缓存
     time_t now = time(NULL);
-    ipc_hash_table_set(mod->processed_messages, (void*)message_id, (void*)now);
+    ssn_hash_table_set(mod->processed_messages, (void*)message_id, (void*)now);
     
     // 清理过期条目
     cleanup_expired_dedup_cache(mod);
@@ -408,28 +408,28 @@ static bool exactly_once_check_duplicate(exactly_once_reliability_t* mod, uint64
 static void cleanup_expired_dedup_cache(exactly_once_reliability_t* mod) {
     time_t now = time(NULL);
     
-    ipc_list_t* to_remove = NULL;
+    ssn_list_t* to_remove = NULL;
     
-    ipc_hash_table_iter_t iter;
-    ipc_hash_table_iter_init(&iter, mod->processed_messages);
+    ssn_hash_table_iter_t iter;
+    ssn_hash_table_iter_init(&iter, mod->processed_messages);
     
-    while (ipc_hash_table_iter_next(&iter)) {
+    while (ssn_hash_table_iter_next(&iter)) {
         uint64_t* msg_id = (uint64_t*)iter.key;
         time_t* proc_time = (time_t*)iter.value;
         
         if (now - *proc_time > mod->deduplication_window_sec) {
-            if (!to_remove) to_remove = ipc_list_create();
+            if (!to_remove) to_remove = ssn_list_create();
             to_remove->append(to_remove, (void*)*msg_id);
         }
     }
     
     if (to_remove) {
-        ipc_list_node_t* node = to_remove->head;
+        ssn_list_node_t* node = to_remove->head;
         while (node) {
-            ipc_hash_table_remove(mod->processed_messages, node->data);
+            ssn_hash_table_remove(mod->processed_messages, node->data);
             node = node->next;
         }
-        ipc_list_destroy(to_remove);
+        ssn_list_destroy(to_remove);
     }
 }
 ```
@@ -445,7 +445,7 @@ static void cleanup_expired_dedup_cache(exactly_once_reliability_t* mod) {
 // 优先级调度器
 typedef struct priority_scheduler {
     // 优先级队列数组
-    ipc_message_queue_t queues[IPC_PRIORITY_COUNT];
+    ssn_message_queue_t queues[IPC_PRIORITY_COUNT];
     
     // 调度权重
     uint32_t weights[IPC_PRIORITY_COUNT];
@@ -455,7 +455,7 @@ typedef struct priority_scheduler {
     uint64_t bytes_scheduled[IPC_PRIORITY_COUNT];
     
     // 调度算法
-    ipc_scheduling_algorithm_t algorithm;
+    ssn_scheduling_algorithm_t algorithm;
     
     // 同步
     ipc_mutex_t* lock;
@@ -467,14 +467,14 @@ typedef enum {
     IPC_SCHEDULING_WEIGHTED_ROUND_ROBIN, // 加权轮询
     IPC_SCHEDULING_DEFICIT_ROUND_ROBIN,  // 赤字轮询
     IPC_SCHEDULING_FAIR_QUEUEING         // 公平队列
-} ipc_scheduling_algorithm_t;
+} ssn_scheduling_algorithm_t;
 
 // 严格优先级调度
-static ipc_message_t* strict_priority_schedule(priority_scheduler_t* sched) {
+static ssn_message_t* strict_priority_schedule(priority_scheduler_t* sched) {
     // 从高到低遍历队列
     for (int i = 0; i < IPC_PRIORITY_COUNT; i++) {
         if (!sched->queues[i].is_empty(&sched->queues[i])) {
-            ipc_message_t* msg = sched->queues[i].dequeue(&sched->queues[i]);
+            ssn_message_t* msg = sched->queues[i].dequeue(&sched->queues[i]);
             
             sched->messages_scheduled[i]++;
             sched->bytes_scheduled[i] += msg->size;
@@ -493,7 +493,7 @@ typedef struct wrr_state {
     uint32_t quantum[IPC_PRIORITY_COUNT];
 } wrr_state_t;
 
-static ipc_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched) {
+static ssn_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched) {
     static wrr_state_t state = {0};
     
     // 初始化权重
@@ -510,7 +510,7 @@ static ipc_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched)
         int idx = state.current_priority;
         
         if (state.current_weight[idx] > 0 && !sched->queues[idx].is_empty(&sched->queues[idx])) {
-            ipc_message_t* msg = sched->queues[idx].dequeue(&sched->queues[idx]);
+            ssn_message_t* msg = sched->queues[idx].dequeue(&sched->queues[idx]);
             
             state.current_weight[idx]--;
             
@@ -545,7 +545,7 @@ static ipc_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched)
 }
 
 // 消息入队
-static bool priority_scheduler_enqueue(priority_scheduler_t* sched, ipc_message_t* msg) {
+static bool priority_scheduler_enqueue(priority_scheduler_t* sched, ssn_message_t* msg) {
     if (!sched || !msg) {
         return false;
     }
@@ -565,10 +565,10 @@ static bool priority_scheduler_enqueue(priority_scheduler_t* sched, ipc_message_
 }
 
 // 消息出队
-static ipc_message_t* priority_scheduler_dequeue(priority_scheduler_t* sched) {
+static ssn_message_t* priority_scheduler_dequeue(priority_scheduler_t* sched) {
     ipc_mutex_lock(sched->lock);
     
-    ipc_message_t* msg = NULL;
+    ssn_message_t* msg = NULL;
     
     switch (sched->algorithm) {
         case IPC_SCHEDULING_STRICT_PRIORITY:
@@ -697,8 +697,8 @@ typedef struct {
     ipc_mutex_t* lock;           // 同步锁
     
     // 等待队列
-    ipc_list_t* waiting_messages;
-    ipc_condition_t* cond;
+    ssn_list_t* waiting_messages;
+    ssn_condition_t* cond;
 } leak_bucket_t;
 
 // 创建漏桶
@@ -713,14 +713,14 @@ static leak_bucket_t* leak_bucket_create(uint32_t rate_kbps, uint32_t bucket_cap
     bucket->current_level = 0;
     bucket->last_update_time = time(NULL);
     bucket->lock = ipc_mutex_create();
-    bucket->waiting_messages = ipc_list_create();
-    bucket->cond = ipc_condition_create();
+    bucket->waiting_messages = ssn_list_create();
+    bucket->cond = ssn_condition_create();
     
     return bucket;
 }
 
 // 添加消息到漏桶
-static bool leak_bucket_add(leak_bucket_t* bucket, ipc_message_t* msg) {
+static bool leak_bucket_add(leak_bucket_t* bucket, ssn_message_t* msg) {
     ipc_mutex_lock(bucket->lock);
     
     uint32_t message_size = msg->size;
@@ -738,7 +738,7 @@ static bool leak_bucket_add(leak_bucket_t* bucket, ipc_message_t* msg) {
         
         if (bucket->current_level + message_size > bucket->bucket_capacity) {
             // 释放锁并等待
-            ipc_condition_wait(bucket->cond, bucket->lock);
+            ssn_condition_wait(bucket->cond, bucket->lock);
         }
     }
     
@@ -770,12 +770,12 @@ static void leak_bucket_update(leak_bucket_t* bucket) {
     
     // 通知等待的线程
     if (bucket->current_level < bucket->bucket_capacity) {
-        ipc_condition_signal(bucket->cond);
+        ssn_condition_signal(bucket->cond);
     }
 }
 
 // 从漏桶获取消息
-static ipc_message_t* leak_bucket_get(leak_bucket_t* bucket) {
+static ssn_message_t* leak_bucket_get(leak_bucket_t* bucket) {
     ipc_mutex_lock(bucket->lock);
     
     // 更新漏桶
@@ -787,7 +787,7 @@ static ipc_message_t* leak_bucket_get(leak_bucket_t* bucket) {
     }
     
     // 获取队列头部消息
-    ipc_message_t* msg = (ipc_message_t*)bucket->waiting_messages->head->data;
+    ssn_message_t* msg = (ssn_message_t*)bucket->waiting_messages->head->data;
     bucket->waiting_messages->remove_head(bucket->waiting_messages);
     
     // 更新水位
@@ -923,14 +923,14 @@ typedef struct latency_guarantee_scheduler {
     latency_monitor_t* monitor;
     
     // 截止时间管理
-    ipc_heap_t* deadline_queue;     // 按截止时间组织的消息堆
+    ssn_heap_t* deadline_queue;     // 按截止时间组织的消息堆
     
     // 同步
     ipc_mutex_t* lock;
 } latency_guarantee_scheduler_t;
 
 // 延迟保障入队
-static bool latency_guarantee_enqueue(latency_guarantee_scheduler_t* sched, ipc_message_t* msg) {
+static bool latency_guarantee_enqueue(latency_guarantee_scheduler_t* sched, ssn_message_t* msg) {
     // 设置消息的截止时间
     if (msg->qos.deadline_ms > 0) {
         msg->deadline = get_current_time_ms() + msg->qos.deadline_ms;
@@ -965,14 +965,14 @@ static bool latency_guarantee_enqueue(latency_guarantee_scheduler_t* sched, ipc_
 }
 
 // 延迟保障出队
-static ipc_message_t* latency_guarantee_dequeue(latency_guarantee_scheduler_t* sched) {
+static ssn_message_t* latency_guarantee_dequeue(latency_guarantee_scheduler_t* sched) {
     uint32_t now = get_current_time_ms();
     
     ipc_mutex_lock(sched->lock);
     
     // 检查是否有消息超过截止时间
     while (sched->deadline_queue->size > 0) {
-        ipc_message_t* earliest = sched->deadline_queue->peek_min(sched->deadline_queue);
+        ssn_message_t* earliest = sched->deadline_queue->peek_min(sched->deadline_queue);
         
         if (earliest->deadline > 0 && earliest->deadline < now) {
             // 消息已过期
@@ -1003,13 +1003,13 @@ static ipc_message_t* latency_guarantee_dequeue(latency_guarantee_scheduler_t* s
 
 ```c
 // QoS管理器
-typedef struct ipc_qos_manager {
+typedef struct ssn_qos_manager {
     // 配置
     ssn_qos_config_t default_config;
     ssn_qos_config_t node_qos;  // 节点级QoS
     
     // 可靠性模块
-    ipc_reliability_module_t* reliability;
+    ssn_reliability_module_t* reliability;
     
     // 调度器
     priority_scheduler_t* scheduler;
@@ -1026,44 +1026,44 @@ typedef struct ipc_qos_manager {
     bandwidth_monitor_t* bw_monitor;
     
     // 消息历史
-    ipc_history_buffer_t* history;
+    ssn_history_buffer_t* history;
     
     // 统计
-    ipc_qos_stats_t stats;
+    ssn_qos_stats_t stats;
     
     // 同步
     ipc_mutex_t* lock;
     
     // 回调
-    ipc_qos_callbacks_t callbacks;
+    ssn_qos_callbacks_t callbacks;
     void* callback_arg;
-} ipc_qos_manager_t;
+} ssn_qos_manager_t;
 ```
 
 ### 8.2 QoS管理器接口
 
 ```c
 // 创建QoS管理器
-ipc_qos_manager_t* ipc_qos_manager_create(const ssn_qos_config_t* default_config);
+ssn_qos_manager_t* ssn_qos_manager_create(const ssn_qos_config_t* default_config);
 
 // 配置QoS
-bool ipc_qos_manager_set_config(ipc_qos_manager_t* mgr, const ssn_qos_config_t* config);
-bool ipc_qos_manager_get_config(ipc_qos_manager_t* mgr, ssn_qos_config_t* config);
+bool ssn_qos_manager_set_config(ssn_qos_manager_t* mgr, const ssn_qos_config_t* config);
+bool ssn_qos_manager_get_config(ssn_qos_manager_t* mgr, ssn_qos_config_t* config);
 
 // 发送消息（应用QoS策略）
-int ipc_qos_manager_send(ipc_qos_manager_t* mgr, ipc_message_t* msg);
+int ssn_qos_manager_send(ssn_qos_manager_t* mgr, ssn_message_t* msg);
 
 // 接收消息（应用QoS策略）
-int ipc_qos_manager_recv(ipc_qos_manager_t* mgr, ipc_message_t* msg, uint32_t timeout_ms);
+int ssn_qos_manager_recv(ssn_qos_manager_t* mgr, ssn_message_t* msg, uint32_t timeout_ms);
 
 // 获取统计信息
-bool ipc_qos_manager_get_stats(ipc_qos_manager_t* mgr, ipc_qos_stats_t* stats);
+bool ssn_qos_manager_get_stats(ssn_qos_manager_t* mgr, ssn_qos_stats_t* stats);
 
 // 重置统计信息
-void ipc_qos_manager_reset_stats(ipc_qos_manager_t* mgr);
+void ssn_qos_manager_reset_stats(ssn_qos_manager_t* mgr);
 
 // 销毁QoS管理器
-void ipc_qos_manager_destroy(ipc_qos_manager_t* mgr);
+void ssn_qos_manager_destroy(ssn_qos_manager_t* mgr);
 ```
 
 ## 9. QoS监控和管理接口
@@ -1097,10 +1097,10 @@ typedef struct {
     
     // 时间戳
     time_t last_update;
-} ipc_qos_stats_t;
+} ssn_qos_stats_t;
 
 // 获取QoS统计
-static bool ipc_qos_manager_get_stats(ipc_qos_manager_t* mgr, ipc_qos_stats_t* stats) {
+static bool ssn_qos_manager_get_stats(ssn_qos_manager_t* mgr, ssn_qos_stats_t* stats) {
     if (!mgr || !stats) {
         return false;
     }
@@ -1108,7 +1108,7 @@ static bool ipc_qos_manager_get_stats(ipc_qos_manager_t* mgr, ipc_qos_stats_t* s
     ipc_mutex_lock(mgr->lock);
     
     // 复制统计信息
-    memcpy(stats, &mgr->stats, sizeof(ipc_qos_stats_t));
+    memcpy(stats, &mgr->stats, sizeof(ssn_qos_stats_t));
     
     // 获取延迟统计
     if (mgr->latency_monitor) {
@@ -1150,12 +1150,12 @@ typedef struct {
     bool auto_adjust_priority;
     bool auto_adjust_reliability;
     bool auto_adjust_compression;
-} ipc_qos_automatic_config_t;
+} ssn_qos_automatic_config_t;
 
 // 自动QoS调整线程
 static void* qos_auto_adjust_thread(void* arg) {
-    ipc_qos_manager_t* mgr = (ipc_qos_manager_t*)arg;
-    ipc_qos_automatic_config_t* config = &mgr->auto_config;
+    ssn_qos_manager_t* mgr = (ssn_qos_manager_t*)arg;
+    ssn_qos_automatic_config_t* config = &mgr->auto_config;
     
     while (mgr->running) {
         sleep(config->adjustment_interval_sec);
@@ -1215,7 +1215,7 @@ static void* qos_auto_adjust_thread(void* arg) {
 typedef struct {
     // 原有API保持不变
     ssn_client_t* (*original_client_create)(ssn_client_msg_handler_t on_publish, void* arg);
-    bool (*original_client_connect)(ssn_client_t* client, const char* ipc_path,
+    bool (*original_client_connect)(ssn_client_t* client, const char* ssn_path,
                                      const struct timespec *timeout);
     int (*original_client_call)(ssn_client_t* client, const ssn_url_ref_t *url, 
                                 const ssn_data_ref_t *data,
@@ -1223,15 +1223,15 @@ typedef struct {
                                 uint64_t timeout_ms);
     
     // 新增QoS-aware API
-    ipc_client_qos_t* (*qos_client_create)(ssn_client_msg_handler_t on_publish, void* arg,
+    ssn_client_qos_t* (*qos_client_create)(ssn_client_msg_handler_t on_publish, void* arg,
                                            const ssn_qos_config_t* qos);
-    bool (*qos_client_connect)(ipc_client_qos_t* client, const char* address,
+    bool (*qos_client_connect)(ssn_client_qos_t* client, const char* address,
                                const ssn_qos_config_t* qos, const struct timespec *timeout);
-    int (*qos_client_call)(ipc_client_qos_t* client, const ssn_url_ref_t *url,
+    int (*qos_client_call)(ssn_client_qos_t* client, const ssn_url_ref_t *url,
                           const ssn_data_ref_t *data,
                           ssn_client_rpcreply_handler_t callback, void *arg,
                           const ssn_qos_config_t* qos, uint64_t timeout_ms);
-} ipc_qos_compatibility_layer_t;
+} ssn_qos_compatibility_layer_t;
 ```
 
 ### 10.2 配置迁移
