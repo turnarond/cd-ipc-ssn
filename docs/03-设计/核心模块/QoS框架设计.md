@@ -1,5 +1,13 @@
 # QoS服务质量框架详细设计文档
 
+## 文档信息
+
+| 项目 | 内容 |
+|------|------|
+| 文档版本 | v1.0 |
+| 状态 | 部分过时 |
+| 更新日期 | 2026-08-02 |
+
 ## 1. 概述
 
 ### 1.1 QoS框架目标
@@ -1122,6 +1130,8 @@ static bool ipc_qos_manager_get_stats(ipc_qos_manager_t* mgr, ipc_qos_stats_t* s
 
 ### 9.2 动态QoS调整
 
+> ⚠️ 未实现
+
 ```c
 // 动态QoS调整配置
 typedef struct {
@@ -1197,6 +1207,8 @@ static void* qos_auto_adjust_thread(void* arg) {
 ## 10. 与现有系统集成
 
 ### 10.1 API兼容性
+
+> ⚠️ 未实现
 
 ```c
 // 兼容现有API的封装
