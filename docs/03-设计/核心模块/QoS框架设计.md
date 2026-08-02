@@ -59,20 +59,20 @@ QoS（Quality of Service）服务质量框架旨在为SSN提供完善的服务�
 ```c
 // QoS可靠性等级
 typedef enum {
-    IPC_RELIABILITY_BEST_EFFORT = 0,     // 尽力而为
-    IPC_RELIABILITY_AT_LEAST_ONCE,        // 至少一次
-    IPC_RELIABILITY_AT_MOST_ONCE,        // 至多一次
-    IPC_RELIABILITY_EXACTLY_ONCE,        // 精确一次
-    IPC_RELIABILITY_RELIABLE             // 可靠传输
+    SSN_RELIABILITY_BEST_EFFORT = 0,     // 尽力而为
+    SSN_RELIABILITY_AT_LEAST_ONCE,        // 至少一次
+    SSN_RELIABILITY_AT_MOST_ONCE,        // 至多一次
+    SSN_RELIABILITY_EXACTLY_ONCE,        // 精确一次
+    SSN_RELIABILITY_RELIABLE             // 可靠传输
 } ssn_reliability_level_t;
 
 // QoS优先级
 typedef enum {
-    IPC_PRIORITY_REALTIME = 0,          // 实时优先级
-    IPC_PRIORITY_HIGH,                   // 高优先级
-    IPC_PRIORITY_NORMAL,                 // 普通优先级
-    IPC_PRIORITY_LOW,                    // 低优先级
-    IPC_PRIORITY_BACKGROUND             // 后台优先级
+    SSN_PRIORITY_REALTIME = 0,          // 实时优先级
+    SSN_PRIORITY_HIGH,                   // 高优先级
+    SSN_PRIORITY_NORMAL,                 // 普通优先级
+    SSN_PRIORITY_LOW,                    // 低优先级
+    SSN_PRIORITY_BACKGROUND             // 后台优先级
 } ssn_priority_level_t;
 
 // QoS配置
@@ -113,12 +113,12 @@ typedef struct {
 } ssn_qos_config_t;
 
 // 默认QoS配置
-static const ssn_qos_config_t IPC_QOS_DEFAULT = {
-    .reliability = IPC_RELIABILITY_BEST_EFFORT,
+static const ssn_qos_config_t SSN_QOS_DEFAULT = {
+    .reliability = SSN_RELIABILITY_BEST_EFFORT,
     .max_retries = 3,
     .retry_timeout_ms = 1000,
     .enable_deduplication = false,
-    .priority = IPC_PRIORITY_NORMAL,
+    .priority = SSN_PRIORITY_NORMAL,
     .deadline_ms = 0,
     .max_delay_ms = 0,
     .max_bandwidth_kbps = 0,  // 0表示无限制
@@ -141,9 +141,9 @@ static const ssn_qos_config_t IPC_QOS_DEFAULT = {
 
 ```c
 // 实时数据传输配置
-static const ssn_qos_config_t IPC_QOS_REALTIME = {
-    .reliability = IPC_RELIABILITY_BEST_EFFORT,
-    .priority = IPC_PRIORITY_REALTIME,
+static const ssn_qos_config_t SSN_QOS_REALTIME = {
+    .reliability = SSN_RELIABILITY_BEST_EFFORT,
+    .priority = SSN_PRIORITY_REALTIME,
     .deadline_ms = 100,
     .max_delay_ms = 50,
     .max_latency_ms = 100,
@@ -153,9 +153,9 @@ static const ssn_qos_config_t IPC_QOS_REALTIME = {
 };
 
 // 可靠数据传输配置
-static const ssn_qos_config_t IPC_QOS_RELIABLE = {
-    .reliability = IPC_RELIABILITY_RELIABLE,
-    .priority = IPC_PRIORITY_HIGH,
+static const ssn_qos_config_t SSN_QOS_RELIABLE = {
+    .reliability = SSN_RELIABILITY_RELIABLE,
+    .priority = SSN_PRIORITY_HIGH,
     .max_retries = 5,
     .retry_timeout_ms = 500,
     .enable_deduplication = true,
@@ -164,9 +164,9 @@ static const ssn_qos_config_t IPC_QOS_RELIABLE = {
 };
 
 // 高吞吐量配置
-static const ssn_qos_config_t IPC_QOS_THROUGHPUT = {
-    .reliability = IPC_RELIABILITY_AT_LEAST_ONCE,
-    .priority = IPC_PRIORITY_NORMAL,
+static const ssn_qos_config_t SSN_QOS_THROUGHPUT = {
+    .reliability = SSN_RELIABILITY_AT_LEAST_ONCE,
+    .priority = SSN_PRIORITY_NORMAL,
     .max_retries = 3,
     .enable_compression = true,
     .max_bandwidth_kbps = 10000,
@@ -343,7 +343,7 @@ static int exactly_once_send_prepare(exactly_once_reliability_t* mod, ssn_messag
     msg->message_id = message_id;
     
     // 设置消息类型为准备阶段
-    msg->flags |= IPC_MSG_FLAG_PREPARE;
+    msg->flags |= SSN_MSG_FLAG_PREPARE;
     
     // 创建事务状态
     transaction_state_t* tx_state = create_transaction_state(message_id, msg);
@@ -366,7 +366,7 @@ static int exactly_once_send_commit(exactly_once_reliability_t* mod, uint64_t me
     // 发送提交消息
     ssn_message_t commit_msg;
     commit_msg.message_id = message_id;
-    commit_msg.flags = IPC_MSG_FLAG_COMMIT;
+    commit_msg.flags = SSN_MSG_FLAG_COMMIT;
     memcpy(commit_msg.data, tx_state->original_message->data, tx_state->original_message->size);
     commit_msg.size = tx_state->original_message->size;
     
@@ -440,19 +440,19 @@ static void cleanup_expired_dedup_cache(exactly_once_reliability_t* mod) {
 
 ```c
 // 优先级队列配置
-#define IPC_PRIORITY_COUNT 5
+#define SSN_PRIORITY_COUNT 5
 
 // 优先级调度器
 typedef struct priority_scheduler {
     // 优先级队列数组
-    ssn_message_queue_t queues[IPC_PRIORITY_COUNT];
+    ssn_message_queue_t queues[SSN_PRIORITY_COUNT];
     
     // 调度权重
-    uint32_t weights[IPC_PRIORITY_COUNT];
+    uint32_t weights[SSN_PRIORITY_COUNT];
     
     // 调度统计
-    uint64_t messages_scheduled[IPC_PRIORITY_COUNT];
-    uint64_t bytes_scheduled[IPC_PRIORITY_COUNT];
+    uint64_t messages_scheduled[SSN_PRIORITY_COUNT];
+    uint64_t bytes_scheduled[SSN_PRIORITY_COUNT];
     
     // 调度算法
     ssn_scheduling_algorithm_t algorithm;
@@ -463,16 +463,16 @@ typedef struct priority_scheduler {
 
 // 调度算法类型
 typedef enum {
-    IPC_SCHEDULING_STRICT_PRIORITY,      // 严格优先级
-    IPC_SCHEDULING_WEIGHTED_ROUND_ROBIN, // 加权轮询
-    IPC_SCHEDULING_DEFICIT_ROUND_ROBIN,  // 赤字轮询
-    IPC_SCHEDULING_FAIR_QUEUEING         // 公平队列
+    SSN_SCHEDULING_STRICT_PRIORITY,      // 严格优先级
+    SSN_SCHEDULING_WEIGHTED_ROUND_ROBIN, // 加权轮询
+    SSN_SCHEDULING_DEFICIT_ROUND_ROBIN,  // 赤字轮询
+    SSN_SCHEDULING_FAIR_QUEUEING         // 公平队列
 } ssn_scheduling_algorithm_t;
 
 // 严格优先级调度
 static ssn_message_t* strict_priority_schedule(priority_scheduler_t* sched) {
     // 从高到低遍历队列
-    for (int i = 0; i < IPC_PRIORITY_COUNT; i++) {
+    for (int i = 0; i < SSN_PRIORITY_COUNT; i++) {
         if (!sched->queues[i].is_empty(&sched->queues[i])) {
             ssn_message_t* msg = sched->queues[i].dequeue(&sched->queues[i]);
             
@@ -489,8 +489,8 @@ static ssn_message_t* strict_priority_schedule(priority_scheduler_t* sched) {
 // 加权轮询调度
 typedef struct wrr_state {
     int current_priority;
-    uint32_t current_weight[IPC_PRIORITY_COUNT];
-    uint32_t quantum[IPC_PRIORITY_COUNT];
+    uint32_t current_weight[SSN_PRIORITY_COUNT];
+    uint32_t quantum[SSN_PRIORITY_COUNT];
 } wrr_state_t;
 
 static ssn_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched) {
@@ -498,7 +498,7 @@ static ssn_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched)
     
     // 初始化权重
     if (state.current_priority == 0) {
-        for (int i = 0; i < IPC_PRIORITY_COUNT; i++) {
+        for (int i = 0; i < SSN_PRIORITY_COUNT; i++) {
             state.current_weight[i] = sched->weights[i];
             state.quantum[i] = sched->weights[i];
         }
@@ -506,7 +506,7 @@ static ssn_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched)
     
     // 遍历所有队列，寻找有消息的队列
     int checked = 0;
-    while (checked < IPC_PRIORITY_COUNT) {
+    while (checked < SSN_PRIORITY_COUNT) {
         int idx = state.current_priority;
         
         if (state.current_weight[idx] > 0 && !sched->queues[idx].is_empty(&sched->queues[idx])) {
@@ -524,18 +524,18 @@ static ssn_message_t* weighted_round_robin_schedule(priority_scheduler_t* sched)
             sched->bytes_scheduled[idx] += msg->size;
             
             // 移动到下一个优先级
-            state.current_priority = (state.current_priority + 1) % IPC_PRIORITY_COUNT;
+            state.current_priority = (state.current_priority + 1) % SSN_PRIORITY_COUNT;
             
             return msg;
         }
         
         // 移动到下一个优先级
-        state.current_priority = (state.current_priority + 1) % IPC_PRIORITY_COUNT;
+        state.current_priority = (state.current_priority + 1) % SSN_PRIORITY_COUNT;
         checked++;
         
         // 如果轮完一圈，重置权重
         if (state.current_priority == 0) {
-            for (int i = 0; i < IPC_PRIORITY_COUNT; i++) {
+            for (int i = 0; i < SSN_PRIORITY_COUNT; i++) {
                 state.current_weight[i] = sched->weights[i];
             }
         }
@@ -551,8 +551,8 @@ static bool priority_scheduler_enqueue(priority_scheduler_t* sched, ssn_message_
     }
     
     int priority = msg->qos.priority;
-    if (priority < 0 || priority >= IPC_PRIORITY_COUNT) {
-        priority = IPC_PRIORITY_NORMAL;
+    if (priority < 0 || priority >= SSN_PRIORITY_COUNT) {
+        priority = SSN_PRIORITY_NORMAL;
     }
     
     ipc_mutex_lock(sched->lock);
@@ -571,19 +571,19 @@ static ssn_message_t* priority_scheduler_dequeue(priority_scheduler_t* sched) {
     ssn_message_t* msg = NULL;
     
     switch (sched->algorithm) {
-        case IPC_SCHEDULING_STRICT_PRIORITY:
+        case SSN_SCHEDULING_STRICT_PRIORITY:
             msg = strict_priority_schedule(sched);
             break;
             
-        case IPC_SCHEDULING_WEIGHTED_ROUND_ROBIN:
+        case SSN_SCHEDULING_WEIGHTED_ROUND_ROBIN:
             msg = weighted_round_robin_schedule(sched);
             break;
             
-        case IPC_SCHEDULING_DEFICIT_ROUND_ROBIN:
+        case SSN_SCHEDULING_DEFICIT_ROUND_ROBIN:
             // 实现DRR调度
             break;
             
-        case IPC_SCHEDULING_FAIR_QUEUEING:
+        case SSN_SCHEDULING_FAIR_QUEUEING:
             // 实现公平队列调度
             break;
     }
@@ -1093,7 +1093,7 @@ typedef struct {
     bandwidth_stats_t bandwidth;
     
     // 优先级统计
-    uint64_t messages_by_priority[IPC_PRIORITY_COUNT];
+    uint64_t messages_by_priority[SSN_PRIORITY_COUNT];
     
     // 时间戳
     time_t last_update;
@@ -1191,7 +1191,7 @@ static void* qos_auto_adjust_thread(void* arg) {
                 
                 // 降低非关键消息的优先级
                 if (config->auto_adjust_priority) {
-                    mgr->default_config.priority = MIN(IPC_PRIORITY_COUNT - 1, 
+                    mgr->default_config.priority = MIN(SSN_PRIORITY_COUNT - 1, 
                                                        mgr->default_config.priority + 1);
                 }
             }
@@ -1215,7 +1215,7 @@ static void* qos_auto_adjust_thread(void* arg) {
 typedef struct {
     // 原有API保持不变
     ssn_client_t* (*original_client_create)(ssn_client_msg_handler_t on_publish, void* arg);
-    bool (*original_client_connect)(ssn_client_t* client, const char* ssn_path,
+    bool (*original_client_connect)(ssn_client_t* client, const char* ipc_path,
                                      const struct timespec *timeout);
     int (*original_client_call)(ssn_client_t* client, const ssn_url_ref_t *url, 
                                 const ssn_data_ref_t *data,
@@ -1246,7 +1246,7 @@ static bool migrate_to_qos_config(const char* old_config_file, ssn_qos_config_t*
     }
     
     // 设置默认QoS配置
-    memcpy(new_config, &IPC_QOS_DEFAULT, sizeof(ssn_qos_config_t));
+    memcpy(new_config, &SSN_QOS_DEFAULT, sizeof(ssn_qos_config_t));
     
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
