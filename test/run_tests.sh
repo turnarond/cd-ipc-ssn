@@ -1,61 +1,58 @@
 #!/bin/bash
+# 构建并运行 cd-ipc-ssn 自动化测试套件
 
-# Test script for cd-ipc-ssn library
+set -u
 
-echo "=== Building and running IPC tests ==="
+echo "=== 构建并运行 SSN 测试 ==="
 
-# Create build directory if it doesn't exist
-if [ ! -d "../build" ]; then
-    echo "Creating build directory..."
-    mkdir -p ../build
+# 以脚本自身位置定位仓库根目录（与调用时的 cwd 无关）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+BUILD_DIR="$REPO_ROOT/build"
+
+# 创建 build 目录
+if [ ! -d "$BUILD_DIR" ]; then
+    mkdir -p "$BUILD_DIR"
+fi
+cd "$BUILD_DIR"
+
+# 配置并构建（构建所有目标）
+echo "--- 运行 CMake ---"
+cmake ..
+echo "--- 构建 ---"
+make -j4 || { echo "[FAIL] 构建失败"; exit 1; }
+
+# 自动化测试套件（均为自包含测试，无需外部服务端）
+TESTS=(
+    test_transport            # 传输层（55 用例）
+    test_node_basic           # 节点基础（3 用例）
+    test_node                 # 节点完整（5 用例）
+    test_protocol             # 协议层（25 用例）
+    test_protocol_integration # 协议集成（19 用例）
+    example_server            # 服务端 API 功能测试（4 用例）
+    example_client            # 客户端 API 功能测试（5 用例）
+)
+
+PASS=0
+FAIL=0
+for t in "${TESTS[@]}"; do
+    echo ""
+    echo "=== 运行 $t ==="
+    if ./"$t"; then
+        echo "[PASS] $t"
+        PASS=$((PASS + 1))
+    else
+        echo "[FAIL] $t"
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+echo ""
+echo "=== 测试完成：$PASS 个套件通过，$FAIL 个套件失败 ==="
+
+if [ "$FAIL" -ne 0 ]; then
+    echo "高级测试（需手工运行服务端）可另行执行：test_comprehensive / test_thread_safety / test_stress"
+    exit 1
 fi
 
-# Change to build directory
-cd ../build
-
-# Run CMake
-echo "Running CMake..."
-cmake ..
-
-# Build the library
-echo "Building library..."
-make -j4
-
-# Build test files
-echo "Building test files..."
-make test_ipc_server test_ipc_client test_ipc_comprehensive
-
-# Run tests
-echo "\n=== Running tests ==="
-
-# Test 1: Basic server-client test
-echo "\n1. Running basic server-client test..."
-# Start server in background
-./test_ipc_server &
-SERVER_PID=$!
-
-# Wait for server to start
-sleep 2
-
-# Run client
-./test_ipc_client &
-CLIENT_PID=$!
-
-# Let them run for a few seconds
-sleep 5
-
-# Kill server and client
-kill $SERVER_PID $CLIENT_PID 2>/dev/null
-wait $SERVER_PID $CLIENT_PID 2>/dev/null
-
-# Test 2: Comprehensive test
-echo "\n2. Running comprehensive test..."
-./test_ipc_comprehensive
-
-# Cleanup
-echo "\n=== Test cleanup ==="
-
-# Remove socket file if it exists
-rm -f ipc-light_server ipc-test-server 2>/dev/null
-
-echo "\n=== All tests completed ==="
+exit 0

@@ -1,5 +1,5 @@
 /**
- * @file ipc_error.c
+ * @file ssn_error.c
  * @brief IPC错误处理实现
  */
 
@@ -24,7 +24,7 @@
  * @param error 错误码
  * @return 错误码版本
  */
-uint8_t ipc_error_version(ssn_ecode_t error) {
+uint8_t ssn_ecode_version(ssn_ecode_t error) {
     return (error >> 28) & 0x0F;
 }
 

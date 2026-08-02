@@ -1,4 +1,5 @@
 build/**
+.omc/
 .clang-format
 examples/advanced/01_multithread/client
 examples/advanced/01_multithread/server

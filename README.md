@@ -1,6 +1,6 @@
 # ssn (cd-ipc-ssn)
 
-**版本: 2.2.0**
+**版本: 2.3.0**
 
 A high-performance inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
 

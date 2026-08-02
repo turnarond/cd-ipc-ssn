@@ -1,0 +1,2 @@
+# 脚本统一使用 LF 行尾（保证 Linux/WSL 可直接执行）
+*.sh text eol=lf

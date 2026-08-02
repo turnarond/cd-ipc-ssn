@@ -372,7 +372,7 @@ ssn_client_t *ssn_client_create(void)
 
     client = (ssn_client_t *)malloc(sizeof(ssn_client_t));
     if (!client) {
-        LOG_ERROR("ipc client create: malloc errno %d", errno);
+        LOG_ERROR("ssn client create: malloc errno %d", errno);
         return (NULL);
     }
 
@@ -387,7 +387,7 @@ ssn_client_t *ssn_client_create(void)
     client->transport = NULL;
 
     if (ipc_event_pair_create(&client->evtfd) != 0) {
-        LOG_ERROR("ipc client create: event pair create failed, errno %d", errno);
+        LOG_ERROR("ssn client create: event pair create failed, errno %d", errno);
         err = 1;
         goto error;
     }
@@ -395,7 +395,7 @@ ssn_client_t *ssn_client_create(void)
     client->sendbuf = malloc(SSN_MAX_PACKET_SIZE * 2);
     if (!client->sendbuf) {
         err = 2;
-        LOG_ERROR("ipc client create: sendbuf malloc, errno %d", errno);
+        LOG_ERROR("ssn client create: sendbuf malloc, errno %d", errno);
         goto error;
     }
 
@@ -403,7 +403,7 @@ ssn_client_t *ssn_client_create(void)
 
     if (ipc_mutex_init(&client->lock)) {
         err = 3;
-        LOG_ERROR("ipc client create: mutex init failed, errno %d", errno);
+        LOG_ERROR("ssn client create: mutex init failed, errno %d", errno);
         goto error;
     }
 
@@ -420,21 +420,21 @@ ssn_client_t *ssn_client_create(void)
     client->rpc_req = ssn_rpc_req_create(rpc_reply_adaptor, client);
     if (!client->rpc_req) {
         err = 4;
-        LOG_ERROR("ipc client create: rpc_req create failed");
+        LOG_ERROR("ssn client create: rpc_req create failed");
         goto error;
     }
 
     client->pubsub_sub = ssn_pubsub_sub_create(pubsub_msg_adaptor, client);
     if (!client->pubsub_sub) {
         err = 5;
-        LOG_ERROR("ipc client create: pubsub_sub create failed");
+        LOG_ERROR("ssn client create: pubsub_sub create failed");
         goto error;
     }
 
     client->msg_send = ssn_msg_send_create();
     if (!client->msg_send) {
         err = 6;
-        LOG_ERROR("ipc client create: msg_send create failed");
+        LOG_ERROR("ssn client create: msg_send create failed");
         goto error;
     }
 
@@ -444,7 +444,7 @@ ssn_client_t *ssn_client_create(void)
 
     ipc_mutex_unlock(g_ssn_client_lock);
 
-    LOG_DEBUG("ipc client create success.");
+    LOG_DEBUG("ssn client create success.");
     return (client);
 
 error:
@@ -750,7 +750,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 
     /* Set send timeout */
     // 发送超时已在transport创建时设置
-    LOG_DEBUG("ipc client connect success.");
+    LOG_DEBUG("ssn client connect success.");
 
     ssn_client_unref(client);
     return (true);
@@ -767,7 +767,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 bool ssn_client_disconnect(ssn_client_t *client)
 {
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client disconnect failed: invalid client handle.");
+        LOG_ERROR("ssn client disconnect failed: invalid client handle.");
         return (false);
     }
 
@@ -787,7 +787,7 @@ bool ssn_client_disconnect(ssn_client_t *client)
 
     ssn_client_timeout_all(client);
 
-    LOG_DEBUG("ipc client disconnect success.");
+    LOG_DEBUG("ssn client disconnect success.");
 
     // 减少引用计数
     ssn_client_unref(client);
@@ -815,7 +815,7 @@ bool ssn_client_is_connect(ssn_client_t *client)
 bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
 {
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client send timeout failed: invalid client handle.");
+        LOG_ERROR("ssn client send timeout failed: invalid client handle.");
         return (false);
     }
 
@@ -863,13 +863,13 @@ int ssn_client_fds(ssn_client_t *client, fd_set *rfds)
     int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
 
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client fds failed: invalid client handle.");
+        LOG_ERROR("ssn client fds failed: invalid client handle.");
         return (-1);
     }
 
     if (!client->connected) {
         FD_SET(evt_fd, rfds);
-        LOG_ERROR("ipc client fds failed: client not connected.");
+        LOG_ERROR("ssn client fds failed: client not connected.");
         return (evt_fd);
     }
 
@@ -905,7 +905,7 @@ static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hd
     ssn_get_url(ipc_hdr, &url);
     ssn_get_data(ipc_hdr, &data);
 
-    LOG_DEBUG("ipc client input: get publish msg, url=%.*s",
+    LOG_DEBUG("ssn client input: get publish msg, url=%.*s",
               (int)url.url_len, url.url);
 
     /* Look up per-URL handler registered via ssn_client_subscribe() */
@@ -933,7 +933,7 @@ static bool ssn_client_handle_message(ssn_client_t *client, ssn_header_t *ipc_hd
     ssn_get_url(ipc_hdr, &url);
     ssn_get_data(ipc_hdr, &data);
     
-    LOG_DEBUG("ipc client input: get message msg.");
+    LOG_DEBUG("ssn client input: get message msg.");
     if (client->onmsg) {
         client->onmsg(client, &url, &data, client->msg_arg);
     }
@@ -1004,10 +1004,10 @@ static bool ssn_client_input(ssn_header_t *ipc_hdr, void *varg)
         ipc_mutex_lock(client->lock);
         free_pending_index(client, pendq->index);
         ipc_mutex_unlock(client->lock);
-        LOG_DEBUG("ipc client input free seqno pend %d, index %d.", pendq->seqno, pendq->index);
+        LOG_DEBUG("ssn client input free seqno pend %d, index %d.", pendq->seqno, pendq->index);
     }
 
-    LOG_DEBUG("ipc client input finished.");
+    LOG_DEBUG("ssn client input finished.");
 
 out:
     return (client->valid);
@@ -1028,7 +1028,7 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
     ssn_pending_request_t *pendq;
 
     if (!client || !client->valid) {
-        LOG_DEBUG("ipc client process event failed: invalid client handle.");
+        LOG_DEBUG("ssn client process event failed: invalid client handle.");
         return (false);
     }
 
@@ -1042,7 +1042,7 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
                 // TODO: deal recv msg;
                 if (!ssn_stream_feed(&client->recv, client->recvbuf,
                                     num, ssn_client_input, client)) {
-                    LOG_ERROR("ipc client process event failed: stream feed failed.");
+                    LOG_ERROR("ssn client process event failed: stream feed failed.");
                     pkt_e = true;
                 }
             }
@@ -1053,7 +1053,7 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
                 ipc_memory_barrier();
 
                 ssn_client_timeout_all(client);
-                LOG_ERROR("ipc client process event failed: connection lost.");
+                LOG_ERROR("ssn client process event failed: connection lost.");
                 return (false);
             } else if (num < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 // Real error (not just "no data available yet")
@@ -1061,7 +1061,7 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
                 ipc_memory_barrier();
 
                 ssn_client_timeout_all(client);
-                LOG_ERROR("ipc client process event failed: recv error %s.", strerror(errno));
+                LOG_ERROR("ssn client process event failed: recv error %s.", strerror(errno));
                 return (false);
             }
         }
@@ -1166,7 +1166,7 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
     ssn_pending_request_t *pendq;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client request: invalid client handle.");
+        LOG_ERROR("ssn client request: invalid client handle.");
         return (false);
     }
 
@@ -1176,7 +1176,7 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
     if (callback) {
         int index = alloc_pending_index(client);
         if (index < 0) {
-            LOG_ERROR("ipc client request: prepare pendq failed.");
+            LOG_ERROR("ssn client request: prepare pendq failed.");
             return (false);
         }
         pendq = &client->pending_pool[index];
@@ -1196,13 +1196,13 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
     ipc_hdr = ssn_create_header(client->sendbuf, type, 0, seqno);
 
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
-        LOG_ERROR("ipc client request: sendmsg failed.");
+        LOG_ERROR("ssn client request: sendmsg failed.");
         goto error;
     }
 
     ipc_mutex_unlock(client->lock);
 
-    LOG_DEBUG("ipc client request success.");
+    LOG_DEBUG("ssn client request success.");
     ssn_client_unref(client);
     return (true);
 
@@ -1236,11 +1236,11 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
     ssn_sub_handler_t *h;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
+        LOG_ERROR("ssn client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
         return (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc client subscribe failed: invalid url.");
+        LOG_ERROR("ssn client subscribe failed: invalid url.");
         return (false);
     }
 
@@ -1265,11 +1265,11 @@ bool ssn_client_unsubscribe (ssn_client_t *client, const ssn_url_ref_t *url,
     ssn_sub_handler_t **prev, *h;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client unsubscribe failed: invalid client handle.");
+        LOG_ERROR("ssn client unsubscribe failed: invalid client handle.");
         return (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc client unsubscribe failed: invalid url.");
+        LOG_ERROR("ssn client unsubscribe failed: invalid url.");
         return (false);
     }
 
@@ -1310,11 +1310,11 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
     ssn_pending_request_t *pendq;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client call failed: invalid client handle.");
+        LOG_ERROR("ssn client call failed: invalid client handle.");
         return -1;
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc client call failed: invalid url.");
+        LOG_ERROR("ssn client call failed: invalid url.");
         return -1;
     }
 
@@ -1327,7 +1327,7 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
         int index = alloc_pending_index(client);
         if (index < 0) {
             ipc_mutex_unlock(client->lock);
-            LOG_ERROR("ipc client call failed: prepare pendq failed");
+            LOG_ERROR("ssn client call failed: prepare pendq failed");
             ssn_client_unref(client);
             return -1;
         }
@@ -1348,7 +1348,7 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
     ipc_mutex_unlock(client->lock);
 
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
-        LOG_ERROR("ipc client call failed: send msg failed.");
+        LOG_ERROR("ssn client call failed: send msg failed.");
         if (pendq) {
             ipc_mutex_lock(client->lock);
             free_pending_index(client, pendq->index);
@@ -1358,7 +1358,7 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
         return -1;
     }
 
-    LOG_DEBUG("ipc client call success.");
+    LOG_DEBUG("ssn client call success.");
 
     ssn_client_unref(client);
     return 0;
@@ -1396,15 +1396,15 @@ int ssn_client_message (ssn_client_t *client, const ssn_url_ref_t *url, const ss
     ssn_header_t *ipc_hdr;
 
     if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ipc client message: invalid client handle.");
+        LOG_ERROR("ssn client message: invalid client handle.");
         return -1;
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc client message: invalid url.");
+        LOG_ERROR("ssn client message: invalid url.");
         return -1;
     }
     if (!data) {
-        LOG_ERROR("ipc client message: invalid data.");
+        LOG_ERROR("ssn client message: invalid data.");
         return -1;
     }
 
@@ -1420,11 +1420,11 @@ int ssn_client_message (ssn_client_t *client, const ssn_url_ref_t *url, const ss
     ipc_mutex_unlock(client->lock);
 
     if (ret) {
-        LOG_DEBUG("ipc client message success.");
+        LOG_DEBUG("ssn client message success.");
         ssn_client_unref(client);
         return 0;
     } else {
-        LOG_ERROR("ipc client message failed.");
+        LOG_ERROR("ssn client message failed.");
         ssn_client_unref(client);
         return -1;
     }
@@ -1440,7 +1440,7 @@ int ssn_client_message (ssn_client_t *client, const ssn_url_ref_t *url, const ss
 void ssn_client_set_on_message (ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg)
 {
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client set on message: invalid client handle.");
+        LOG_ERROR("ssn client set on message: invalid client handle.");
         return;
     }
 
@@ -1459,7 +1459,7 @@ void ssn_client_set_on_message (ssn_client_t *client, ssn_client_msg_handler_t c
 void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg)
 {
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client set on publish: invalid client handle.");
+        LOG_ERROR("ssn client set on publish: invalid client handle.");
         return;
     }
     ssn_client_ref(client);
@@ -1483,7 +1483,7 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
     struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
 
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client poll: invalid client handle.");
+        LOG_ERROR("ssn client poll: invalid client handle.");
         return -1;
     }
 
@@ -1506,7 +1506,7 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
                 ssn_transport_destroy(client->transport);
                 client->transport = NULL;
             }
-            LOG_ERROR("ipc client poll: connection of client %d lost", client->cid);
+            LOG_ERROR("ssn client poll: connection of client %d lost", client->cid);
         }
         cnt = 0;
     }
@@ -1528,7 +1528,7 @@ void ssn_client_run(ssn_client_t *client)
     sigset_t empty_mask;
 
     if (!client || !client->valid) {
-        LOG_ERROR("ipc client run: invalid client handle.");
+        LOG_ERROR("ssn client run: invalid client handle.");
         return;
     }
 
@@ -1547,14 +1547,14 @@ void ssn_client_run(ssn_client_t *client)
         if (cnt > 0) {
             if (!ssn_client_process_events(client, &fds)) {
                 ssn_client_close(client);
-                LOG_ERROR("ipc client run: connection of client %d lost", client->cid);
+                LOG_ERROR("ssn client run: connection of client %d lost", client->cid);
                 // 减少引用计数
                 ssn_client_unref(client);
                 return;
             }
         }
     }
-    LOG_ERROR("ipc client run: exit invalid.");
+    LOG_ERROR("ssn client run: exit invalid.");
     
     // 减少引用计数
     ssn_client_unref(client);

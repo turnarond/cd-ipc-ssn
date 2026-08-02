@@ -2,7 +2,7 @@
 
 ## 1. 线程安全增强概述
 
-本文档描述了 ipcssn 框架的线程安全实现细节，包括引用计数机制、锁机制优化和状态管理等方面的改进。
+本文档描述了 ssn 框架的线程安全实现细节，包括引用计数机制、锁机制优化和状态管理等方面的改进。
 
 ## 2. 核心线程安全机制
 
@@ -10,10 +10,10 @@
 
 为了解决多线程环境下客户端资源的安全管理问题，我们实现了引用计数机制：
 
-- **引用计数字段**：在 `ipc_client_t` 结构体中添加了 `ref_count` 字段，用于跟踪客户端的引用次数。
+- **引用计数字段**：在 `ssn_client_t` 结构体中添加了 `ref_count` 字段，用于跟踪客户端的引用次数。
 - **引用计数操作**：
-  - `ipc_client_ref(client)`：增加客户端的引用计数
-  - `ipc_client_unref(client)`：减少客户端的引用计数，当引用计数为0且客户端状态为无效时，真正释放资源
+  - `ssn_client_ref(client)`：增加客户端的引用计数
+  - `ssn_client_unref(client)`：减少客户端的引用计数，当引用计数为0且客户端状态为无效时，真正释放资源
 
 ### 2.2 锁机制优化
 
@@ -31,31 +31,31 @@
 
 所有公共 API 函数都进行了线程安全处理：
 
-- **ipc_client_create**：初始化引用计数为1
-- **ipc_client_close**：设置客户端为无效状态，从全局列表中移除，减少引用计数
-- **ipc_client_connect**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_disconnect**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_poll**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_run**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_subscribe**：通过 `ipc_client_request` 增加引用计数，操作完成后减少引用计数
-- **ipc_client_unsubscribe**：通过 `ipc_client_request` 增加引用计数，操作完成后减少引用计数
-- **ipc_client_call**：通过 `ipc_client_call_ex` 增加引用计数，操作完成后减少引用计数
-- **ipc_client_message**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_set_on_message**：增加引用计数，操作完成后减少引用计数
-- **ipc_client_send_timeout**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_create**：初始化引用计数为1
+- **ssn_client_close**：设置客户端为无效状态，从全局列表中移除，减少引用计数
+- **ssn_client_connect**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_disconnect**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_poll**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_run**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_subscribe**：通过 `ssn_client_request` 增加引用计数，操作完成后减少引用计数
+- **ssn_client_unsubscribe**：通过 `ssn_client_request` 增加引用计数，操作完成后减少引用计数
+- **ssn_client_call**：通过 `ssn_client_call` 增加引用计数，操作完成后减少引用计数
+- **ssn_client_message**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_set_on_message**：增加引用计数，操作完成后减少引用计数
+- **ssn_client_send_timeout**：增加引用计数，操作完成后减少引用计数
 
 ## 4. 测试策略
 
 ### 4.1 线程安全测试
 
-创建了 `test_ipc_thread_safety.c` 测试文件，测试多线程环境下客户端的使用情况：
+创建了 `test_ssn_thread_safety.c` 测试文件，测试多线程环境下客户端的使用情况：
 
 - **测试场景**：创建多个线程，每个线程创建一个客户端，执行连接、RPC调用、消息发送、轮询等操作。
 - **测试目标**：验证在多线程环境下，客户端的操作是否安全，是否会出现竞态条件或崩溃。
 
 ### 4.2 并发压力测试
 
-创建了 `test_ipc_stress.c` 测试文件，测试高并发场景下的稳定性：
+创建了 `test_ssn_stress.c` 测试文件，测试高并发场景下的稳定性：
 
 - **测试场景**：创建大量线程（50个），每个线程执行大量操作（1000次迭代）。
 - **测试目标**：验证在高并发场景下，系统的稳定性和性能。
@@ -66,8 +66,8 @@
 ### 5.1 线程安全使用指南
 
 1. **客户端创建和销毁**：
-   - 使用 `ipc_client_create` 创建客户端，使用 `ipc_client_close` 销毁客户端。
-   - 不要在多个线程中同时调用 `ipc_client_close`。
+   - 使用 `ssn_client_create` 创建客户端，使用 `ssn_client_close` 销毁客户端。
+   - 不要在多个线程中同时调用 `ssn_client_close`。
 
 2. **并发操作**：
    - 可以在多个线程中同时使用同一个客户端实例。
@@ -75,7 +75,7 @@
 
 3. **回调函数**：
    - 回调函数可能在不同的线程中执行，需要确保回调函数本身是线程安全的。
-   - 回调函数中不要调用 `ipc_client_close`，以免造成死锁。
+   - 回调函数中不要调用 `ssn_client_close`，以免造成死锁。
 
 4. **错误处理**：
    - 检查 API 函数的返回值，处理可能的错误。
@@ -100,7 +100,7 @@
 ### 6.1 引用计数实现
 
 ```c
-void ipc_client_ref(ipc_client_t *client)
+void ssn_client_ref(ssn_client_t *client)
 {
     if (!client) {
         return;
@@ -110,7 +110,7 @@ void ipc_client_ref(ipc_client_t *client)
     ipc_mutex_unlock(client->lock);
 }
 
-void ipc_client_unref(ipc_client_t *client)
+void ssn_client_unref(ssn_client_t *client)
 {
     if (!client) {
         return;
@@ -137,8 +137,8 @@ void ipc_client_unref(ipc_client_t *client)
 ### 6.2 客户端关闭流程
 
 1. 设置客户端为无效状态：`client->valid = false`
-2. 从全局客户端列表中移除：`DELETE_FROM_LIST(client, g_ipc_client_list)`
-3. 减少引用计数：`ipc_client_unref(client)`
+2. 从全局客户端列表中移除：`DELETE_FROM_LIST(client, g_ssn_client_list)`
+3. 减少引用计数：`ssn_client_unref(client)`
 4. 当引用计数为0时，真正释放资源
 
 ### 6.3 线程安全的状态转换
@@ -149,11 +149,11 @@ void ipc_client_unref(ipc_client_t *client)
 
 ## 7. 结论
 
-通过实现引用计数机制、优化锁机制和改进状态管理，ipcssn 框架现在能够在多线程环境下安全运行。新的线程安全实现解决了以下问题：
+通过实现引用计数机制、优化锁机制和改进状态管理，ssn 框架现在能够在多线程环境下安全运行。新的线程安全实现解决了以下问题：
 
 1. **竞态条件**：通过引用计数和锁机制，避免了多线程环境下的竞态条件。
 2. **死锁**：通过细粒度锁和合理的锁获取顺序，避免了死锁问题。
 3. **资源泄露**：通过引用计数机制，确保资源在不再使用时被正确释放。
 4. **崩溃风险**：通过状态管理和有效性检查，避免了在客户端关闭后使用客户端的情况。
 
-这些改进使得 ipcssn 框架在高并发场景下更加稳定可靠，能够满足边缘计算环境中的IPC需求。
+这些改进使得 ssn 框架在高并发场景下更加稳定可靠，能够满足边缘计算环境中的IPC需求。

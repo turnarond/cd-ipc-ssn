@@ -1,5 +1,5 @@
 /*
- * ipc_client.h
+ * ssn_client.h
  */
 
 #ifndef SSN_CLIENT_H

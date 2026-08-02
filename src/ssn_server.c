@@ -187,7 +187,7 @@ static int ssn_server_url_hash(const ssn_url_ref_t *url)
 /*
  * Find client
  */
-static ssn_server_cli_t *ipc_server_cli_find(ssn_server_t *server, ssn_peer_id_t id)
+static ssn_server_cli_t *ssn_server_cli_find(ssn_server_t *server, ssn_peer_id_t id)
 {
     int hash = ssn_server_cli_hash(id);
     ssn_server_cli_t *cli;
@@ -211,7 +211,7 @@ static ssn_peer_id_t ssn_server_cli_newid(ssn_server_t *server)
     do {
         id = server->ncid;
         server->ncid++;
-    } while (ipc_server_cli_find(server, id));
+    } while (ssn_server_cli_find(server, id));
 
     return  (id);
 }
@@ -219,7 +219,7 @@ static ssn_peer_id_t ssn_server_cli_newid(ssn_server_t *server)
 /*
  * Initialize a client
  */
-static void ipc_server_cli_init(ssn_server_t *server, ssn_server_cli_t *cli)
+static void ssn_server_cli_init(ssn_server_t *server, ssn_server_cli_t *cli)
 {
     int hash;
 
@@ -229,7 +229,7 @@ static void ipc_server_cli_init(ssn_server_t *server, ssn_server_cli_t *cli)
 
     cli->hst.alive = server->handshake_timeout;
     INSERT_TO_HEADER(&cli->hst, server->hst_h);
-    LOG_DEBUG("ipc server cli init success");
+    LOG_DEBUG("ssn server cli init success");
 }
 
 /*
@@ -257,7 +257,7 @@ static void ssn_server_cli_destroy(ssn_server_t *server, ssn_server_cli_t *cli)
         cli->transport = NULL;
     }
     free(cli);
-    LOG_DEBUG("ipc server cli destroy success.");
+    LOG_DEBUG("ssn server cli destroy success.");
 }
 
 /*
@@ -269,13 +269,13 @@ bool ssn_server_peer_close(ssn_server_t *server, ssn_peer_id_t id)
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server peer close failed: invalid server handle.");
+        LOG_ERROR("ssn server peer close failed: invalid server handle.");
         return  (false);
     }
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     if (cli) {
         if (cli->transport) {
             ssn_transport_disconnect(cli->transport);
@@ -287,7 +287,7 @@ bool ssn_server_peer_close(ssn_server_t *server, ssn_peer_id_t id)
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server peer close success: cid is %d.", id);
+    LOG_DEBUG("ssn server peer close success: cid is %d.", id);
     return  (ret);
 }
 
@@ -303,7 +303,7 @@ static bool ssn_server_cli_sendmsg(ssn_server_cli_t *cli, ssn_header_t *ipc_hdr,
         if (cli->transport) {
             ssn_transport_disconnect(cli->transport);
         }
-        LOG_ERROR("ipc server sendmsg faield, cli %d", cli->id);
+        LOG_ERROR("ssn server sendmsg faield, cli %d", cli->id);
     }
     return ret;
 }
@@ -339,31 +339,31 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
     ssn_server_t *server;
 
     if (name == NULL) {
-        LOG_ERROR("ipc server create with options: invalid name.");
+        LOG_ERROR("ssn server create with options: invalid name.");
         return NULL;
     }
 
     server = (ssn_server_t *)calloc(1, sizeof(ssn_server_t));
     if (!server) {
-        LOG_ERROR("ipc server create with options: calloc failed, errno is %d.", errno);
+        LOG_ERROR("ssn server create with options: calloc failed, errno is %d.", errno);
         return NULL;
     }
 
     server->transport = NULL;
 
     if (ipc_mutex_init(&server->lock)) {
-        LOG_ERROR("ipc server create with options: init mutex failed, errno %d", errno);
+        LOG_ERROR("ssn server create with options: init mutex failed, errno %d", errno);
         goto error;
     }
 
     if (ipc_event_pair_create(&server->evtfd) != 0) {
-        LOG_ERROR("ipc server create with options: event pair create failed, errno %d", errno);
+        LOG_ERROR("ssn server create with options: event pair create failed, errno %d", errno);
         goto error;
     }
 
     server->sendbuf = malloc(SSN_MAX_PACKET_SIZE * 2);
     if (!server->sendbuf) {
-        LOG_ERROR("ipc server create with options: sendbuf malloc failed, errno is %d", errno);
+        LOG_ERROR("ssn server create with options: sendbuf malloc failed, errno is %d", errno);
         goto error;
     }
 
@@ -386,19 +386,19 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
     /* 创建协议层实例 */
     server->rpc_rep = ssn_rpc_rep_create(NULL, server);
     if (!server->rpc_rep) {
-        LOG_ERROR("ipc server create: rpc_rep create failed");
+        LOG_ERROR("ssn server create: rpc_rep create failed");
         goto error;
     }
 
     server->pubsub_pub = ssn_pubsub_pub_create();
     if (!server->pubsub_pub) {
-        LOG_ERROR("ipc server create: pubsub_pub create failed");
+        LOG_ERROR("ssn server create: pubsub_pub create failed");
         goto error;
     }
 
     server->msg_recv = ssn_msg_recv_create(NULL, server);
     if (!server->msg_recv) {
-        LOG_ERROR("ipc server create: msg_recv create failed");
+        LOG_ERROR("ssn server create: msg_recv create failed");
         goto error;
     }
 
@@ -410,7 +410,7 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
 
     ipc_mutex_unlock(g_ssn_server_lock);
 
-    LOG_DEBUG("ipc server create with option success, name is %s", name);
+    LOG_DEBUG("ssn server create with option success, name is %s", name);
 
     return  (server);
 
@@ -422,7 +422,7 @@ error:
     if (server->evtfd) ipc_event_pair_destroy(server->evtfd);
     ipc_mutex_destroy(server->lock);
     free(server);
-    LOG_ERROR("ipc server create with options: failed, errno %d", errno);
+    LOG_ERROR("ssn server create with options: failed, errno %d", errno);
     return NULL;
 }
 
@@ -474,13 +474,13 @@ bool ssn_server_start(ssn_server_t *server)
         if (stat(server->srv_name, &st_uds) == 0) {
             if (S_ISSOCK(st_uds.st_mode)) {
                 unlink(server->srv_name);
-                LOG_INFO("ipc server start: delete sock file %s.", server->srv_name);
+                LOG_INFO("ssn server start: delete sock file %s.", server->srv_name);
             } else {
-                LOG_ERROR("ipc server start: file %s is not a sock file.", server->srv_name);
+                LOG_ERROR("ssn server start: file %s is not a sock file.", server->srv_name);
                 return false;
             }
         } else if (errno != ENOENT) {
-            LOG_ERROR("ipc server start: stat file %s exist but failed, errno %d.", server->srv_name, errno);
+            LOG_ERROR("ssn server start: stat file %s exist but failed, errno %d.", server->srv_name, errno);
             return false;
         }
     }
@@ -526,7 +526,7 @@ bool ssn_server_start(ssn_server_t *server)
     ssn_pubsub_pub_bind(server->pubsub_pub, server->transport);
     ssn_msg_recv_bind(server->msg_recv, server->transport);
 
-    LOG_DEBUG("ipc server start success.");
+    LOG_DEBUG("ssn server start success.");
 
     return  (true);
 
@@ -536,7 +536,7 @@ error:
         server->transport = NULL;
     }
 
-    LOG_ERROR("ipc server start failed.");
+    LOG_ERROR("ssn server start failed.");
 
     return  (false);
 }
@@ -552,14 +552,14 @@ error:
 int ssn_server_address(ssn_server_t *server, struct sockaddr *addr, socklen_t *namelen)
 {
     if (!server || !server->valid || !server->transport) {
-        LOG_ERROR("ipc server address: invalid server handle.");
+        LOG_ERROR("ssn server address: invalid server handle.");
         return  (false);
     }
 
     // 使用transport的get_address方法获取地址
     ssn_address_t ssn_addr;
     if (!ssn_transport_get_address(server->transport, &ssn_addr)) {
-        LOG_ERROR("ipc server address: get_address failed");
+        LOG_ERROR("ssn server address: get_address failed");
         return  (false);
     }
 
@@ -574,11 +574,11 @@ int ssn_server_address(ssn_server_t *server, struct sockaddr *addr, socklen_t *n
         memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
         *namelen = sizeof(struct sockaddr_in6);
     } else {
-        LOG_ERROR("ipc server address: unsupported address type");
+        LOG_ERROR("ssn server address: unsupported address type");
         return  (false);
     }
 
-    LOG_DEBUG("ipc server address success.");
+    LOG_DEBUG("ssn server address success.");
     return  (true);
 }
 
@@ -595,7 +595,7 @@ void ssn_server_destroy(ssn_server_t *server)
     ssn_server_cmd_t *cmd, *cmd_temp;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server destroy: invalid server handle.");
+        LOG_ERROR("ssn server destroy: invalid server handle.");
         return;
     }
 
@@ -660,7 +660,7 @@ void ssn_server_destroy(ssn_server_t *server)
     unlink(server->srv_name);
 
     free(server);
-    LOG_DEBUG("ipc server destory success.");
+    LOG_DEBUG("ssn server destory success.");
 }
 
 /**
@@ -690,7 +690,7 @@ int ssn_server_peer_count (ssn_server_t *server)
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server peer count: invalid server handle.");
+        LOG_ERROR("ssn server peer count: invalid server handle.");
         return  (0);
     }
 
@@ -706,7 +706,7 @@ int ssn_server_peer_count (ssn_server_t *server)
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server peer count: count is %d.", cnt);
+    LOG_DEBUG("ssn server peer count: count is %d.", cnt);
 
     return  (cnt);
 }
@@ -724,11 +724,11 @@ bool ssn_server_is_subscribed (ssn_server_t *server, const ssn_url_ref_t *url)
     int i;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server is subscribe: invalid server handle.");
+        LOG_ERROR("ssn server is subscribe: invalid server handle.");
         return  (false);
     }
     if (!url || !url->url || !url->url_len) {
-        LOG_ERROR("ipc server is subscribe: invalid url handle.");
+        LOG_ERROR("ssn server is subscribe: invalid url handle.");
         return  (false);
     }
 
@@ -741,7 +741,7 @@ bool ssn_server_is_subscribed (ssn_server_t *server, const ssn_url_ref_t *url)
             }
             if (ssn_server_cli_sub_match(cli, url)) {
                 ipc_mutex_unlock(server->lock);
-                LOG_DEBUG("ipc server is subscribed, true.");
+                LOG_DEBUG("ssn server is subscribed, true.");
                 return  (true);
             }
         }
@@ -749,7 +749,7 @@ bool ssn_server_is_subscribed (ssn_server_t *server, const ssn_url_ref_t *url)
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server is subscribed, false.");
+    LOG_DEBUG("ssn server is subscribed, false.");
 
     return  (false);
 }
@@ -770,11 +770,11 @@ static bool ssn_server_do_publish (ssn_server_t *server, const ssn_url_ref_t *ur
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server publish: invalid server handle.");
+        LOG_ERROR("ssn server publish: invalid server handle.");
         return  (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc server publish: invalid url.");
+        LOG_ERROR("ssn server publish: invalid url.");
         return  (false);
     }
 
@@ -795,7 +795,7 @@ static bool ssn_server_do_publish (ssn_server_t *server, const ssn_url_ref_t *ur
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server publish success.");
+    LOG_DEBUG("ssn server publish success.");
 
     return  (true);
 }
@@ -831,11 +831,11 @@ bool ssn_server_add_method (ssn_server_t *server,
     ssn_server_cmd_t *cmd, *need_free = NULL;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server add method: invalid server handle.");
+        LOG_ERROR("ssn server add method: invalid server handle.");
         return  (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/' || !callback) {
-        LOG_ERROR("ipc server add method: invalid url.");
+        LOG_ERROR("ssn server add method: invalid url.");
         return  (false);
     }
 
@@ -850,7 +850,7 @@ bool ssn_server_add_method (ssn_server_t *server,
 
     cmd = (ssn_server_cmd_t *)calloc(1, sizeof(ssn_server_cmd_t) + url->url_len);
     if (!cmd) {
-        LOG_ERROR("ipc server add method: calloc failed, errno is %d.", errno);
+        LOG_ERROR("ssn server add method: calloc failed, errno is %d.", errno);
         return  (false);
     }
 
@@ -881,7 +881,7 @@ bool ssn_server_add_method (ssn_server_t *server,
         free(need_free);
     }
 
-    LOG_DEBUG("ipc server add method success.");
+    LOG_DEBUG("ssn server add method success.");
 
     return  (true);
 }
@@ -900,11 +900,11 @@ void ssn_server_remove_method (ssn_server_t *server, const ssn_url_ref_t *url)
     ssn_server_cmd_t *cmd, *cmd_temp, **header;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server remove method: invalid server handle.");
+        LOG_ERROR("ssn server remove method: invalid server handle.");
         return;
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc server remove method: invalid url.");
+        LOG_ERROR("ssn server remove method: invalid url.");
         return;
     }
 
@@ -945,7 +945,7 @@ void ssn_server_remove_method (ssn_server_t *server, const ssn_url_ref_t *url)
         free(cmd);
     }
 
-    LOG_DEBUG("ipc server remove method %.*s success.", (int)url->url_len, url->url);
+    LOG_DEBUG("ssn server remove method %.*s success.", (int)url->url_len, url->url);
 }
 
 /**
@@ -962,19 +962,19 @@ int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sock
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server peer address: invalid server handle.");
+        LOG_ERROR("ssn server peer address: invalid server handle.");
         return  (false);
     }
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     if (!cli || !cli->transport) {
         ipc_mutex_unlock(server->lock);
         if (!cli) {
-            LOG_ERROR("ipc server peer address: client not found for id %d.", id);
+            LOG_ERROR("ssn server peer address: client not found for id %d.", id);
         } else {
-            LOG_ERROR("ipc server peer address: invalid client handle %d.", cli->id);
+            LOG_ERROR("ssn server peer address: invalid client handle %d.", cli->id);
         }
         return  (false);
     }
@@ -983,7 +983,7 @@ int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sock
     ssn_address_t ssn_addr;
     if (!ssn_transport_get_address(cli->transport, &ssn_addr)) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server peer address: get_address failed");
+        LOG_ERROR("ssn server peer address: get_address failed");
         return  (false);
     }
 
@@ -999,7 +999,7 @@ int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sock
         *namelen = sizeof(struct sockaddr_in6);
     } else {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server peer address: unsupported address type");
+        LOG_ERROR("ssn server peer address: unsupported address type");
         return  (false);
     }
 
@@ -1026,16 +1026,16 @@ int ssn_server_response (ssn_server_t *server, ssn_peer_id_t id,
     ssn_header_t *ipc_hdr;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server response: invalid server handle.");
+        LOG_ERROR("ssn server response: invalid server handle.");
         return  (false);
     }
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     if (!cli) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server response: invalid cli %d handle.", id);
+        LOG_ERROR("ssn server response: invalid cli %d handle.", id);
         return  (false);
     }
 
@@ -1046,9 +1046,9 @@ int ssn_server_response (ssn_server_t *server, ssn_peer_id_t id,
     ipc_mutex_unlock(server->lock);
 
     if (ret) {
-        LOG_DEBUG("ipc server response success: cid %d.", id);
+        LOG_DEBUG("ssn server response success: cid %d.", id);
     } else {
-        LOG_ERROR("ipc server response failed: cid %d.", id);
+        LOG_ERROR("ssn server response failed: cid %d.", id);
     }
 
     return  (ret);
@@ -1069,16 +1069,16 @@ bool ssn_server_cli_keepalive (ssn_server_t *server, ssn_peer_id_t id, int keepa
     int count = 3, idle = server->keepalive_timeout;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server cli keepalive: invalid server handle.");
+        LOG_ERROR("ssn server cli keepalive: invalid server handle.");
         return  (false);
     }
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     if (!cli || !cli->transport) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server cli keepalive: invalid cli of id %d.", id);
+        LOG_ERROR("ssn server cli keepalive: invalid cli of id %d.", id);
         return  (false);
     }
 
@@ -1086,7 +1086,7 @@ bool ssn_server_cli_keepalive (ssn_server_t *server, ssn_peer_id_t id, int keepa
 
     ipc_mutex_unlock(server->lock);
 
-    LOG_DEBUG("ipc server cli keepalive %d success.", id);
+    LOG_DEBUG("ssn server cli keepalive %d success.", id);
 
     return  (true);
 }
@@ -1105,7 +1105,7 @@ int ssn_server_peer_list (ssn_server_t *server, ssn_peer_id_t ids[], int max_cnt
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid || !ids || max_cnt <= 0) {
-        LOG_ERROR("ipc server peer list: invalid server handle.");
+        LOG_ERROR("ssn server peer list: invalid server handle.");
         return  (0);
     }
 
@@ -1122,7 +1122,7 @@ int ssn_server_peer_list (ssn_server_t *server, ssn_peer_id_t ids[], int max_cnt
         }
     }
 
-    LOG_DEBUG("ipc server peer list success, cnt is %d.", cnt);
+    LOG_DEBUG("ssn server peer list success, cnt is %d.", cnt);
 
 out:
     ipc_mutex_unlock(server->lock);
@@ -1146,7 +1146,7 @@ bool ssn_server_cli_send_timeout (ssn_server_t *server, ssn_peer_id_t id, int ti
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server send timeout failed: invalid server handle.");
+        LOG_ERROR("ssn server send timeout failed: invalid server handle.");
         return  (false);
     }
 
@@ -1158,7 +1158,7 @@ bool ssn_server_cli_send_timeout (ssn_server_t *server, ssn_peer_id_t id, int ti
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     
     if (cli && cli->transport) {
         // 发送超时已在transport创建时设置
@@ -1166,7 +1166,7 @@ bool ssn_server_cli_send_timeout (ssn_server_t *server, ssn_peer_id_t id, int ti
     ipc_mutex_unlock(server->lock);
 
 
-    LOG_DEBUG("ipc server cli send timeout of cid %d success.", id);
+    LOG_DEBUG("ssn server cli send timeout of cid %d success.", id);
 
     return  (cli ? true : false);
 }
@@ -1188,24 +1188,24 @@ int ssn_server_cli_do_message (ssn_server_t *server, ssn_peer_id_t id, const ssn
     ssn_header_t *ipc_hdr;
 
     if (!server || !server->valid) {
-        LOG_ERROR("ipc server do message: invalid server handle.");
+        LOG_ERROR("ssn server do message: invalid server handle.");
         return  (false);
     }
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ipc server do message: invalid url.");
+        LOG_ERROR("ssn server do message: invalid url.");
         return  (false);
     }
     if (!data) {
-        LOG_ERROR("ipc server do message: invalid data.");
+        LOG_ERROR("ssn server do message: invalid data.");
         return  (false);
     }
 
     ipc_mutex_lock(server->lock);
 
-    cli = ipc_server_cli_find(server, id);
+    cli = ssn_server_cli_find(server, id);
     if (!cli) {
         ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ipc server do message: not found cli %d.", id);
+        LOG_ERROR("ssn server do message: not found cli %d.", id);
         return  (false);
     }
 
@@ -1216,9 +1216,9 @@ int ssn_server_cli_do_message (ssn_server_t *server, ssn_peer_id_t id, const ssn
     ipc_mutex_unlock(server->lock);
 
     if (ret) {
-        LOG_DEBUG("ipc server do message to cid %d success.", id);
+        LOG_DEBUG("ssn server do message to cid %d success.", id);
     } else {
-        LOG_ERROR("ipc server do message to cid %d failed.", id);
+        LOG_ERROR("ssn server do message to cid %d failed.", id);
     }
 
     return  (ret);
@@ -1266,7 +1266,7 @@ static int ssn_server_fds (ssn_server_t *server, fd_set *rfds)
     ssn_server_cli_t *cli;
 
     if (!server || !server->valid || !server->transport) {
-        LOG_ERROR("ipc server fds: invalid server handle.");
+        LOG_ERROR("ssn server fds: invalid server handle.");
         return  (-1);
     }
 
@@ -1310,7 +1310,7 @@ static int ssn_server_fds (ssn_server_t *server, fd_set *rfds)
  * @param url URL引用
  * @return 匹配的命令指针，未匹配返回NULL
  */
-static ssn_server_cmd_t *ipc_server_cmd_match (ssn_server_t *server, const ssn_url_ref_t *url)
+static ssn_server_cmd_t *ssn_server_cmd_match (ssn_server_t *server, const ssn_url_ref_t *url)
 {
     int hash = ssn_server_url_hash(url);
     ssn_server_cmd_t *cmd;
@@ -1376,7 +1376,7 @@ static bool ssn_server_handle_rpc_request(ssn_server_t *server, ssn_server_cli_t
     ssn_header_t *send_hdr;
     
     if (url->url_len && url->url[0] == '/') {
-        cmd = ipc_server_cmd_match(server, url);
+        cmd = ssn_server_cmd_match(server, url);
         if (cmd) {
             callback = cmd->onrpc;
             ipc_mutex_unlock(server->lock);
@@ -1604,7 +1604,7 @@ static void ipc_server_handle_new_connection(ssn_server_t *server, const fd_set 
                 ssn_stream_init(&cli->recv);
 
                 ipc_mutex_lock(server->lock);
-                ipc_server_cli_init(server, cli);
+                ssn_server_cli_init(server, cli);
                 ipc_mutex_unlock(server->lock);
                 
                 // 立即处理客户端发送的第一个消息（服务信息请求）

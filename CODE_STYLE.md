@@ -30,7 +30,7 @@
 ### 1.5 错误处理
 - 错误处理必须使用日志记录（`LOG_ERROR`、`LOG_WARNING` 等）
 - 函数返回值必须明确表示成功或失败
-- 错误码必须使用 `ipc_error.h` 中定义的标准错误码
+- 错误码必须使用 `ssn_error.h` 中定义的标准错误码
 
 ### 1.6 代码长度
 - 函数长度不应超过 200 行
@@ -82,13 +82,13 @@
 ### 4.1 函数定义示例
 ```c
 /**
- * @brief 初始化 IPC 服务器
+ * @brief 初始化 SSN 服务器
  * 
  * @param server 服务器实例
  * @param name 服务器名称
  * @return true 成功，false 失败
  */
-bool ipc_server_init(ipc_server_t *server, const char *name)
+bool ssn_server_init(ssn_server_t *server, const char *name)
 {
     if (!server || !name) {
         LOG_ERROR("Invalid parameters");
@@ -109,21 +109,20 @@ bool ipc_server_init(ipc_server_t *server, const char *name)
 ### 4.2 结构体定义示例
 ```c
 /**
- * @brief IPC 客户端结构体
+ * @brief SSN 客户端结构体
  */
-typedef struct ipc_client {
+typedef struct ssn_client {
     bool valid;           // 客户端是否有效
     bool connected;       // 客户端是否已连接
     int sock;             // 套接字描述符
-    ipc_stream_ctx_t recv; // 接收缓冲区
     // 其他成员...
-} ipc_client_t;
+} ssn_client_t;
 ```
 
 ### 4.3 错误处理示例
 ```c
 if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
     LOG_ERROR("Connect failed: %s", strerror(errno));
-    return IPC_ERR_NET_CONNECT;
+    return SSN_ECODE_NET_CONNECT;
 }
 ```
