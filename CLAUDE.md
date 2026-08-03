@@ -49,10 +49,23 @@ cmake .. && make -j$(nproc)
 
 ## 命名与代码规范
 
+### 命名
 - 公开符号统一 `ssn_` 前缀；VSI 平台抽象内部保留 `ipc_` 前缀；类型 `ssn_<module>_t`；函数 `ssn_<module>_<action>`；宏 `SSN_UPPER_CASE`。
-- 完整代码风格见 `CODE_STYLE.md`（4 空格缩进、snake_case、头文件 `#ifndef` 保护、错误必须用 `LOG_ERROR` 等记录、函数 ≤ 200 行、行长 ≤ 120 字符）。
+- 变量与函数使用 snake_case；结构体用 `typedef struct` 定义并加 `_t` 后缀，成员按类型大小排序（大的在前）。
+
+### 代码风格
+- 缩进：4 空格，不使用制表符；`{` 放在行尾、`}` 放在新行；控制语句（if/for/while/switch）必须使用大括号。
+- 注释：文件头注释说明文件功能；函数注释说明功能/参数/返回值；行内注释用 `//`（与代码至少一个空格）；长注释用 `/* */`。
+- 头文件：包含顺序为系统头文件 → 第三方头文件 → 自定义头文件；必须使用 `#ifndef`/`#define`/`#endif` 保护。
+- 错误处理：错误必须用 `LOG_ERROR`/`LOG_WARNING` 等日志记录；错误码统一使用 `ssn_error.h` 中的 `SSN_ECODE_*`；返回值明确表示成功/失败。
+- 长度限制：函数长度 ≤ 200 行；每行 ≤ 120 字符。
+
+### 工具
+- 使用 clang-format（`.clang-format`）统一格式化代码；用 cppcheck 做静态代码分析；定期代码审查。
+
+### 相关文档
 - 线程安全设计见 `THREAD_SAFETY.md`：`ssn_client` 采用引用计数 + 细粒度锁 + `valid` 状态标记；回调可能在其他线程执行，回调中不得调用 `ssn_client_close`。
-- 注意：`CODE_STYLE.md`、`THREAD_SAFETY.md` 正文中仍残留旧 `ipc_` 命名示例，以代码实际为准。
+- 注意：`THREAD_SAFETY.md` 正文中仍残留旧 `ipc_` 命名示例，以代码实际为准。
 
 ## 文档规范（必须遵守）
 
