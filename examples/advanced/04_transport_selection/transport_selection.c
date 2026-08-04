@@ -13,9 +13,9 @@
 #include "ssn_server.h"
 #include "util/ssn_log.h"
 
-#define UNIX_SOCKET_SERVER "/tmp/unix_socket_server"
-#define TCP_SERVER "127.0.0.1:8888"
-#define UDP_SERVER "127.0.0.1:9999"
+#define UNIX_SOCKET_SERVER "unix:///tmp/unix_socket_server"
+#define TCP_SERVER "tcp://127.0.0.1:8888"
+#define UDP_SERVER "udp://127.0.0.1:9999"
 
 /**
  * @brief Message handler callback

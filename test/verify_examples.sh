@@ -1,6 +1,8 @@
 #!/bin/bash
 # 验证全部 15 个示例构建（迁移后验证脚本）
-cd /mnt/d/personal/cd-ipc-ssn || exit 1
+# 以脚本位置定位仓库根目录（与调用时的 cwd 无关）
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.." || exit 1
 ok=0
 fail=0
 for d in examples/basic/01_hello_world examples/basic/02_rpc_call examples/basic/03_pubsub \

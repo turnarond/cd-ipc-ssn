@@ -12,7 +12,7 @@
 #include "ssn_client.h"
 #include "util/ssn_log.h"
 
-#define SERVER_ADDRESS "127.0.0.1:8888"
+#define SERVER_ADDRESS "tcp://127.0.0.1:8888"
 
 /**
  * @brief Message handler callback
