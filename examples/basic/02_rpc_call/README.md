@@ -29,7 +29,7 @@
 ### 服务器端 (server.c)
 
 1. **服务器创建与启动**
-   - 使用 `ipc_server_create_with_options` 创建服务器
+   - 使用 `ssn_server_create_with_options` 创建服务器
    - 设置服务器地址为 `unix:///tmp/rpc_server`
    - 启动服务器并开始监听
 
@@ -48,7 +48,7 @@
 ### 客户端 (client.c)
 
 1. **客户端创建与连接**
-   - 使用 `ipc_client_create` 创建客户端
+   - 使用 `ssn_client_create` 创建客户端
    - 连接到服务器地址 `unix:///tmp/rpc_server`
 
 2. **RPC 调用**
@@ -153,14 +153,14 @@ Waiting for all responses...
 
 ## 相关 API
 
-- `ipc_server_create_with_options` - 创建 IPC 服务器
-- `ipc_server_start` - 启动 IPC 服务器
-- `ipc_server_add_method` - 添加 RPC 方法
-- `ipc_server_set_connect_handler` - 设置连接处理回调
-- `ipc_server_poll` - 轮询服务器事件
-- `ipc_server_destroy` - 销毁 IPC 服务器
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_call` - 调用 RPC 方法
-- `ipc_client_poll` - 轮询客户端事件
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_server_create_with_options` - 创建 IPC 服务器
+- `ssn_server_start` - 启动 IPC 服务器
+- `ssn_server_add_method` - 添加 RPC 方法
+- `ssn_server_set_connect_handler` - 设置连接处理回调
+- `ssn_server_poll` - 轮询服务器事件
+- `ssn_server_destroy` - 销毁 IPC 服务器
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_call` - 调用 RPC 方法
+- `ssn_client_poll` - 轮询客户端事件
+- `ssn_client_close` - 关闭 IPC 客户端

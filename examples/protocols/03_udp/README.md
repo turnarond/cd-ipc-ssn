@@ -27,8 +27,8 @@
 ### 服务器端 (server.c)
 
 1. **服务器创建与启动**
-   - 使用 `ipc_server_create_with_options` 创建服务器
-   - 设置服务器地址为 `udp://127.0.0.1:8889`
+   - 使用 `ssn_server_create_with_options` 创建服务器
+   - 设置服务器地址为 `udp://127.0.0.1:9999`
    - 启动服务器并开始监听
 
 2. **消息处理**
@@ -42,8 +42,8 @@
 ### 客户端 (client.c)
 
 1. **客户端创建与连接**
-   - 使用 `ipc_client_create` 创建客户端
-   - 连接到服务器地址 `udp://127.0.0.1:8889`
+   - 使用 `ssn_client_create` 创建客户端
+   - 连接到服务器地址 `udp://127.0.0.1:9999`
 
 2. **消息发送**
    - 向服务器发送 "Hello from UDP client!" 消息
@@ -84,7 +84,7 @@ make run
 ```
 [INFO] [server.c:67] main(): Starting UDP server...
 [INFO] [server.c:84] main(): UDP server created successfully
-[INFO] [server.c:99] main(): UDP server started on udp://127.0.0.1:8889
+[INFO] [server.c:99] main(): UDP server started on udp://127.0.0.1:9999
 [INFO] [server.c:102] main(): Server running for 10 seconds...
 [INFO] [server.c:56] connect_handler(): Client connected: id=0
 [INFO] [server.c:38] message_handler(): Received message: Hello from UDP client!
@@ -98,7 +98,7 @@ make run
 ```
 [INFO] [client.c:44] main(): Starting UDP client...
 [INFO] [client.c:53] main(): UDP client created successfully
-[INFO] [client.c:63] main(): Connected to server: udp://127.0.0.1:8889
+[INFO] [client.c:63] main(): Connected to server: udp://127.0.0.1:9999
 [INFO] [client.c:71] main(): Sending message: Hello from UDP client!
 [INFO] [client.c:81] main(): Client closed
 ```
@@ -106,21 +106,21 @@ make run
 ## 注意事项
 
 - 本示例使用 UDP 作为传输协议
-- 服务器地址为 `udp://127.0.0.1:8889`
+- 服务器地址为 `udp://127.0.0.1:9999`
 - 服务器运行 10 秒后自动停止
 - 客户端发送消息后等待 2 秒后退出
 
 ## 相关 API
 
-- `ipc_server_create_with_options` - 创建 IPC 服务器
-- `ipc_server_start` - 启动 IPC 服务器
-- `ipc_server_set_message_handler` - 设置消息处理回调
-- `ipc_server_set_connect_handler` - 设置连接处理回调
-- `ipc_server_poll` - 轮询服务器事件
-- `ipc_server_destroy` - 销毁 IPC 服务器
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_send` - 发送消息
-- `ipc_client_set_on_message` - 设置消息处理回调
-- `ipc_client_poll` - 轮询客户端事件
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_server_create_with_options` - 创建 IPC 服务器
+- `ssn_server_start` - 启动 IPC 服务器
+- `ssn_server_set_message_handler` - 设置消息处理回调
+- `ssn_server_set_connect_handler` - 设置连接处理回调
+- `ssn_server_poll` - 轮询服务器事件
+- `ssn_server_destroy` - 销毁 IPC 服务器
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_message` - 发送消息
+- `ssn_client_set_on_message` - 设置消息处理回调
+- `ssn_client_poll` - 轮询客户端事件
+- `ssn_client_close` - 关闭 IPC 客户端

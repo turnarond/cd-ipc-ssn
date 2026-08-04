@@ -68,7 +68,7 @@ make run
 [INFO] [timeout.c:128] main(): Testing connection timeout...
 [INFO] [timeout.c:138] main(): Setting connection timeout to 2 seconds
 [INFO] [timeout.c:143] main(): Attempting to connect to non-existent server...
-[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_error.c:110] ipc_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_client.c:614] ipc_client_connect: Network read failed - recv failed after multiple retries
+[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_error.c:110] ssn_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_client.c:614] ssn_client_connect: Network read failed - recv failed after multiple retries
 [INFO] [timeout.c:46] timeout_handler(): Timeout occurred: Network read failed - recv failed after multiple retries
 [INFO] [timeout.c:153] main(): Connection timeout test completed
 [INFO] [timeout.c:158] main(): Testing RPC call timeout...
@@ -90,8 +90,7 @@ make run
 
 ## 相关 API
 
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_call` - 调用 RPC 方法
-- `ipc_client_set_on_timeout` - 设置超时处理回调
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_call` - 调用 RPC 方法
+- `ssn_client_close` - 关闭 IPC 客户端

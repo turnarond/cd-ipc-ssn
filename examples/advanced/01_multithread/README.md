@@ -27,12 +27,12 @@
 ### 服务器端 (server.c)
 
 1. **服务器创建与启动**
-   - 使用 `ipc_server_create_with_options` 创建服务器
+   - 使用 `ssn_server_create_with_options` 创建服务器
    - 设置服务器地址为 `unix:///tmp/multithread_server`
    - 启动服务器并开始监听
 
 2. **多线程处理**
-   - 主线程使用 `ipc_server_poll` 轮询服务器事件
+   - 主线程使用 `ssn_server_poll` 轮询服务器事件
    - 当接收到客户端消息时，在主线程中处理
 
 3. **消息处理**
@@ -47,7 +47,7 @@
    - 每个线程连接到服务器并发送多个请求
 
 2. **客户端连接与消息发送**
-   - 每个线程使用 `ipc_client_create` 创建客户端
+   - 每个线程使用 `ssn_client_create` 创建客户端
    - 连接到服务器地址 `unix:///tmp/multithread_server`
    - 每个线程发送 10 个消息
 
@@ -183,15 +183,15 @@ make run
 
 ## 相关 API
 
-- `ipc_server_create_with_options` - 创建 IPC 服务器
-- `ipc_server_start` - 启动 IPC 服务器
-- `ipc_server_set_message_handler` - 设置消息处理回调
-- `ipc_server_set_connect_handler` - 设置连接处理回调
-- `ipc_server_poll` - 轮询服务器事件
-- `ipc_server_destroy` - 销毁 IPC 服务器
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_send` - 发送消息
-- `ipc_client_set_on_message` - 设置消息处理回调
-- `ipc_client_poll` - 轮询客户端事件
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_server_create_with_options` - 创建 IPC 服务器
+- `ssn_server_start` - 启动 IPC 服务器
+- `ssn_server_set_message_handler` - 设置消息处理回调
+- `ssn_server_set_connect_handler` - 设置连接处理回调
+- `ssn_server_poll` - 轮询服务器事件
+- `ssn_server_destroy` - 销毁 IPC 服务器
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_call` - 调用 RPC 方法
+- `ssn_client_set_on_message` - 设置消息处理回调
+- `ssn_client_poll` - 轮询客户端事件
+- `ssn_client_close` - 关闭 IPC 客户端

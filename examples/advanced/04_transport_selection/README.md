@@ -97,8 +97,7 @@ make run
 
 ## 相关 API
 
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_set_send_timeout` - 设置发送超时
-- `ipc_client_set_recv_timeout` - 设置接收超时
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_send_timeout` - 设置发送超时
+- `ssn_client_close` - 关闭 IPC 客户端

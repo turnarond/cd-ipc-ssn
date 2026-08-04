@@ -71,7 +71,7 @@ make run
 [INFO] [error_handling.c:118] main(): Starting error handling example...
 [INFO] [error_handling.c:128] main(): Registering error handler
 [INFO] [error_handling.c:133] main(): Testing connection to non-existent server...
-[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_error.c:110] ipc_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_client.c:614] ipc_client_connect: Network read failed - recv failed after multiple retries
+[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_error.c:110] ssn_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_client.c:614] ssn_client_connect: Network read failed - recv failed after multiple retries
 [INFO] [error_handling.c:46] error_handler(): Error occurred: Network read failed - recv failed after multiple retries
 [INFO] [error_handling.c:143] main(): Connection failed as expected
 [INFO] [error_handling.c:148] main(): Testing timeout error...
@@ -84,7 +84,7 @@ make run
 [INFO] [error_handling.c:188] main(): Testing message sending error...
 [INFO] [error_handling.c:198] main(): Closing client
 [INFO] [error_handling.c:203] main(): Trying to send message after client close...
-[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_error.c:110] ipc_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/cd_ipc_client.c:903] ipc_client_send: invalid client handle.
+[ERROR] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_error.c:110] ssn_handle_error(): [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/ssn_client.c:903] ssn_client_message: invalid client handle.
 [INFO] [error_handling.c:46] error_handler(): Error occurred: invalid client handle.
 [INFO] [error_handling.c:213] main(): Message sending failed as expected
 [INFO] [error_handling.c:218] main(): Error handling example completed
@@ -99,9 +99,9 @@ make run
 
 ## 相关 API
 
-- `ipc_client_create` - 创建 IPC 客户端
-- `ipc_client_connect` - 连接到服务器
-- `ipc_client_call` - 调用 RPC 方法
-- `ipc_client_send` - 发送消息
-- `ipc_client_set_on_error` - 设置错误处理回调
-- `ipc_client_close` - 关闭 IPC 客户端
+- `ssn_client_create` - 创建 IPC 客户端
+- `ssn_client_connect` - 连接到服务器
+- `ssn_client_call` - 调用 RPC 方法
+- `ssn_client_message` - 发送消息
+- `ssn_handle_error` - 处理错误（库内部错误处理）
+- `ssn_client_close` - 关闭 IPC 客户端
