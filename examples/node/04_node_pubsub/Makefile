@@ -9,7 +9,7 @@ INCLUDE_DIR = $(TOP_DIR)/src
 # Compiler settings
 CC = gcc
 CFLAGS = -std=c99 -Wall -Wextra -Werror -I$(INCLUDE_DIR)
-LDFLAGS = -L$(LIB_DIR) -lssn_transport -lpthread
+LDFLAGS = -L$(LIB_DIR) -Wl,-rpath,$(LIB_DIR) -lssn_transport -lpthread
 
 # Targets
 all: node_pubsub
