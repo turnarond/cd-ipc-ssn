@@ -9,8 +9,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_client.h"
-#include "cd_ipc_server.h"
+#include "ssn_client.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 
 #define SERVER_NAME "unix:///tmp/timeout_server"
@@ -24,7 +24,7 @@ static bool test_connection_timeout(void)
     LOG_INFO("Test 1: Connection timeout");
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
         return false;
@@ -37,16 +37,16 @@ static bool test_connection_timeout(void)
     };
 
     // Try to connect to non-existent server
-    if (ipc_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
+    if (ssn_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
         LOG_ERROR("Expected connection to timeout, but it succeeded");
-        ipc_client_close(client);
+        ssn_client_close(client);
         return false;
     }
 
     LOG_INFO("Test 1 passed (expected timeout)");
 
     // Destroy client
-    ipc_client_close(client);
+    ssn_client_close(client);
     return true;
 }
 
@@ -58,23 +58,23 @@ static bool test_rpc_timeout(void)
     LOG_INFO("\nTest 2: RPC call timeout");
 
     // Create server that doesn't respond to RPC calls
-    ipc_server_t *server = ipc_server_create(SERVER_NAME);
+    ssn_server_t *server = ssn_server_create(SERVER_NAME);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return false;
     }
 
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -85,39 +85,39 @@ static bool test_rpc_timeout(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_NAME, &conn_timeout)) {
+    if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Prepare message
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = "test",
         .length = 4
     };
 
     // Prepare URL reference
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = "/test",
         .url_len = 6
     };
 
     // Make RPC call with short timeout (2 seconds)
-    int result = ipc_client_call(client, &url, &data, NULL, NULL, 2000);
+    int result = ssn_client_call(client, &url, &data, NULL, NULL, 2000);
     if (result >= 0) {
         LOG_ERROR("Expected RPC call to timeout, but it succeeded");
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
     LOG_INFO("Test 2 passed (expected timeout)");
 
     // Cleanup
-    ipc_client_close(client);
-    ipc_server_destroy(server);
+    ssn_client_close(client);
+    ssn_server_destroy(server);
     return true;
 }
 
@@ -129,23 +129,23 @@ static bool test_message_timeout(void)
     LOG_INFO("\nTest 3: Message send timeout");
 
     // Create server that doesn't process messages
-    ipc_server_t *server = ipc_server_create(SERVER_NAME);
+    ssn_server_t *server = ssn_server_create(SERVER_NAME);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return false;
     }
 
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -156,10 +156,10 @@ static bool test_message_timeout(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_NAME, &conn_timeout)) {
+    if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -168,13 +168,13 @@ static bool test_message_timeout(void)
     memset(large_message, 'A', sizeof(large_message));
     large_message[sizeof(large_message) - 1] = '\0';
 
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = large_message,
         .length = sizeof(large_message)
     };
 
     // Prepare URL reference
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = "/large_message",
         .url_len = 14
     };
@@ -184,7 +184,7 @@ static bool test_message_timeout(void)
     // In practice, you would set this in the client options
 
     // Send message (this should timeout)
-    int result = ipc_client_message(client, &url, &data);
+    int result = ssn_client_message(client, &url, &data);
     if (result >= 0) {
         LOG_WARN("Message send succeeded, but expected timeout");
         // Continue anyway
@@ -193,8 +193,8 @@ static bool test_message_timeout(void)
     LOG_INFO("Test 3 completed");
 
     // Cleanup
-    ipc_client_close(client);
-    ipc_server_destroy(server);
+    ssn_client_close(client);
+    ssn_server_destroy(server);
     return true;
 }
 
@@ -213,23 +213,23 @@ static bool test_idle_timeout(void)
         .ifname = ""
     };
 
-    ipc_server_t *server = ipc_server_create_with_options(SERVER_NAME, &options);
+    ssn_server_t *server = ssn_server_create_with_options(SERVER_NAME, &options);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return false;
     }
 
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -240,10 +240,10 @@ static bool test_idle_timeout(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_NAME, &conn_timeout)) {
+    if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -253,17 +253,17 @@ static bool test_idle_timeout(void)
     sleep(7); // Wait 7 seconds
 
     // Try to send a message after idle timeout
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = "test",
         .length = 4
     };
 
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = "/test",
         .url_len = 6
     };
 
-    int result = ipc_client_message(client, &url, &data);
+    int result = ssn_client_message(client, &url, &data);
     if (result < 0) {
         LOG_INFO("Test 4 passed (idle timeout occurred)");
     } else {
@@ -271,8 +271,8 @@ static bool test_idle_timeout(void)
     }
 
     // Cleanup
-    ipc_client_close(client);
-    ipc_server_destroy(server);
+    ssn_client_close(client);
+    ssn_server_destroy(server);
     return true;
 }
 

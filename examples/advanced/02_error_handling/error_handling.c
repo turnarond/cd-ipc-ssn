@@ -9,8 +9,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_client.h"
-#include "cd_ipc_server.h"
+#include "ssn_client.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 
 #define SERVER_NAME "unix:///tmp/error_server"
@@ -24,7 +24,7 @@ static bool test_connection_error(void)
     LOG_INFO("Test 1: Connection to non-existent server");
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
         return false;
@@ -37,16 +37,16 @@ static bool test_connection_error(void)
     };
 
     // Try to connect to non-existent server
-    if (ipc_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
+    if (ssn_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
         LOG_ERROR("Expected connection to fail, but it succeeded");
-        ipc_client_close(client);
+        ssn_client_close(client);
         return false;
     }
 
     LOG_INFO("Test 1 passed (expected error)");
 
     // Close client
-    ipc_client_close(client);
+    ssn_client_close(client);
     return true;
 }
 
@@ -58,23 +58,23 @@ static bool test_rpc_error(void)
     LOG_INFO("\nTest 2: RPC call to non-existent method");
 
     // Create server (so we can connect)
-    ipc_server_t *server = ipc_server_create(SERVER_NAME);
+    ssn_server_t *server = ssn_server_create(SERVER_NAME);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return false;
     }
 
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -85,39 +85,39 @@ static bool test_rpc_error(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_NAME, &timeout)) {
+    if (!ssn_client_connect(client, SERVER_NAME, &timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
     // Prepare message
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = "test",
         .length = 4
     };
 
     // Prepare URL reference for non-existent method
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = "/non_existent_method",
         .url_len = 21
     };
 
     // Make RPC call to non-existent method
-    int result = ipc_client_call(client, &url, &data, NULL, NULL, 2000);
+    int result = ssn_client_call(client, &url, &data, NULL, NULL, 2000);
     if (result >= 0) {
         LOG_ERROR("Expected RPC call to fail, but it succeeded");
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
     LOG_INFO("Test 2 passed (expected error)");
 
     // Cleanup
-    ipc_client_close(client);
-    ipc_server_destroy(server);
+    ssn_client_close(client);
+    ssn_server_destroy(server);
     return true;
 }
 
@@ -129,17 +129,17 @@ static bool test_timeout_error(void)
     LOG_INFO("\nTest 3: Message send with timeout");
 
     // Create server (but don't start it to cause timeout)
-    ipc_server_t *server = ipc_server_create(SERVER_NAME);
+    ssn_server_t *server = ssn_server_create(SERVER_NAME);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return false;
     }
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return false;
     }
 
@@ -150,18 +150,18 @@ static bool test_timeout_error(void)
     };
 
     // Try to connect to server (should fail because server isn't started)
-    if (ipc_client_connect(client, SERVER_NAME, &timeout)) {
+    if (ssn_client_connect(client, SERVER_NAME, &timeout)) {
         LOG_ERROR("Expected connection to fail, but it succeeded");
-        ipc_client_close(client);
-        ipc_server_destroy(server);
+        ssn_client_close(client);
+        ssn_server_destroy(server);
         return false;
     }
 
     LOG_INFO("Test 3 passed (expected error)");
 
     // Cleanup
-    ipc_client_close(client);
-    ipc_server_destroy(server);
+    ssn_client_close(client);
+    ssn_server_destroy(server);
     return true;
 }
 
@@ -173,7 +173,7 @@ static bool test_error_recovery(void)
     LOG_INFO("\nTest 4: Error recovery");
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
         return false;
@@ -191,7 +191,7 @@ static bool test_error_recovery(void)
 
     for (int i = 1; i <= attempts; i++) {
         LOG_INFO("Connection attempt %d/%d", i, attempts);
-        if (ipc_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
+        if (ssn_client_connect(client, NON_EXISTENT_SERVER, &timeout)) {
             connected = true;
             break;
         }
@@ -201,14 +201,14 @@ static bool test_error_recovery(void)
 
     if (connected) {
         LOG_ERROR("Expected connection to fail after %d attempts", attempts);
-        ipc_client_close(client);
+        ssn_client_close(client);
         return false;
     }
 
     LOG_INFO("Test 4 passed (error recovery handled)");
 
     // Cleanup
-    ipc_client_close(client);
+    ssn_client_close(client);
     return true;
 }
 

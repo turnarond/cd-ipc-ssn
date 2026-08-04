@@ -1,1 +1,0 @@
-gcc -std=c99 -Wall -Wextra -Werror -I../../../src -o publisher publisher.c -L../../../build -lssn_transport -lpthread

@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "node/ipc_node.h"
+#include "node/ssn_node.h"
 #include "util/ssn_log.h"
 
 /**
@@ -20,17 +20,17 @@ static bool test_basic_lifecycle(void)
     LOG_INFO("Test 1: Basic node lifecycle");
 
     // Create node configuration
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "test",
         .node_name = "basic-node",
         .listen_address = "127.0.0.1",
         .listen_port = 8888,
-        .capabilities = IPC_NODE_CAP_RPC | IPC_NODE_CAP_PUBSUB | 
-                       IPC_NODE_CAP_SERVER | IPC_NODE_CAP_CLIENT
+        .capabilities = SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB | 
+                       SSN_NODE_CAP_SERVER | SSN_NODE_CAP_CLIENT
     };
 
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create node");
         return false;
@@ -40,52 +40,52 @@ static bool test_basic_lifecycle(void)
              node->node_id, node->node_type, node->node_name);
 
     // Check node state
-    ipc_node_state_t state = ipc_node_get_state(node);
+    ssn_node_state_t state = ssn_node_get_state(node);
     LOG_INFO("Node state: %s", 
-             state == IPC_NODE_STATE_STOPPED ? "STOPPED" :
-             state == IPC_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
+             state == SSN_NODE_STATE_STOPPED ? "STOPPED" :
+             state == SSN_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
 
     // Check node capabilities
-    uint32_t capabilities = ipc_node_get_capabilities(node);
+    uint32_t capabilities = ssn_node_get_capabilities(node);
     LOG_INFO("Node capabilities: 0x%04x (%s%s%s%s)",
              capabilities,
-             (capabilities & IPC_NODE_CAP_SERVER) ? "SERVER|" : "",
-             (capabilities & IPC_NODE_CAP_CLIENT) ? "CLIENT|" : "",
-             (capabilities & IPC_NODE_CAP_RPC) ? "RPC|" : "",
-             (capabilities & IPC_NODE_CAP_PUBSUB) ? "PUBSUB" : "");
+             (capabilities & SSN_NODE_CAP_SERVER) ? "SERVER|" : "",
+             (capabilities & SSN_NODE_CAP_CLIENT) ? "CLIENT|" : "",
+             (capabilities & SSN_NODE_CAP_RPC) ? "RPC|" : "",
+             (capabilities & SSN_NODE_CAP_PUBSUB) ? "PUBSUB" : "");
 
     // Start node
-    if (!ipc_node_start(node)) {
+    if (!ssn_node_start(node)) {
         LOG_ERROR("Failed to start node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
 
     LOG_INFO("Node started successfully");
 
     // Check node state after start
-    state = ipc_node_get_state(node);
+    state = ssn_node_get_state(node);
     LOG_INFO("Node state: %s", 
-             state == IPC_NODE_STATE_STOPPED ? "STOPPED" :
-             state == IPC_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
+             state == SSN_NODE_STATE_STOPPED ? "STOPPED" :
+             state == SSN_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
 
     // Stop node
-    if (!ipc_node_stop(node)) {
+    if (!ssn_node_stop(node)) {
         LOG_ERROR("Failed to stop node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
 
     LOG_INFO("Node stopped successfully");
 
     // Check node state after stop
-    state = ipc_node_get_state(node);
+    state = ssn_node_get_state(node);
     LOG_INFO("Node state: %s", 
-             state == IPC_NODE_STATE_STOPPED ? "STOPPED" :
-             state == IPC_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
+             state == SSN_NODE_STATE_STOPPED ? "STOPPED" :
+             state == SSN_NODE_STATE_ACTIVE ? "ACTIVE" : "ERROR");
 
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Node destroyed successfully");
 
     return true;
@@ -99,14 +99,14 @@ static bool test_minimal_config(void)
     LOG_INFO("\nTest 2: Minimal configuration");
 
     // Create node with minimal configuration
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "minimal",
         .node_name = "minimal"
         // Other fields will use defaults
     };
 
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create node with minimal configuration");
         return false;
@@ -116,11 +116,11 @@ static bool test_minimal_config(void)
              node->node_id, node->node_type, node->node_name);
 
     // Check default capabilities
-    uint32_t capabilities = ipc_node_get_capabilities(node);
+    uint32_t capabilities = ssn_node_get_capabilities(node);
     LOG_INFO("Default capabilities: 0x%04x", capabilities);
 
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Minimal config node destroyed successfully");
 
     return true;
@@ -134,16 +134,16 @@ static bool test_server_only(void)
     LOG_INFO("\nTest 3: Server-only node");
 
     // Create server-only node
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "server",
         .node_name = "server-only",
         .listen_address = "127.0.0.1",
         .listen_port = 8889,
-        .capabilities = IPC_NODE_CAP_SERVER | IPC_NODE_CAP_RPC
+        .capabilities = SSN_NODE_CAP_SERVER | SSN_NODE_CAP_RPC
     };
 
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create server-only node");
         return false;
@@ -153,23 +153,23 @@ static bool test_server_only(void)
              node->node_id, node->node_type, node->node_name);
 
     // Start node
-    if (!ipc_node_start(node)) {
+    if (!ssn_node_start(node)) {
         LOG_ERROR("Failed to start server-only node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
 
     LOG_INFO("Server-only node started successfully");
 
     // Stop node
-    if (!ipc_node_stop(node)) {
+    if (!ssn_node_stop(node)) {
         LOG_ERROR("Failed to stop server-only node");
-        ipc_node_destroy(node);
+        ssn_node_destroy(node);
         return false;
     }
 
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Server-only node destroyed successfully");
 
     return true;
@@ -183,14 +183,14 @@ static bool test_client_only(void)
     LOG_INFO("\nTest 4: Client-only node");
 
     // Create client-only node
-    ipc_node_config_t config = {
+    ssn_node_config_t config = {
         .node_type = "client",
         .node_name = "client-only",
-        .capabilities = IPC_NODE_CAP_CLIENT | IPC_NODE_CAP_RPC
+        .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_RPC
     };
 
     // Create node
-    ipc_node_t *node = ipc_node_create(&config);
+    ssn_node_t *node = ssn_node_create(&config);
     if (!node) {
         LOG_ERROR("Failed to create client-only node");
         return false;
@@ -200,7 +200,7 @@ static bool test_client_only(void)
              node->node_id, node->node_type, node->node_name);
 
     // Destroy node
-    ipc_node_destroy(node);
+    ssn_node_destroy(node);
     LOG_INFO("Client-only node destroyed successfully");
 
     return true;

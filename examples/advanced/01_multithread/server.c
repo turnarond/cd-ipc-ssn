@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "cd_ipc_server.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 #include "util/ssn_mutex.h"
 
@@ -22,14 +22,14 @@
  * @brief Thread data structure
  */
 typedef struct {
-    ipc_server_t *server;
-    cli_id_t client_id;
+    ssn_server_t *server;
+    ssn_peer_id_t client_id;
     int thread_id;
 } thread_data_t;
 
 /**
  * @brief Echo RPC method handler
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param hdr IPC header
@@ -37,36 +37,36 @@ typedef struct {
  * @param data Data reference
  * @param arg User argument
  */
-static void echo_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr, 
-                        ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void echo_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *hdr,
+                        ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)url;
     (void)arg;
 
     // Get thread ID from argument
     int thread_id = *((int*)arg);
-    LOG_INFO("Thread %d: RPC method /echo called with: %.*s", 
+    LOG_INFO("Thread %d: RPC method /echo called with: %.*s",
              thread_id, (int)data->length, (const char*)data->data);
 
     // Prepare response (echo back the message)
-    ipc_data_ref_t resp_data = {
+    ssn_data_ref_t resp_data = {
         .data = data->data,
         .length = data->length
     };
 
     // Send response
-    ipc_server_response(server, id, 0, ipc_get_seqno(hdr), &resp_data);
+    ssn_server_response(server, id, 0, ssn_get_seqno(hdr), &resp_data);
 }
 
 /**
  * @brief Connection handler callback
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param connect True if client connected, false if disconnected
  * @param arg User argument
  */
-static void connect_handler(ipc_server_t *server, cli_id_t id, bool connect, void *arg)
+static void connect_handler(ssn_server_t *server, ssn_peer_id_t id, bool connect, void *arg)
 {
     (void)server;
     (void)arg;
@@ -88,13 +88,13 @@ static void connect_handler(ipc_server_t *server, cli_id_t id, bool connect, voi
 
 /**
  * @brief Server thread function
- * 
+ *
  * @param arg Thread argument
  * @return Thread exit status
  */
 static void *server_thread(void *arg)
 {
-    ipc_server_t *server = (ipc_server_t *)arg;
+    ssn_server_t *server = (ssn_server_t *)arg;
     int thread_id = (int)(intptr_t)pthread_self() % 1000;
 
     LOG_INFO("Server thread %d started", thread_id);
@@ -102,7 +102,7 @@ static void *server_thread(void *arg)
     // Run server loop
     while (1) {
         // Poll for events with timeout
-        if (ipc_server_poll(server, 1000) < 0) {
+        if (ssn_server_poll(server, 1000) < 0) {
             break;
         }
     }
@@ -127,7 +127,7 @@ int main(void)
     };
 
     // Create IPC server
-    ipc_server_t *server = ipc_server_create_with_options(SERVER_NAME, &options);
+    ssn_server_t *server = ssn_server_create_with_options(SERVER_NAME, &options);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return 1;
@@ -136,22 +136,22 @@ int main(void)
     LOG_INFO("Multithreaded server created successfully");
 
     // Set connection handler
-    ipc_server_set_connect_handler(server, connect_handler, NULL);
+    ssn_server_set_connect_handler(server, connect_handler, NULL);
 
     // Register RPC method with thread-specific argument
-    ipc_url_ref_t echo_url = {.url = "/echo", .url_len = 6};
+    ssn_url_ref_t echo_url = {.url = "/echo", .url_len = 6};
     static int thread_ids[MAX_THREADS];
     for (int i = 0; i < MAX_THREADS; i++) {
         thread_ids[i] = i + 1;
-        ipc_server_add_method(server, &echo_url, echo_handler, &thread_ids[i]);
+        ssn_server_add_method(server, &echo_url, echo_handler, &thread_ids[i]);
     }
 
     LOG_INFO("RPC methods registered successfully");
 
     // Start the server
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return 1;
     }
 
@@ -181,7 +181,7 @@ int main(void)
     LOG_INFO("Multithreaded server stopped");
 
     // Destroy the server
-    ipc_server_destroy(server);
+    ssn_server_destroy(server);
 
     LOG_INFO("Multithreaded server destroyed");
 

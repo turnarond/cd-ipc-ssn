@@ -9,23 +9,23 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_client.h"
+#include "ssn_client.h"
 #include "util/ssn_log.h"
 
 #define SERVER_NAME "unix:///tmp/rpc_server"
 
 /**
  * @brief RPC reply handler
- * 
+ *
  * This function is called when an RPC response is received from the server.
- * 
+ *
  * @param client IPC client instance
  * @param hdr IPC header
  * @param data Data reference
  * @param arg User argument
  */
-static void rpc_reply_handler(ipc_client_t *client, ipc_header_t *hdr, 
-                            ipc_data_ref_t *data, void *arg)
+static void rpc_reply_handler(ssn_client_t *client, ssn_header_t *hdr,
+                            ssn_data_ref_t *data, void *arg)
 {
     (void)client;
     (void)hdr;
@@ -33,7 +33,7 @@ static void rpc_reply_handler(ipc_client_t *client, ipc_header_t *hdr,
     int *success = (int *)arg;
 
     if (data) {
-        LOG_INFO("RPC call successful, result: %.*s", 
+        LOG_INFO("RPC call successful, result: %.*s",
                  (int)data->length, (const char*)data->data);
         *success = 1;
     } else {
@@ -44,30 +44,30 @@ static void rpc_reply_handler(ipc_client_t *client, ipc_header_t *hdr,
 
 /**
  * @brief Make an RPC call
- * 
+ *
  * @param client IPC client instance
  * @param url RPC method URL
  * @param params RPC parameters
  * @return true if call was successful, false otherwise
  */
-bool make_rpc_call(ipc_client_t *client, const char *url, const char *params)
+bool make_rpc_call(ssn_client_t *client, const char *url, const char *params)
 {
     int success = 0;
 
     // Prepare URL reference
-    ipc_url_ref_t url_ref = {
+    ssn_url_ref_t url_ref = {
         .url = (char*)url,
         .url_len = strlen(url)
     };
 
     // Prepare data reference
-    ipc_data_ref_t data_ref = {
+    ssn_data_ref_t data_ref = {
         .data = (void*)params,
         .length = strlen(params)
     };
 
     // Make RPC call
-    if (ipc_client_call(client, &url_ref, &data_ref, 
+    if (ssn_client_call(client, &url_ref, &data_ref,
                        rpc_reply_handler, &success, 5000) < 0) {
         LOG_ERROR("Failed to make RPC call: %s", url);
         return false;
@@ -76,7 +76,7 @@ bool make_rpc_call(ipc_client_t *client, const char *url, const char *params)
     // Wait for response
     int timeout = 5; // 5 seconds
     while (timeout > 0 && !success) {
-        ipc_client_poll(client, 100);
+        ssn_client_poll(client, 100);
         sleep(1);
         timeout--;
     }
@@ -92,7 +92,7 @@ int main(void)
     LOG_INFO("Starting RPC client...");
 
     // Create IPC client
-    ipc_client_t *client = ipc_client_create(NULL, NULL);
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
         return 1;
@@ -107,9 +107,9 @@ int main(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_NAME, &timeout)) {
+    if (!ssn_client_connect(client, SERVER_NAME, &timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
-        ipc_client_close(client);
+        ssn_client_close(client);
         return 1;
     }
 
@@ -143,10 +143,10 @@ int main(void)
     sleep(2);
 
     // Disconnect from server
-    ipc_client_disconnect(client);
+    ssn_client_disconnect(client);
 
     // Close the client
-    ipc_client_close(client);
+    ssn_client_close(client);
 
     LOG_INFO("RPC client closed");
 

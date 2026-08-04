@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_client.h"
+#include "ssn_client.h"
 #include "util/ssn_log.h"
 
 #define SERVER_ADDRESS "127.0.0.1:9999"
@@ -22,8 +22,8 @@
  * @param data Data reference
  * @param arg User argument
  */
-static void message_handler(ipc_client_t *client, ipc_url_ref_t *url, 
-                           ipc_data_ref_t *data, void *arg)
+static void message_handler(ssn_client_t *client, ssn_url_ref_t *url, 
+                           ssn_data_ref_t *data, void *arg)
 {
     (void)client;
     (void)url;
@@ -40,14 +40,17 @@ int main(void)
 
     LOG_INFO("Starting UDP client...");
 
-    // Create IPC client with message handler
-    ipc_client_t *client = ipc_client_create(message_handler, NULL);
+    // Create IPC client
+    ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create UDP client");
         return 1;
     }
 
     LOG_INFO("UDP client created successfully");
+
+    // Set message handler
+    ssn_client_set_on_message(client, message_handler, NULL);
 
     // Set connection timeout
     struct timespec timeout = {
@@ -56,30 +59,30 @@ int main(void)
     };
 
     // Connect to server
-    if (!ipc_client_connect(client, SERVER_ADDRESS, &timeout)) {
+    if (!ssn_client_connect(client, SERVER_ADDRESS, &timeout)) {
         LOG_ERROR("Failed to connect to UDP server: %s", SERVER_ADDRESS);
-        ipc_client_close(client);
+        ssn_client_close(client);
         return 1;
     }
 
     LOG_INFO("UDP client connected to %s", SERVER_ADDRESS);
 
     // Prepare message data
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = "Hello from UDP client!",
         .length = 22
     };
 
     // Prepare URL reference
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = "/udp/test",
         .url_len = 9
     };
 
     // Send message to server
-    if (ipc_client_message(client, &url, &data) < 0) {
+    if (ssn_client_message(client, &url, &data) < 0) {
         LOG_ERROR("Failed to send message");
-        ipc_client_close(client);
+        ssn_client_close(client);
         return 1;
     }
 
@@ -90,10 +93,10 @@ int main(void)
     sleep(2);
 
     // Disconnect from server
-    ipc_client_disconnect(client);
+    ssn_client_disconnect(client);
 
     // Destroy the client
-    ipc_client_close(client);
+    ssn_client_close(client);
 
     LOG_INFO("UDP client disconnected");
 

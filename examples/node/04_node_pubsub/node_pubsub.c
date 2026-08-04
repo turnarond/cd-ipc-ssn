@@ -8,14 +8,32 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
-#include "node/ipc_node.h"
+#include "node/ssn_node.h"
 #include "util/ssn_log.h"
 
-#define PUBLISHER_ADDRESS "127.0.0.1:8892"
+#define PUBLISHER_ADDRESS "tcp://127.0.0.1:8892"
 
 static int g_news_messages_received = 0;
 static int g_weather_messages_received = 0;
+
+static volatile int g_server_running = 0;
+
+/**
+ * @brief Background server poller
+ *
+ * Runs ssn_node_poll in a thread so the publisher node can accept
+ * connections and handle the subscriber handshake while clients connect.
+ */
+static void *server_poll_thread(void *arg)
+{
+    ssn_node_t *node = (ssn_node_t *)arg;
+    while (g_server_running) {
+        ssn_node_poll(node, 100);
+    }
+    return NULL;
+}
 
 /**
  * @brief Subscriber1 message handler (subscribed to /news)
@@ -25,8 +43,8 @@ static int g_weather_messages_received = 0;
  * @param data Data reference
  * @param arg User argument
  */
-static void subscriber1_message_handler(ipc_client_t *client, ipc_url_ref_t *url, 
-                                      ipc_data_ref_t *data, void *arg)
+static void subscriber1_message_handler(ssn_client_t *client, ssn_url_ref_t *url, 
+                                      ssn_data_ref_t *data, void *arg)
 {
     (void)client;
     (void)arg;
@@ -45,8 +63,8 @@ static void subscriber1_message_handler(ipc_client_t *client, ipc_url_ref_t *url
  * @param data Data reference
  * @param arg User argument
  */
-static void subscriber2_message_handler(ipc_client_t *client, ipc_url_ref_t *url, 
-                                      ipc_data_ref_t *data, void *arg)
+static void subscriber2_message_handler(ssn_client_t *client, ssn_url_ref_t *url, 
+                                      ssn_data_ref_t *data, void *arg)
 {
     (void)client;
     (void)arg;
@@ -65,15 +83,15 @@ static bool test_node_pubsub(void)
     LOG_INFO("Test: Node publish/subscribe");
 
     // Create publisher node
-    ipc_node_config_t publisher_config = {
+    ssn_node_config_t publisher_config = {
         .node_type = "publisher",
         .node_name = "Publisher",
         .listen_address = "127.0.0.1",
         .listen_port = 8892,
-        .capabilities = IPC_NODE_CAP_SERVER | IPC_NODE_CAP_PUBSUB
+        .capabilities = SSN_NODE_CAP_SERVER | SSN_NODE_CAP_PUBSUB
     };
 
-    ipc_node_t *publisher_node = ipc_node_create(&publisher_config);
+    ssn_node_t *publisher_node = ssn_node_create(&publisher_config);
     if (!publisher_node) {
         LOG_ERROR("Failed to create publisher node");
         return false;
@@ -83,25 +101,36 @@ static bool test_node_pubsub(void)
              publisher_node->node_id, publisher_node->node_type, publisher_node->node_name);
 
     // Start publisher node
-    if (!ipc_node_start(publisher_node)) {
+    if (!ssn_node_start(publisher_node)) {
         LOG_ERROR("Failed to start publisher node");
-        ipc_node_destroy(publisher_node);
+        ssn_node_destroy(publisher_node);
         return false;
     }
 
     LOG_INFO("Publisher node started");
 
+    // Start background server poller (the server is poll-driven)
+    pthread_t server_tid;
+    g_server_running = 1;
+    if (pthread_create(&server_tid, NULL, server_poll_thread, publisher_node) != 0) {
+        LOG_ERROR("Failed to create server poll thread");
+        ssn_node_destroy(publisher_node);
+        return false;
+    }
+
     // Create subscriber1 node (subscribes to /news)
-    ipc_node_config_t subscriber1_config = {
+    ssn_node_config_t subscriber1_config = {
         .node_type = "subscriber",
         .node_name = "Subscriber1",
-        .capabilities = IPC_NODE_CAP_CLIENT | IPC_NODE_CAP_PUBSUB
+        .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_PUBSUB
     };
 
-    ipc_node_t *subscriber1_node = ipc_node_create(&subscriber1_config);
+    ssn_node_t *subscriber1_node = ssn_node_create(&subscriber1_config);
     if (!subscriber1_node) {
         LOG_ERROR("Failed to create subscriber1 node");
-        ipc_node_destroy(publisher_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
         return false;
     }
 
@@ -109,27 +138,31 @@ static bool test_node_pubsub(void)
              subscriber1_node->node_id, subscriber1_node->node_type, subscriber1_node->node_name);
 
     // Start subscriber1 node
-    if (!ipc_node_start(subscriber1_node)) {
+    if (!ssn_node_start(subscriber1_node)) {
         LOG_ERROR("Failed to start subscriber1 node");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
         return false;
     }
 
     LOG_INFO("Subscriber1 node started");
 
     // Create subscriber2 node (subscribes to /weather)
-    ipc_node_config_t subscriber2_config = {
+    ssn_node_config_t subscriber2_config = {
         .node_type = "subscriber",
         .node_name = "Subscriber2",
-        .capabilities = IPC_NODE_CAP_CLIENT | IPC_NODE_CAP_PUBSUB
+        .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_PUBSUB
     };
 
-    ipc_node_t *subscriber2_node = ipc_node_create(&subscriber2_config);
+    ssn_node_t *subscriber2_node = ssn_node_create(&subscriber2_config);
     if (!subscriber2_node) {
         LOG_ERROR("Failed to create subscriber2 node");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
         return false;
     }
 
@@ -137,45 +170,53 @@ static bool test_node_pubsub(void)
              subscriber2_node->node_id, subscriber2_node->node_type, subscriber2_node->node_name);
 
     // Start subscriber2 node
-    if (!ipc_node_start(subscriber2_node)) {
+    if (!ssn_node_start(subscriber2_node)) {
         LOG_ERROR("Failed to start subscriber2 node");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
 
     LOG_INFO("Subscriber2 node started");
 
     // Set message handlers
-    ipc_node_set_client_message_handler(subscriber1_node, subscriber1_message_handler, NULL);
-    ipc_node_set_client_message_handler(subscriber2_node, subscriber2_message_handler, NULL);
+    ssn_node_set_client_message_handler(subscriber1_node, subscriber1_message_handler, NULL);
+    ssn_node_set_client_message_handler(subscriber2_node, subscriber2_message_handler, NULL);
 
     // Subscribe to topics
-    ipc_url_ref_t news_topic = {
+    ssn_url_ref_t news_topic = {
         .url = "/news",
         .url_len = 6
     };
 
-    ipc_url_ref_t weather_topic = {
+    ssn_url_ref_t weather_topic = {
         .url = "/weather",
         .url_len = 8
     };
 
-    if (!ipc_node_subscribe(subscriber1_node, &news_topic, NULL, NULL, 5000)) {
+    if (!ssn_node_subscribe(subscriber1_node, PUBLISHER_ADDRESS, &news_topic,
+                            subscriber1_message_handler, NULL, 5000)) {
         LOG_ERROR("Subscriber1 failed to subscribe to /news");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
     LOG_INFO("Subscriber1 subscribed to /news");
 
-    if (!ipc_node_subscribe(subscriber2_node, &weather_topic, NULL, NULL, 5000)) {
+    if (!ssn_node_subscribe(subscriber2_node, PUBLISHER_ADDRESS, &weather_topic,
+                            subscriber2_message_handler, NULL, 5000)) {
         LOG_ERROR("Subscriber2 failed to subscribe to /weather");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
     LOG_INFO("Subscriber2 subscribed to /weather");
@@ -185,16 +226,18 @@ static bool test_node_pubsub(void)
 
     // Publish news message
     LOG_INFO("Publisher publishing to /news: Breaking news! Server is online");
-    ipc_data_ref_t news_data = {
+    ssn_data_ref_t news_data = {
         .data = "Breaking news! Server is online",
         .length = 29
     };
 
-    if (!ipc_node_publish(publisher_node, &news_topic, &news_data)) {
+    if (!ssn_node_publish(publisher_node, &news_topic, &news_data)) {
         LOG_ERROR("Failed to publish news message");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
 
@@ -203,16 +246,18 @@ static bool test_node_pubsub(void)
 
     // Publish weather message
     LOG_INFO("Publisher publishing to /weather: Today's weather is sunny");
-    ipc_data_ref_t weather_data = {
+    ssn_data_ref_t weather_data = {
         .data = "Today's weather is sunny",
         .length = 23
     };
 
-    if (!ipc_node_publish(publisher_node, &weather_topic, &weather_data)) {
+    if (!ssn_node_publish(publisher_node, &weather_topic, &weather_data)) {
         LOG_ERROR("Failed to publish weather message");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
 
@@ -220,9 +265,9 @@ static bool test_node_pubsub(void)
     LOG_INFO("Waiting for messages to be delivered...");
     int timeout = 5;
     while (timeout > 0 && (g_news_messages_received == 0 || g_weather_messages_received == 0)) {
-        ipc_node_poll(publisher_node, 100);
-        ipc_node_poll(subscriber1_node, 100);
-        ipc_node_poll(subscriber2_node, 100);
+        ssn_node_poll(publisher_node, 100);
+        ssn_node_poll(subscriber1_node, 100);
+        ssn_node_poll(subscriber2_node, 100);
         sleep(1);
         timeout--;
     }
@@ -230,33 +275,41 @@ static bool test_node_pubsub(void)
     // Check if messages were received
     if (g_news_messages_received == 0) {
         LOG_ERROR("Subscriber1 did not receive news message");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
 
     if (g_weather_messages_received == 0) {
         LOG_ERROR("Subscriber2 did not receive weather message");
-        ipc_node_destroy(publisher_node);
-        ipc_node_destroy(subscriber1_node);
-        ipc_node_destroy(subscriber2_node);
+        g_server_running = 0;
+        pthread_join(server_tid, NULL);
+        ssn_node_destroy(publisher_node);
+        ssn_node_destroy(subscriber1_node);
+        ssn_node_destroy(subscriber2_node);
         return false;
     }
 
     // Unsubscribe from topics
-    ipc_node_unsubscribe(subscriber1_node, &news_topic, NULL, NULL, 5000);
-    ipc_node_unsubscribe(subscriber2_node, &weather_topic, NULL, NULL, 5000);
+    ssn_node_unsubscribe(subscriber1_node, &news_topic, 5000);
+    ssn_node_unsubscribe(subscriber2_node, &weather_topic, 5000);
+
+    // Stop background server poller
+    g_server_running = 0;
+    pthread_join(server_tid, NULL);
 
     // Stop nodes
-    ipc_node_stop(publisher_node);
-    ipc_node_stop(subscriber1_node);
-    ipc_node_stop(subscriber2_node);
+    ssn_node_stop(publisher_node);
+    ssn_node_stop(subscriber1_node);
+    ssn_node_stop(subscriber2_node);
 
     // Destroy nodes
-    ipc_node_destroy(publisher_node);
-    ipc_node_destroy(subscriber1_node);
-    ipc_node_destroy(subscriber2_node);
+    ssn_node_destroy(publisher_node);
+    ssn_node_destroy(subscriber1_node);
+    ssn_node_destroy(subscriber2_node);
 
     LOG_INFO("Publish/subscribe test completed successfully");
     return true;

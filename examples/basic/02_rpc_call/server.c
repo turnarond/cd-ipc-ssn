@@ -9,14 +9,14 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_server.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 
 #define SERVER_NAME "unix:///tmp/rpc_server"
 
 /**
  * @brief Add RPC method handler
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param hdr IPC header
@@ -24,13 +24,13 @@
  * @param data Data reference
  * @param arg User argument
  */
-static void add_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr, 
-                       ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void add_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *hdr,
+                       ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)url;
     (void)arg;
 
-    LOG_INFO("RPC method called: /math/add with parameters: %.*s", 
+    LOG_INFO("RPC method called: /math/add with parameters: %.*s",
              (int)data->length, (const char*)data->data);
 
     // Parse parameters (simplified JSON parsing)
@@ -44,20 +44,20 @@ static void add_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr,
     char response[64];
     snprintf(response, sizeof(response), "%d", result);
 
-    ipc_data_ref_t resp_data = {
+    ssn_data_ref_t resp_data = {
         .data = response,
         .length = strlen(response)
     };
 
     // Send response
-    ipc_server_response(server, id, 0, ipc_get_seqno(hdr), &resp_data);
+    ssn_server_response(server, id, 0, ssn_get_seqno(hdr), &resp_data);
 
     LOG_INFO("RPC method /math/add returned: %d", result);
 }
 
 /**
  * @brief Subtract RPC method handler
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param hdr IPC header
@@ -65,13 +65,13 @@ static void add_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr,
  * @param data Data reference
  * @param arg User argument
  */
-static void subtract_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr, 
-                          ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void subtract_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *hdr,
+                          ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)url;
     (void)arg;
 
-    LOG_INFO("RPC method called: /math/subtract with parameters: %.*s", 
+    LOG_INFO("RPC method called: /math/subtract with parameters: %.*s",
              (int)data->length, (const char*)data->data);
 
     // Parse parameters
@@ -85,20 +85,20 @@ static void subtract_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hd
     char response[64];
     snprintf(response, sizeof(response), "%d", result);
 
-    ipc_data_ref_t resp_data = {
+    ssn_data_ref_t resp_data = {
         .data = response,
         .length = strlen(response)
     };
 
     // Send response
-    ipc_server_response(server, id, 0, ipc_get_seqno(hdr), &resp_data);
+    ssn_server_response(server, id, 0, ssn_get_seqno(hdr), &resp_data);
 
     LOG_INFO("RPC method /math/subtract returned: %d", result);
 }
 
 /**
  * @brief Multiply RPC method handler
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param hdr IPC header
@@ -106,13 +106,13 @@ static void subtract_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hd
  * @param data Data reference
  * @param arg User argument
  */
-static void multiply_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr, 
-                          ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void multiply_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *hdr,
+                          ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)url;
     (void)arg;
 
-    LOG_INFO("RPC method called: /math/multiply with parameters: %.*s", 
+    LOG_INFO("RPC method called: /math/multiply with parameters: %.*s",
              (int)data->length, (const char*)data->data);
 
     // Parse parameters
@@ -126,20 +126,20 @@ static void multiply_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hd
     char response[64];
     snprintf(response, sizeof(response), "%d", result);
 
-    ipc_data_ref_t resp_data = {
+    ssn_data_ref_t resp_data = {
         .data = response,
         .length = strlen(response)
     };
 
     // Send response
-    ipc_server_response(server, id, 0, ipc_get_seqno(hdr), &resp_data);
+    ssn_server_response(server, id, 0, ssn_get_seqno(hdr), &resp_data);
 
     LOG_INFO("RPC method /math/multiply returned: %d", result);
 }
 
 /**
  * @brief Divide RPC method handler
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param hdr IPC header
@@ -147,13 +147,13 @@ static void multiply_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hd
  * @param data Data reference
  * @param arg User argument
  */
-static void divide_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr, 
-                         ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void divide_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *hdr,
+                         ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)url;
     (void)arg;
 
-    LOG_INFO("RPC method called: /math/divide with parameters: %.*s", 
+    LOG_INFO("RPC method called: /math/divide with parameters: %.*s",
              (int)data->length, (const char*)data->data);
 
     // Parse parameters
@@ -167,11 +167,11 @@ static void divide_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr,
     } else {
         LOG_ERROR("Division by zero");
         // Send error response
-        ipc_data_ref_t error_data = {
+        ssn_data_ref_t error_data = {
             .data = "Error: Division by zero",
             .length = 21
         };
-        ipc_server_response(server, id, 1, ipc_get_seqno(hdr), &error_data);
+        ssn_server_response(server, id, 1, ssn_get_seqno(hdr), &error_data);
         return;
     }
 
@@ -179,26 +179,26 @@ static void divide_handler(ipc_server_t *server, cli_id_t id, ipc_header_t *hdr,
     char response[64];
     snprintf(response, sizeof(response), "%d", result);
 
-    ipc_data_ref_t resp_data = {
+    ssn_data_ref_t resp_data = {
         .data = response,
         .length = strlen(response)
     };
 
     // Send response
-    ipc_server_response(server, id, 0, ipc_get_seqno(hdr), &resp_data);
+    ssn_server_response(server, id, 0, ssn_get_seqno(hdr), &resp_data);
 
     LOG_INFO("RPC method /math/divide returned: %d", result);
 }
 
 /**
  * @brief Connection handler callback
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param connect True if client connected, false if disconnected
  * @param arg User argument
  */
-static void connect_handler(ipc_server_t *server, cli_id_t id, bool connect, void *arg)
+static void connect_handler(ssn_server_t *server, ssn_peer_id_t id, bool connect, void *arg)
 {
     (void)server;
     (void)arg;
@@ -226,7 +226,7 @@ int main(void)
     };
 
     // Create IPC server
-    ipc_server_t *server = ipc_server_create_with_options(SERVER_NAME, &options);
+    ssn_server_t *server = ssn_server_create_with_options(SERVER_NAME, &options);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return 1;
@@ -235,25 +235,25 @@ int main(void)
     LOG_INFO("RPC server created successfully");
 
     // Set connection handler
-    ipc_server_set_connect_handler(server, connect_handler, NULL);
+    ssn_server_set_connect_handler(server, connect_handler, NULL);
 
     // Register RPC methods
-    ipc_url_ref_t add_url = {.url = "/math/add", .url_len = 9};
-    ipc_url_ref_t subtract_url = {.url = "/math/subtract", .url_len = 14};
-    ipc_url_ref_t multiply_url = {.url = "/math/multiply", .url_len = 14};
-    ipc_url_ref_t divide_url = {.url = "/math/divide", .url_len = 12};
+    ssn_url_ref_t add_url = {.url = "/math/add", .url_len = 9};
+    ssn_url_ref_t subtract_url = {.url = "/math/subtract", .url_len = 14};
+    ssn_url_ref_t multiply_url = {.url = "/math/multiply", .url_len = 14};
+    ssn_url_ref_t divide_url = {.url = "/math/divide", .url_len = 12};
 
-    ipc_server_add_method(server, &add_url, add_handler, NULL);
-    ipc_server_add_method(server, &subtract_url, subtract_handler, NULL);
-    ipc_server_add_method(server, &multiply_url, multiply_handler, NULL);
-    ipc_server_add_method(server, &divide_url, divide_handler, NULL);
+    ssn_server_add_method(server, &add_url, add_handler, NULL);
+    ssn_server_add_method(server, &subtract_url, subtract_handler, NULL);
+    ssn_server_add_method(server, &multiply_url, multiply_handler, NULL);
+    ssn_server_add_method(server, &divide_url, divide_handler, NULL);
 
     LOG_INFO("RPC methods registered successfully");
 
     // Start the server
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return 1;
     }
 
@@ -263,7 +263,7 @@ int main(void)
     LOG_INFO("Server running for 15 seconds...");
     int elapsed = 0;
     while (elapsed < 15) {
-        ipc_server_poll(server, 100);
+        ssn_server_poll(server, 100);
         sleep(1);
         elapsed++;
     }
@@ -272,7 +272,7 @@ int main(void)
     LOG_INFO("Stopping RPC server...");
 
     // Destroy the server
-    ipc_server_destroy(server);
+    ssn_server_destroy(server);
 
     LOG_INFO("RPC server destroyed");
 

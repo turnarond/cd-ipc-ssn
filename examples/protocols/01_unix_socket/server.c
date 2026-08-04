@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 
-#include "cd_ipc_server.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 
 #define SERVER_SOCKET_PATH "/tmp/unix_socket_server"
@@ -26,8 +26,8 @@
  * @param data Data reference
  * @param arg User argument
  */
-static void message_handler(ipc_server_t *server, cli_id_t id,
-                           ipc_url_ref_t *url, ipc_data_ref_t *data, void *arg)
+static void message_handler(ssn_server_t *server, ssn_peer_id_t id,
+                           ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
 {
     (void)server;
     (void)id;
@@ -46,7 +46,7 @@ static void message_handler(ipc_server_t *server, cli_id_t id,
  * @param connect True if client connected, false if disconnected
  * @param arg User argument
  */
-static void connect_handler(ipc_server_t *server, cli_id_t id, bool connect, void *arg)
+static void connect_handler(ssn_server_t *server, ssn_peer_id_t id, bool connect, void *arg)
 {
     (void)server;
     (void)arg;
@@ -82,7 +82,7 @@ int main(void)
     };
 
     // Create IPC server
-    ipc_server_t *server = ipc_server_create_with_options(SERVER_NAME, &options);
+    ssn_server_t *server = ssn_server_create_with_options(SERVER_NAME, &options);
     if (!server) {
         LOG_ERROR("Failed to create Unix Socket server");
         return 1;
@@ -91,15 +91,15 @@ int main(void)
     LOG_INFO("Unix Socket server created successfully");
 
     // Set message handler
-    ipc_server_set_message_handler(server, message_handler, NULL);
+    ssn_server_set_message_handler(server, message_handler, NULL);
 
     // Set connection handler
-    ipc_server_set_connect_handler(server, connect_handler, NULL);
+    ssn_server_set_connect_handler(server, connect_handler, NULL);
 
     // Start the server
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start Unix Socket server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return 1;
     }
 
@@ -113,7 +113,7 @@ int main(void)
     LOG_INFO("Stopping Unix Socket server...");
 
     // Destroy the server
-    ipc_server_destroy(server);
+    ssn_server_destroy(server);
 
     // Clean up socket file
     unlink(SERVER_SOCKET_PATH);

@@ -9,34 +9,34 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cd_ipc_server.h"
+#include "ssn_server.h"
 #include "util/ssn_log.h"
 
 #define SERVER_NAME "unix:///tmp/pubsub_server"
 
 /**
  * @brief Publish a message to a topic
- * 
+ *
  * @param server IPC server instance
  * @param topic Topic name
  * @param message Message content
  */
-static void publish_message(ipc_server_t *server, const char *topic, const char *message)
+static void publish_message(ssn_server_t *server, const char *topic, const char *message)
 {
     // Prepare URL reference
-    ipc_url_ref_t url = {
+    ssn_url_ref_t url = {
         .url = (char*)topic,
         .url_len = strlen(topic)
     };
 
     // Prepare data reference
-    ipc_data_ref_t data = {
+    ssn_data_ref_t data = {
         .data = (void*)message,
         .length = strlen(message)
     };
 
     // Publish message
-    if (ipc_server_publish(server, &url, &data) < 0) {
+    if (ssn_server_publish(server, &url, &data) < 0) {
         LOG_ERROR("Failed to publish message to topic: %s", topic);
     } else {
         LOG_INFO("Publishing message to %s: %s", topic, message);
@@ -45,13 +45,13 @@ static void publish_message(ipc_server_t *server, const char *topic, const char 
 
 /**
  * @brief Connection handler callback
- * 
+ *
  * @param server IPC server instance
  * @param id Client ID
  * @param connect True if client connected, false if disconnected
  * @param arg User argument
  */
-static void connect_handler(ipc_server_t *server, cli_id_t id, bool connect, void *arg)
+static void connect_handler(ssn_server_t *server, ssn_peer_id_t id, bool connect, void *arg)
 {
     (void)server;
     (void)arg;
@@ -79,7 +79,7 @@ int main(void)
     };
 
     // Create IPC server
-    ipc_server_t *server = ipc_server_create_with_options(SERVER_NAME, &options);
+    ssn_server_t *server = ssn_server_create_with_options(SERVER_NAME, &options);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
         return 1;
@@ -88,12 +88,12 @@ int main(void)
     LOG_INFO("Publisher created successfully");
 
     // Set connection handler
-    ipc_server_set_connect_handler(server, connect_handler, NULL);
+    ssn_server_set_connect_handler(server, connect_handler, NULL);
 
     // Start the server
-    if (!ipc_server_start(server)) {
+    if (!ssn_server_start(server)) {
         LOG_ERROR("Failed to start IPC server");
-        ipc_server_destroy(server);
+        ssn_server_destroy(server);
         return 1;
     }
 
@@ -103,7 +103,7 @@ int main(void)
     LOG_INFO("Waiting for subscribers to connect...");
     int wait_time = 5;
     while (wait_time > 0) {
-        ipc_server_poll(server, 100);
+        ssn_server_poll(server, 100);
         sleep(1);
         wait_time--;
     }
@@ -112,22 +112,22 @@ int main(void)
     LOG_INFO("\nPublishing messages...");
 
     // Publish news message
-    ipc_server_poll(server, 100);
+    ssn_server_poll(server, 100);
     publish_message(server, "/news", "Breaking news! Server is online");
     sleep(2);
 
     // Publish weather message
-    ipc_server_poll(server, 100);
+    ssn_server_poll(server, 100);
     publish_message(server, "/weather", "Today's weather is sunny");
     sleep(2);
 
     // Publish another news message
-    ipc_server_poll(server, 100);
+    ssn_server_poll(server, 100);
     publish_message(server, "/news", "Another breaking news story");
     sleep(2);
 
     // Publish sports message
-    ipc_server_poll(server, 100);
+    ssn_server_poll(server, 100);
     publish_message(server, "/sports", "Sports update: Team won the game");
     sleep(2);
 
@@ -135,7 +135,7 @@ int main(void)
     LOG_INFO("\nWaiting for messages to be delivered...");
     int deliver_time = 5;
     while (deliver_time > 0) {
-        ipc_server_poll(server, 100);
+        ssn_server_poll(server, 100);
         sleep(1);
         deliver_time--;
     }
@@ -144,7 +144,7 @@ int main(void)
     LOG_INFO("Stopping publisher...");
 
     // Destroy the server
-    ipc_server_destroy(server);
+    ssn_server_destroy(server);
 
     LOG_INFO("Publisher destroyed");
 
