@@ -73,7 +73,7 @@ int main(void)
     // Prepare message data
     ssn_data_ref_t data = {
         .data = "Hello from client!",
-        .length = 17
+        .length = 18
     };
 
     // Prepare URL reference

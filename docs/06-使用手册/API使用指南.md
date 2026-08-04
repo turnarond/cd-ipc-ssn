@@ -42,15 +42,15 @@ SSN 是一个支持多种传输协议的进程间通信框架，支持：
 
 | 协议 | 地址格式 | 示例 |
 |------|----------|------|
-| Unix Socket | `unix:///path/to/socket` 或 `/path/to/socket` | `unix:///tmp/test.sock` 或 `/tmp/test.sock` |
+| Unix Socket | `unix:///path/to/socket` | `unix:///tmp/test.sock` |
 | TCP | `tcp://host:port` | `tcp://127.0.0.1:8080` |
 | UDP | `udp://host:port` | `udp://127.0.0.1:9090` |
 
 ### 地址格式说明
 
 1. **Unix Socket**
-   - 推荐使用 `unix:///path/to/socket` 格式
-   - 旧格式 `/path/to/socket` 仍然兼容（自动添加 `unix://` 前缀）
+   - 使用 `unix:///path/to/socket` 格式（`ssn_address_parse` 要求地址含 `://`）
+   - 仅服务端创建时对不带前缀的裸路径自动补全 `unix://`；客户端连接请使用完整格式
 
 2. **TCP/UDP**
    - 必须使用 `protocol://host:port` 格式

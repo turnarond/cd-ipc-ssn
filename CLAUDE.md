@@ -30,8 +30,7 @@ cmake .. && make -j$(nproc)
 
 - 测试框架为各测试文件内自定义的 `ASSERT` 宏（统计 `g_tests_passed`/`g_tests_failed`），无外部测试框架；无法按用例名过滤，只能整体运行一个测试文件。
 - 高级/手工测试：`./test_comprehensive`、`./test_thread_safety`、`./test_stress`（需要先手工启动服务端）。
-- `test/run_tests.sh` 已过时（引用了已删除的 `test_ipc_*` 目标），不要依赖它。
-- `CMakeLists.txt` 中 project `VERSION` 仍停留在 2.0.0，与 `ssn_version.h`（2.3.0）不一致，改版本号时需同步（见「版本迭代规范」）。
+- 一键验证：`bash test/run_tests.sh`（构建 + 7 个自动化套件）、`bash test/verify_examples.sh`（15 个示例构建）。
 
 ## 架构分层
 
@@ -74,13 +73,15 @@ cmake .. && make -j$(nproc)
 
 ```
 docs/
-├── 01-蓝图（白皮书、愿景）
-├── 02-需求分析
-├── 03-设计（架构设计、核心模块设计）
-├── 04-实施规划
-├── 05-部署手册
-├── 06-使用手册
-└── 07-测试方案
+├── README.md（文档总索引）
+├── 01-白皮书（架构白皮书）
+├── 02-需求分析（占位，待补写）
+├── 03-设计（架构设计、核心模块）
+├── 04-实施规划（迁移指南）
+├── 05-部署手册（占位，待补写）
+├── 06-使用手册（API使用指南、使用指南）
+├── 07-测试方案
+└── 09-归档（已归档历史文档）
 ```
 
 - 新增文档必须放入对应编号目录；`docs/` 已按上表编号组织。
@@ -103,7 +104,7 @@ wsl bash -c "cd /mnt/d/personal/cd-ipc-ssn && bash test/run_tests.sh"
   - 开发完成、测试通过后合回 `main`。
 - 版本号采用语义化版本 `主版本.次版本.修订版本`：
   - 需求变更 → 次版本 +1（2.3.0 → 2.4.0）；bug 修复 → 修订版本 +1（2.3.0 → 2.3.1）；破坏性 API 变更 → 主版本 +1。
-- 发版前必须同步更新以下位置（当前不一致，需一并修正）：
+- 发版前必须同步更新以下位置：
   1. `VERSION` 文件
   2. `src/version/ssn_version.h` 的 `SSN_VERSION_*` 宏与 `SSN_VERSION_STRING`
   3. `CMakeLists.txt` 的 `VERSION_MAJOR/MINOR/PATCH` 与 `SOVERSION`
