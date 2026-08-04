@@ -64,7 +64,7 @@ cmake .. && make -j$(nproc)
 - 使用 clang-format（`.clang-format`）统一格式化代码；用 cppcheck 做静态代码分析；定期代码审查。
 
 ### 相关文档
-- 线程安全设计见 `THREAD_SAFETY.md`：`ssn_client` 采用引用计数 + 细粒度锁 + `valid` 状态标记；回调可能在其他线程执行，回调中不得调用 `ssn_client_close`。
+- 线程安全设计见 `docs/03-设计/核心模块/线程安全设计.md`：`ssn_client` 采用引用计数 + 细粒度锁 + `valid` 状态标记；回调可能在其他线程执行，回调中不得调用 `ssn_client_close`。
 - 注意：`docs/03-设计/核心模块/线程安全设计.md` 正文中仍保留 VSI 内部 `ipc_` 命名示例，以代码实际为准。
 
 ## 文档规范（必须遵守）

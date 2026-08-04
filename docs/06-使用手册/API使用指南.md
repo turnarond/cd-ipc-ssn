@@ -179,7 +179,7 @@ void ssn_client_close(ssn_client_t *client);
 ```c
 // 连接到服务器（同步，timeout 为 struct timespec 指针，NULL 表示使用默认值）
 bool ssn_client_connect(ssn_client_t *client,
-                        const char *address,
+                        const char *ipc_path,
                         const struct timespec *timeout);
 
 // 断开连接（断开后可再次调用 ssn_client_connect）
