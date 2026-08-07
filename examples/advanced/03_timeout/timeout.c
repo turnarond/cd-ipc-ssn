@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "ssn_client.h"
 #include "ssn_server.h"
@@ -50,6 +51,54 @@ static bool test_connection_timeout(void)
     return true;
 }
 
+/* Test 2 服务端事件循环运行标志 */
+static volatile int g_srv_running;
+
+/* Test 2 期望失败标志：由回调在超时（hdr == NULL）时置位 */
+static bool expect_fail_observed;
+
+/**
+ * @brief 服务端事件循环线程：驱动 ssn_server_poll 处理连接与请求
+ */
+static void *server_poll_thread(void *arg)
+{
+    ssn_server_t *srv = (ssn_server_t *)arg;
+
+    while (g_srv_running) {
+        ssn_server_poll(srv, 100);
+    }
+    return NULL;
+}
+
+/**
+ * @brief 无响应处理方法：接收请求但不回复，模拟服务器无响应（触发客户端超时）
+ */
+static void no_reply_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t *ipc_hdr,
+                             ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg)
+{
+    (void)server;
+    (void)id;
+    (void)ipc_hdr;
+    (void)url;
+    (void)data;
+    (void)arg;
+}
+
+/**
+ * @brief 期望失败回调：服务器未响应（hdr == NULL）即视为预期失败成立
+ */
+static void expect_fail_cb(ssn_client_t *client, ssn_header_t *hdr,
+                           ssn_data_ref_t *data, void *arg)
+{
+    (void)client;
+    (void)data;
+    (void)arg;
+
+    if (hdr == NULL) {
+        expect_fail_observed = true; // 超时 = 预期失败成立
+    }
+}
+
 /**
  * @brief Test 2: RPC call timeout
  */
@@ -70,10 +119,33 @@ static bool test_rpc_timeout(void)
         return false;
     }
 
+    // 注册无响应方法：接收请求但不回复，使客户端调用超时
+    ssn_url_ref_t no_reply_url = {
+        .url = "/test",
+        .url_len = 6
+    };
+    if (!ssn_server_add_method(server, &no_reply_url, no_reply_handler, NULL)) {
+        LOG_ERROR("Failed to register no-reply method");
+        ssn_server_destroy(server);
+        return false;
+    }
+
+    // 启动服务端事件循环线程（连接握手与请求分发需要服务端 poll 驱动）
+    g_srv_running = true;
+    pthread_t srv_thread;
+    if (pthread_create(&srv_thread, NULL, server_poll_thread, server) != 0) {
+        LOG_ERROR("Failed to create server poll thread");
+        g_srv_running = false;
+        ssn_server_destroy(server);
+        return false;
+    }
+
     // Create IPC client
     ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_server_destroy(server);
         return false;
     }
@@ -87,6 +159,8 @@ static bool test_rpc_timeout(void)
     // Connect to server
     if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_client_close(client);
         ssn_server_destroy(server);
         return false;
@@ -104,10 +178,16 @@ static bool test_rpc_timeout(void)
         .url_len = 6
     };
 
-    // Make RPC call with short timeout (2 seconds)
-    int result = ssn_client_call(client, &url, &data, NULL, NULL, 2000);
-    if (result >= 0) {
+    // Make RPC call with short timeout (200ms)
+    // 注意：ssn_client_call 发送成功即返回 0，超时失败必须通过回调判断
+    //（回调收到 hdr == NULL 表示服务器未响应/超时，即预期失败成立）
+    expect_fail_observed = false;
+    ssn_client_call(client, &url, &data, expect_fail_cb, NULL, 200);
+    ssn_client_poll(client, 1000); // 驱动回调（1 秒，需大于 200ms 超时）
+    if (!expect_fail_observed) {
         LOG_ERROR("Expected RPC call to timeout, but it succeeded");
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_client_close(client);
         ssn_server_destroy(server);
         return false;
@@ -116,6 +196,8 @@ static bool test_rpc_timeout(void)
     LOG_INFO("Test 2 passed (expected timeout)");
 
     // Cleanup
+    g_srv_running = false;
+    pthread_join(srv_thread, NULL);
     ssn_client_close(client);
     ssn_server_destroy(server);
     return true;
