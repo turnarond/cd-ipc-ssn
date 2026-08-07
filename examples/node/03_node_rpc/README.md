@@ -2,15 +2,15 @@
 
 ## 示例说明
 
-本示例展示了 cd-ipc-ssn 库的节点 RPC 功能。它演示了如何在节点之间进行远程过程调用。
+本示例展示了 cd-ipc-ssn 库的节点 RPC 功能。它演示了如何创建服务端节点与客户端节点，在服务端节点上注册 RPC 方法，并由客户端节点发起远程调用。
 
 ## 功能特性
 
-- 创建两个节点
-- 启动两个节点
-- 在节点上注册 RPC 方法
-- 节点间 RPC 调用
+- 创建服务端节点与客户端节点
+- 在服务端节点上注册 RPC 方法（`/math/add`、`/math/subtract`）
+- 客户端节点发起 RPC 调用
 - 处理 RPC 响应
+- 后台服务端轮询线程驱动（`server_poll_thread`）
 
 ## 代码结构
 
@@ -23,43 +23,31 @@
 
 ## 核心代码解析
 
-### 节点 RPC 示例 (node_rpc.c)
+1. **服务端节点配置与创建**
+   - `node_type` = "server"、`node_name` = "ServerNode"
+   - `listen_address` = "127.0.0.1"（裸主机名，不含协议前缀）+ `listen_port` = 8891
+   - `capabilities` = SERVER | RPC
 
-1. **节点1配置与创建**
-   - 设置节点1类型为 "example"
-   - 设置节点1名称为 "rpc_server_node"
-   - 配置节点1能力（RPC、Server）
-   - 设置节点1监听地址为 "tcp://127.0.0.1:8891"
-   - 使用 `ssn_node_create` 创建节点1
+2. **服务端节点启动与 RPC 方法注册**
+   - 使用 `ssn_node_start` 启动（内部创建 TCP 服务器监听 8891 端口）
+   - 使用 `ssn_node_add_rpc_method` 注册 `/math/add` 与 `/math/subtract` 两个方法
+   - 启动后台线程 `server_poll_thread` 循环调用 `ssn_node_poll(server_node, 100)`——**服务器节点是 poll 驱动的，需要后台轮询才能接受连接和处理请求**
 
-2. **节点2配置与创建**
-   - 设置节点2类型为 "example"
-   - 设置节点2名称为 "rpc_client_node"
-   - 配置节点2能力（RPC、Client）
-   - 设置节点2连接地址为 "tcp://127.0.0.1:8891"
-   - 使用 `ssn_node_create` 创建节点2
+3. **客户端节点配置与创建**
+   - `node_type` = "client"、`node_name` = "ClientNode"
+   - `capabilities` = CLIENT | RPC（无监听地址）
 
-3. **RPC 方法注册**
-   - 在节点1上注册 `add_handler` 处理 `/math/add` 方法
-   - 在节点1上注册 `subtract_handler` 处理 `/math/subtract` 方法
+4. **RPC 调用**
+   - 使用 `ssn_node_rpc_call` 调用服务端节点（对端地址 `tcp://127.0.0.1:8891`）：
+     - `/math/add`：参数 `{"a": 5, "b": 3}`，结果 8
+     - `/math/subtract`：参数 `{"a": 10, "b": 4}`，结果 6
+   - 每次调用后在 5 秒窗口内轮询两个节点等待响应完成（`g_rpc_complete` 标志）
 
-4. **节点启动**
-   - 使用 `ssn_node_start` 启动节点1
-   - 使用 `ssn_node_start` 启动节点2
+5. **响应处理**
+   - 注册 RPC 响应处理回调 `rpc_reply_handler`，收到响应时打印结果
 
-5. **节点间 RPC 调用**
-   - 节点2调用节点1的 `/math/add` 方法，计算 5 + 3
-   - 节点2调用节点1的 `/math/subtract` 方法，计算 10 - 4
-
-6. **RPC 响应处理**
-   - 注册 RPC 响应处理回调函数 `rpc_reply_handler`
-   - 当接收到 RPC 响应时，打印响应结果
-
-7. **节点停止与销毁**
-   - 使用 `ssn_node_stop` 停止节点1
-   - 使用 `ssn_node_stop` 停止节点2
-   - 使用 `ssn_node_destroy` 销毁节点1
-   - 使用 `ssn_node_destroy` 销毁节点2
+6. **清理**
+   - 停止后台轮询线程，停止并销毁两个节点
 
 ## 运行示例
 
@@ -67,8 +55,10 @@
 
 ```bash
 cd examples/node/03_node_rpc
-make
+make clean && make
 ```
+
+> 二进制已内置 rpath，构建完成后可直接运行，无需设置 `LD_LIBRARY_PATH`。
 
 ### 运行示例
 
@@ -85,51 +75,39 @@ make run
 ## 预期输出
 
 ```
-[INFO] [node_rpc.c:172] main(): Starting node RPC example...
-[INFO] [ssn_node.c:170] ssn_node_create(): node created successfully, id=example_rpc_server_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456, type=example, name=rpc_server_node
-[INFO] [node_rpc.c:182] main(): Server node created successfully
-[INFO] [ssn_node.c:170] ssn_node_create(): node created successfully, id=example_rpc_client_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456, type=example, name=rpc_client_node
-[INFO] [node_rpc.c:192] main(): Client node created successfully
-[INFO] [node_rpc.c:197] main(): Registering RPC methods on server node...
-[INFO] [node_rpc.c:207] main(): RPC methods registered successfully
-[INFO] [node_rpc.c:212] main(): Starting server node...
-[INFO] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/transports/ssn_transport_factory.c:102] ssn_transport_factory_init(): Transport factory initialized successfully
-[INFO] [ssn_node.c:230] ssn_node_start(): server started on tcp://127.0.0.1:8891
-[INFO] [ssn_node.c:244] ssn_node_start(): node started successfully, id=example_rpc_server_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_rpc.c:217] main(): Server node started successfully
-[INFO] [node_rpc.c:222] main(): Starting client node...
-[INFO] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/transports/ssn_transport_factory.c:102] ssn_transport_factory_init(): Transport factory initialized successfully
-[INFO] [ssn_node.c:230] ssn_node_start(): server started on tcp://127.0.0.1:8891
-[INFO] [ssn_node.c:244] ssn_node_start(): node started successfully, id=example_rpc_client_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_rpc.c:227] main(): Client node started successfully
-[INFO] [node_rpc.c:232] main(): Testing node RPC calls...
-[INFO] [node_rpc.c:46] add_handler(): RPC method called: /math/add with parameters: {"a": 5, "b": 3}
-[INFO] [node_rpc.c:68] add_handler(): RPC method /math/add returned: 8
-[INFO] [node_rpc.c:98] rpc_reply_handler(): RPC call successful, result: 8
-[INFO] [node_rpc.c:78] subtract_handler(): RPC method called: /math/subtract with parameters: {"a": 10, "b": 4}
-[INFO] [node_rpc.c:100] subtract_handler(): RPC method /math/subtract returned: 6
-[INFO] [node_rpc.c:98] rpc_reply_handler(): RPC call successful, result: 6
-[INFO] [node_rpc.c:242] main(): Node RPC test completed
-[INFO] [node_rpc.c:247] main(): Running for 5 seconds...
-[INFO] [node_rpc.c:252] main(): Stopping nodes...
-[INFO] [ssn_node.c:272] ssn_node_stop(): server stopped
-[INFO] [ssn_node.c:286] ssn_node_stop(): node stopped successfully, id=example_rpc_server_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [ssn_node.c:272] ssn_node_stop(): server stopped
-[INFO] [ssn_node.c:286] ssn_node_stop(): node stopped successfully, id=example_rpc_client_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_rpc.c:257] main(): Nodes stopped successfully
-[INFO] [node_rpc.c:262] main(): Destroying nodes...
-[INFO] [ssn_node.c:322] ssn_node_destroy(): node destroyed, id=example_rpc_server_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [ssn_node.c:322] ssn_node_destroy(): node destroyed, id=example_rpc_client_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_rpc.c:267] main(): Nodes destroyed successfully
-[INFO] [node_rpc.c:269] main(): Node RPC example completed
+[INFO] [node_rpc.c:335] main(): Node RPC example started
+[INFO] [node_rpc.c:149] test_node_rpc(): Test: Node-to-node RPC
+[INFO] [node_rpc.c:166] test_node_rpc(): Server node created: id=<node_id>, type=server, name=ServerNode
+[INFO] [node_rpc.c:176] test_node_rpc(): Server node started
+[INFO] [node_rpc.c:187] test_node_rpc(): RPC method /math/add registered
+[INFO] [node_rpc.c:194] test_node_rpc(): RPC method /math/subtract registered
+[INFO] [node_rpc.c:219] test_node_rpc(): Client node created: id=<node_id>, type=client, name=ClientNode
+[INFO] [node_rpc.c:230] test_node_rpc(): Client node started
+[INFO] [node_rpc.c:233] test_node_rpc(): Client calling /math/add with {"a": 5, "b": 3}
+[INFO] [node_rpc.c:53] add_handler(): Server received RPC call: /math/add with {"a": 5, "b": 3}
+[INFO] [node_rpc.c:75] add_handler(): Server sent RPC response: 8
+[INFO] [node_rpc.c:135] rpc_reply_handler(): Client received RPC response: 8
+[INFO] [node_rpc.c:274] test_node_rpc(): Client calling /math/subtract with {"a": 10, "b": 4}
+[INFO] [node_rpc.c:94] subtract_handler(): Server received RPC call: /math/subtract with {"a": 10, "b": 4}
+[INFO] [node_rpc.c:116] subtract_handler(): Server sent RPC response: 6
+[INFO] [node_rpc.c:135] rpc_reply_handler(): Client received RPC response: 6
+[INFO] [node_rpc.c:326] test_node_rpc(): RPC test completed successfully
+[INFO] [node_rpc.c:341] main():
+All RPC tests completed successfully!
 ```
+
+> 注：
+> - `<node_id>` 由 `节点类型_节点名称_主机名_时间戳` 生成（见 `ssn_node.c` 的 `generate_node_id`），每次运行不同，此处为占位符。
+> - 实际输出中每条日志还包含时间戳与线程 ID 前缀（`[时间] [INFO] [线程ID] ...`），以上为便于阅读省略；`LOG_INFO("\n...")` 中的 `\n` 会使日志内容换行显示。
+> - 库内部日志（如 `ssn_node.c` 中节点创建/启动/停止/销毁、传输工厂初始化等 INFO 日志）也会出现在实际输出中，其文件路径与行号以实际编译路径为准，此处未逐一列出。
 
 ## 注意事项
 
 - 本示例使用 TCP 作为传输协议
-- 节点1监听地址为 `tcp://127.0.0.1:8891`
-- 节点2连接地址为 `tcp://127.0.0.1:8891`
-- 节点运行 5 秒后自动停止
+- 服务端节点监听 `127.0.0.1:8891`（`listen_address` 只接受裸主机名）
+- 客户端节点通过完整对端地址 `tcp://127.0.0.1:8891` 发起调用
+- **服务器节点为 poll 驱动**：示例启动后台线程轮询 `ssn_node_poll`，否则连接握手与请求分发不会发生
+- 示例约运行 2~4 秒（两次 RPC 调用完成后即退出），全部通过后退出码为 0
 
 ## 相关 API
 
@@ -137,7 +115,7 @@ make run
 - `ssn_node_start` - 启动节点
 - `ssn_node_stop` - 停止节点
 - `ssn_node_destroy` - 销毁节点
-- `ssn_node_get_client` - 获取节点的客户端
-- `ssn_node_get_server` - 获取节点的服务器
 - `ssn_node_add_rpc_method` - 向节点添加 RPC 方法
-- `ssn_node_rpc_call` - 调用 RPC 方法
+- `ssn_node_rpc_call` - 发起 RPC 调用
+- `ssn_node_poll` - 轮询节点事件
+- `pthread_create` / `pthread_join` - 创建/等待后台轮询线程（POSIX 线程库）

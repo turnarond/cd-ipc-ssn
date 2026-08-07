@@ -2,7 +2,7 @@
 
 ## 示例说明
 
-本示例展示了 cd-ipc-ssn 库的节点生命周期管理功能。它演示了如何创建、启动、停止和销毁一个节点，以及如何管理节点的生命周期状态。
+本示例展示了 cd-ipc-ssn 库的节点生命周期管理功能。它演示了如何创建、启动、停止和销毁节点，以及不同配置（基础、最小配置、仅服务端、仅客户端）下节点的生命周期状态。
 
 ## 功能特性
 
@@ -10,7 +10,8 @@
 - 启动节点
 - 停止节点
 - 销毁节点
-- 监控节点状态变化
+- 获取节点状态（STOPPED / ACTIVE）与能力
+- 基础配置 / 最小配置 / 仅服务端 / 仅客户端 四种节点形态
 
 ## 代码结构
 
@@ -23,32 +24,37 @@
 
 ## 核心代码解析
 
-### 节点生命周期示例 (node_lifecycle.c)
+### 测试1：基础生命周期（test_basic_lifecycle）
 
 1. **节点配置**
-   - 设置节点类型为 "example"
-   - 设置节点名称为 "lifecycle_node"
-   - 配置节点能力（RPC、Pub/Sub、Server、Client）
-   - 设置监听地址为 "tcp://127.0.0.1:8888"
+   - `node_type` = "test"、`node_name` = "basic-node"
+   - `listen_address` = "127.0.0.1"（裸主机名，不含协议前缀）+ `listen_port` = 8888
+   - `capabilities` = RPC | PUBSUB | SERVER | CLIENT（0x000f）
 
-2. **节点创建**
-   - 使用 `ssn_node_create` 创建节点
-   - 检查节点创建状态
-   - 打印节点信息
+2. **节点创建**：使用 `ssn_node_create` 创建节点，打印节点 ID / 类型 / 名称，创建后状态为 STOPPED
 
-3. **节点启动**
-   - 使用 `ssn_node_start` 启动节点
-   - 检查节点启动状态
-   - 打印节点状态
+3. **节点启动**：使用 `ssn_node_start` 启动节点，启动后状态变为 ACTIVE
 
-4. **节点停止**
-   - 使用 `ssn_node_stop` 停止节点
-   - 检查节点停止状态
-   - 打印节点状态
+4. **节点停止**：使用 `ssn_node_stop` 停止节点，状态恢复为 STOPPED
 
-5. **节点销毁**
-   - 使用 `ssn_node_destroy` 销毁节点
-   - 检查节点销毁状态
+5. **节点销毁**：使用 `ssn_node_destroy` 销毁节点
+
+### 测试2：最小配置（test_minimal_config）
+
+- 仅设置 `node_type` = "minimal"、`node_name` = "minimal"，其余字段使用默认值
+- 打印默认能力（未设置能力时默认 RPC | PUBSUB | SERVER | CLIENT，即 0x000f）
+
+### 测试3：仅服务端节点（test_server_only）
+
+- `node_type` = "server"、`node_name` = "server-only"
+- `listen_address` = "127.0.0.1" + `listen_port` = 8889，`capabilities` = SERVER | RPC（0x0005）
+- 启动（创建 TCP 服务器监听 8889 端口）→ 停止 → 销毁
+
+### 测试4：仅客户端节点（test_client_only）
+
+- `node_type` = "client"、`node_name` = "client-only"
+- `capabilities` = CLIENT | RPC（0x0009），无监听地址
+- 创建 → 销毁（客户端在需要时按需创建，见 `ssn_node_get_client`）
 
 ## 运行示例
 
@@ -56,8 +62,10 @@
 
 ```bash
 cd examples/node/01_node_lifecycle
-make
+make clean && make
 ```
+
+> 二进制已内置 rpath，构建完成后可直接运行，无需设置 `LD_LIBRARY_PATH`。
 
 ### 运行示例
 
@@ -74,36 +82,47 @@ make run
 ## 预期输出
 
 ```
-[INFO] [node_lifecycle.c:102] main(): Starting node lifecycle example...
-[INFO] [ssn_node.c:170] ssn_node_create(): node created successfully, id=example_lifecycle_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456, type=example, name=lifecycle_node
-[INFO] [node_lifecycle.c:112] main(): Node created successfully
-[INFO] [node_lifecycle.c:117] main(): Node ID: example_lifecycle_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_lifecycle.c:118] main(): Node type: example
-[INFO] [node_lifecycle.c:119] main(): Node name: lifecycle_node
-[INFO] [node_lifecycle.c:124] main(): Node state: STOPPED
-[INFO] [node_lifecycle.c:129] main(): Starting node...
-[INFO] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/transports/ssn_transport_factory.c:102] ssn_transport_factory_init(): Transport factory initialized successfully
-[INFO] [ssn_node.c:230] ssn_node_start(): server started on tcp://127.0.0.1:8888
-[INFO] [ssn_node.c:244] ssn_node_start(): node started successfully, id=example_lifecycle_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_lifecycle.c:134] main(): Node started successfully
-[INFO] [node_lifecycle.c:139] main(): Node state: ACTIVE
-[INFO] [node_lifecycle.c:144] main(): Running for 5 seconds...
-[INFO] [node_lifecycle.c:149] main(): Stopping node...
-[INFO] [ssn_node.c:272] ssn_node_stop(): server stopped
-[INFO] [ssn_node.c:286] ssn_node_stop(): node stopped successfully, id=example_lifecycle_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_lifecycle.c:154] main(): Node stopped successfully
-[INFO] [node_lifecycle.c:159] main(): Node state: STOPPED
-[INFO] [node_lifecycle.c:164] main(): Destroying node...
-[INFO] [ssn_node.c:322] ssn_node_destroy(): node destroyed, id=example_lifecycle_node_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_lifecycle.c:169] main(): Node destroyed successfully
-[INFO] [node_lifecycle.c:171] main(): Node lifecycle example completed
+[INFO] [node_lifecycle.c:214] main(): Node lifecycle example started
+[INFO] [node_lifecycle.c:20] test_basic_lifecycle(): Test 1: Basic node lifecycle
+[INFO] [node_lifecycle.c:39] test_basic_lifecycle(): Node created successfully: id=<node_id>, type=test, name=basic-node
+[INFO] [node_lifecycle.c:44] test_basic_lifecycle(): Node state: STOPPED
+[INFO] [node_lifecycle.c:50] test_basic_lifecycle(): Node capabilities: 0x000f (SERVER|CLIENT|RPC|PUBSUB)
+[INFO] [node_lifecycle.c:64] test_basic_lifecycle(): Node started successfully
+[INFO] [node_lifecycle.c:68] test_basic_lifecycle(): Node state: ACTIVE
+[INFO] [node_lifecycle.c:79] test_basic_lifecycle(): Node stopped successfully
+[INFO] [node_lifecycle.c:83] test_basic_lifecycle(): Node state: STOPPED
+[INFO] [node_lifecycle.c:89] test_basic_lifecycle(): Node destroyed successfully
+[INFO] [node_lifecycle.c:99] test_minimal_config():
+Test 2: Minimal configuration
+
+[INFO] [node_lifecycle.c:115] test_minimal_config(): Node created with minimal config: id=<node_id>, type=minimal, name=minimal
+[INFO] [node_lifecycle.c:120] test_minimal_config(): Default capabilities: 0x000f
+[INFO] [node_lifecycle.c:124] test_minimal_config(): Minimal config node destroyed successfully
+[INFO] [node_lifecycle.c:134] test_server_only():
+Test 3: Server-only node
+
+[INFO] [node_lifecycle.c:152] test_server_only(): Server-only node created: id=<node_id>, type=server, name=server-only
+[INFO] [node_lifecycle.c:162] test_server_only(): Server-only node started successfully
+[INFO] [node_lifecycle.c:173] test_server_only(): Server-only node destroyed successfully
+[INFO] [node_lifecycle.c:183] test_client_only():
+Test 4: Client-only node
+
+[INFO] [node_lifecycle.c:199] test_client_only(): Client-only node created: id=<node_id>, type=client, name=client-only
+[INFO] [node_lifecycle.c:204] test_client_only(): Client-only node destroyed successfully
+[INFO] [node_lifecycle.c:223] main():
+All lifecycle tests completed successfully!
 ```
+
+> 注：
+> - `<node_id>` 由 `节点类型_节点名称_主机名_时间戳` 生成（见 `ssn_node.c` 的 `generate_node_id`），每次运行不同，此处为占位符。
+> - 实际输出中每条日志还包含时间戳与线程 ID 前缀（`[时间] [INFO] [线程ID] ...`），以上为便于阅读省略；`LOG_INFO("\n...")` 中的 `\n` 会使日志内容换行显示。
+> - 库内部日志（如 `ssn_node.c` 中节点创建/启动/停止/销毁、传输工厂初始化等 INFO 日志）也会出现在实际输出中，其文件路径与行号以实际编译路径为准，此处未逐一列出。
 
 ## 注意事项
 
-- 本示例使用 TCP 作为传输协议
-- 节点监听地址为 `tcp://127.0.0.1:8888`
-- 节点运行 5 秒后自动停止
+- 本示例使用 TCP 作为传输协议（`listen_address` 只接受裸主机名，协议前缀由库内部拼接）
+- 测试3 使用端口 8889 创建第二个服务器，避免与测试1 的 8888 端口冲突
+- 示例包含 4 个测试，全部通过后退出码为 0；示例不会长时间运行，完成后立即结束
 
 ## 相关 API
 
@@ -112,3 +131,4 @@ make run
 - `ssn_node_stop` - 停止节点
 - `ssn_node_destroy` - 销毁节点
 - `ssn_node_get_state` - 获取节点状态
+- `ssn_node_get_capabilities` - 获取节点能力

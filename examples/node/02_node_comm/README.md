@@ -2,15 +2,15 @@
 
 ## 示例说明
 
-本示例展示了 cd-ipc-ssn 库的节点间通信功能。它演示了如何创建两个节点，并在它们之间进行通信。
+本示例展示了 cd-ipc-ssn 库的节点间通信功能。它演示了如何创建服务端节点（Node A）与客户端节点（Node B），并通过节点抽象层在两者之间发送消息与回复。
 
 ## 功能特性
 
-- 创建两个节点
-- 启动两个节点
-- 节点间消息传递
-- 节点间 RPC 调用
-- 节点间发布/订阅
+- 创建服务端节点与客户端节点
+- 服务端节点监听连接（TCP）
+- 客户端节点向服务端节点发送消息
+- 服务端节点接收消息并回发回复
+- 后台服务端轮询线程驱动（`server_poll_thread`）
 
 ## 代码结构
 
@@ -23,37 +23,29 @@
 
 ## 核心代码解析
 
-### 节点间通信示例 (node_comm.c)
+1. **Node A（服务端节点）配置与创建**
+   - `node_type` = "server"、`node_name` = "NodeA"
+   - `listen_address` = "127.0.0.1"（裸主机名，不含协议前缀）+ `listen_port` = 8890
+   - `capabilities` = SERVER | CLIENT | RPC | PUBSUB
 
-1. **节点1配置与创建**
-   - 设置节点1类型为 "example"
-   - 设置节点1名称为 "node1"
-   - 配置节点1能力（RPC、Pub/Sub、Server、Client）
-   - 设置节点1监听地址为 "tcp://127.0.0.1:8890"
-   - 使用 `ssn_node_create` 创建节点1
+2. **Node A 启动**
+   - 使用 `ssn_node_start` 启动（内部创建 TCP 服务器监听 8890 端口）
+   - 使用 `ssn_node_set_message_handler` 注册消息处理回调 `node_a_message_handler`
+   - 启动后台线程 `server_poll_thread` 循环调用 `ssn_node_poll(node_a, 100)`——**服务器节点是 poll 驱动的，需要后台轮询才能接受连接和处理消息**
 
-2. **节点2配置与创建**
-   - 设置节点2类型为 "example"
-   - 设置节点2名称为 "node2"
-   - 配置节点2能力（RPC、Pub/Sub、Server、Client）
-   - 设置节点2连接地址为 "tcp://127.0.0.1:8890"
-   - 使用 `ssn_node_create` 创建节点2
+3. **Node B（客户端节点）配置与创建**
+   - `node_type` = "client"、`node_name` = "NodeB"
+   - `capabilities` = CLIENT | RPC | PUBSUB（无监听地址）
+   - 使用 `ssn_node_start` 启动（客户端按需创建）
 
-3. **节点启动**
-   - 使用 `ssn_node_start` 启动节点1
-   - 使用 `ssn_node_start` 启动节点2
+4. **消息发送与回复**
+   - Node B 使用 `ssn_node_send_to_peer` 向 Node A（对端地址 `tcp://127.0.0.1:8890`）发送 "Hello from Node B!"（18 字节），消息路径 `/message`
+   - Node A 的回调收到消息后，通过 `ssn_server_message` 直接回复 "Hello from Node A!"（18 字节），路径 `/reply`（注意：回调上下文中不能重入节点 API，因此直接经 server 发送）
+   - Node B 使用 `ssn_node_set_client_message_handler` 注册回复处理回调 `node_b_message_handler`
+   - 主流程在 10 秒窗口内轮询两个节点等待消息与回复完成
 
-4. **节点间通信**
-   - 节点1向节点2发送消息
-   - 节点2向节点1发送消息
-   - 节点1调用节点2的 RPC 方法
-   - 节点2发布消息，节点1订阅
-
-5. **节点停止与销毁**
-   - 使用 `ssn_node_stop` 停止节点1
-   - 使用 `ssn_node_stop` 停止节点2
-   - 使用 `ssn_node_destroy` 销毁节点1
-   - 使用 `ssn_node_destroy` 销毁节点2
+5. **清理**
+   - 停止后台轮询线程，停止并销毁两个节点
 
 ## 运行示例
 
@@ -61,8 +53,10 @@
 
 ```bash
 cd examples/node/02_node_comm
-make
+make clean && make
 ```
+
+> 二进制已内置 rpath，构建完成后可直接运行，无需设置 `LD_LIBRARY_PATH`。
 
 ### 运行示例
 
@@ -79,45 +73,34 @@ make run
 ## 预期输出
 
 ```
-[INFO] [node_comm.c:142] main(): Starting node communication example...
-[INFO] [ssn_node.c:170] ssn_node_create(): node created successfully, id=example_node1_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456, type=example, name=node1
-[INFO] [node_comm.c:152] main(): Node 1 created successfully
-[INFO] [ssn_node.c:170] ssn_node_create(): node created successfully, id=example_node2_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456, type=example, name=node2
-[INFO] [node_comm.c:162] main(): Node 2 created successfully
-[INFO] [node_comm.c:167] main(): Starting node 1...
-[INFO] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/transports/ssn_transport_factory.c:102] ssn_transport_factory_init(): Transport factory initialized successfully
-[INFO] [ssn_node.c:230] ssn_node_start(): server started on tcp://127.0.0.1:8890
-[INFO] [ssn_node.c:244] ssn_node_start(): node started successfully, id=example_node1_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_comm.c:172] main(): Node 1 started successfully
-[INFO] [node_comm.c:177] main(): Starting node 2...
-[INFO] [/home/yanchaodong/work/acoinfo/edge-framework/src/comms/cd-ipc-ssn/src/transports/ssn_transport_factory.c:102] ssn_transport_factory_init(): Transport factory initialized successfully
-[INFO] [ssn_node.c:230] ssn_node_start(): server started on tcp://127.0.0.1:8890
-[INFO] [ssn_node.c:244] ssn_node_start(): node started successfully, id=example_node2_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_comm.c:182] main(): Node 2 started successfully
-[INFO] [node_comm.c:187] main(): Testing node communication...
-[INFO] [node_comm.c:46] message_handler(): Node 1 received message: Hello from Node 2!
-[INFO] [node_comm.c:46] message_handler(): Node 2 received message: Hello from Node 1!
-[INFO] [node_comm.c:197] main(): Node communication test completed
-[INFO] [node_comm.c:202] main(): Running for 5 seconds...
-[INFO] [node_comm.c:207] main(): Stopping nodes...
-[INFO] [ssn_node.c:272] ssn_node_stop(): server stopped
-[INFO] [ssn_node.c:286] ssn_node_stop(): node stopped successfully, id=example_node1_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [ssn_node.c:272] ssn_node_stop(): server stopped
-[INFO] [ssn_node.c:286] ssn_node_stop(): node stopped successfully, id=example_node2_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_comm.c:212] main(): Nodes stopped successfully
-[INFO] [node_comm.c:217] main(): Destroying nodes...
-[INFO] [ssn_node.c:322] ssn_node_destroy(): node destroyed, id=example_node1_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [ssn_node.c:322] ssn_node_destroy(): node destroyed, id=example_node2_pc-Lenovo-WenTian-WR3220-G2_1713600000_123456
-[INFO] [node_comm.c:222] main(): Nodes destroyed successfully
-[INFO] [node_comm.c:224] main(): Node communication example completed
+[INFO] [node_comm.c:249] main(): Node communication example started
+[INFO] [node_comm.c:101] test_node_communication(): Test: Node-to-node communication
+[INFO] [node_comm.c:119] test_node_communication(): Node A created: id=<node_id>, type=server, name=NodeA
+[INFO] [node_comm.c:129] test_node_communication(): Node A started
+[INFO] [node_comm.c:159] test_node_communication(): Node B created: id=<node_id>, type=client, name=NodeB
+[INFO] [node_comm.c:172] test_node_communication(): Node B started
+[INFO] [node_comm.c:185] test_node_communication(): Node B sending message to Node A: Hello from Node B!
+[INFO] [node_comm.c:199] test_node_communication(): Waiting for communication to complete...
+[INFO] [node_comm.c:53] node_a_message_handler(): Node A received message: Hello from Node B!
+[INFO] [node_comm.c:72] node_a_message_handler(): Node A sent reply: Hello from Node A!
+[INFO] [node_comm.c:90] node_b_message_handler(): Node B received reply: Hello from Node A!
+[INFO] [node_comm.c:240] test_node_communication(): Communication test completed successfully
+[INFO] [node_comm.c:255] main():
+All communication tests completed successfully!
 ```
+
+> 注：
+> - `<node_id>` 由 `节点类型_节点名称_主机名_时间戳` 生成（见 `ssn_node.c` 的 `generate_node_id`），每次运行不同，此处为占位符。
+> - 实际输出中每条日志还包含时间戳与线程 ID 前缀（`[时间] [INFO] [线程ID] ...`），以上为便于阅读省略；`LOG_INFO("\n...")` 中的 `\n` 会使日志内容换行显示。
+> - 库内部日志（如 `ssn_node.c` 中节点创建/启动/停止/销毁、传输工厂初始化等 INFO 日志）也会出现在实际输出中，其文件路径与行号以实际编译路径为准，此处未逐一列出。
 
 ## 注意事项
 
 - 本示例使用 TCP 作为传输协议
-- 节点1监听地址为 `tcp://127.0.0.1:8890`
-- 节点2连接地址为 `tcp://127.0.0.1:8890`
-- 节点运行 5 秒后自动停止
+- Node A 监听 `127.0.0.1:8890`（`listen_address` 只接受裸主机名）
+- Node B 通过完整对端地址 `tcp://127.0.0.1:8890` 发送消息
+- **服务器节点为 poll 驱动**：示例启动后台线程轮询 `ssn_node_poll`，否则连接握手与消息处理不会发生
+- 示例约运行 1~2 秒（等待消息与回复完成后即退出），全部通过后退出码为 0
 
 ## 相关 API
 
@@ -125,9 +108,8 @@ make run
 - `ssn_node_start` - 启动节点
 - `ssn_node_stop` - 停止节点
 - `ssn_node_destroy` - 销毁节点
-- `ssn_node_get_client` - 获取节点的客户端
-- `ssn_node_get_server` - 获取节点的服务器
-- `ssn_node_send_to_peer` - 节点间发送消息
-- `ssn_node_rpc_call` - 调用 RPC 方法
-- `ssn_node_subscribe` - 订阅主题
-- `ssn_node_publish` - 发布消息
+- `ssn_node_set_message_handler` - 设置节点消息处理回调
+- `ssn_node_set_client_message_handler` - 设置客户端消息处理回调
+- `ssn_node_send_to_peer` - 向对端节点发送消息
+- `ssn_node_poll` - 轮询节点事件
+- `pthread_create` / `pthread_join` - 创建/等待后台轮询线程（POSIX 线程库）
