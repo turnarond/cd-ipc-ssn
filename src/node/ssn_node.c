@@ -308,9 +308,13 @@ void ssn_node_destroy(ssn_node_t *node)
         return;
     }
 
-    // Stop if still running
+    // Stop if still running. Do not hold the lock while calling
+    // ssn_node_stop: it re-acquires node->lock, and this mutex is not
+    // recursive, so holding the lock here would self-deadlock.
     if (node->state == SSN_NODE_STATE_ACTIVE) {
+        ipc_mutex_unlock(node->lock);
         ssn_node_stop(node);
+        ipc_mutex_lock(node->lock);
     }
 
     // Cleanup resources

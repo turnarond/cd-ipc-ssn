@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -540,19 +541,66 @@ static bool test_node_stats(void)
     return true;
 }
 
+/**
+ * @brief Test 6: Destroy active node without explicit stop (deadlock regression)
+ */
+static bool test_node_destroy_active(void)
+{
+    LOG_INFO("=== Test 6: Destroy active node without stop (deadlock regression) ===");
+
+    // Create node configuration
+    ssn_node_config_t config = {
+        .node_type = "test",
+        .node_name = "destroy-active",
+        .listen_address = "127.0.0.1",
+        .listen_port = 8890,
+        .capabilities = SSN_NODE_CAP_SERVER
+    };
+
+    // Create node
+    ssn_node_t *node = ssn_node_create(&config);
+    if (!node) {
+        LOG_ERROR("Failed to create node");
+        return false;
+    }
+
+    // Start node (server role)
+    if (!ssn_node_start(node)) {
+        LOG_ERROR("Failed to start node");
+        ssn_node_destroy(node);
+        return false;
+    }
+
+    // Destroy without stop: self-deadlock before fix (hang), must complete quickly
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    ssn_node_destroy(node);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+    if (elapsed >= 5.0) {
+        LOG_ERROR("Destroy of active node too slow (%.3f s), possible deadlock", elapsed);
+        return false;
+    }
+
+    LOG_INFO("Destroyed active node successfully in %.3f s", elapsed);
+
+    return true;
+}
+
 int main(void)
 {
     LOG_INFO("Starting node abstraction layer tests...");
-    
+
     // Set log level
     ssn_log_set_level(SSN_LOG_LEVEL_INFO);
-    
+
     bool tests[] = {
         test_node_creation(),
         test_node_start_stop(),
         test_node_pubsub(),
         test_node_rpc(),
-        test_node_stats()
+        test_node_stats(),
+        test_node_destroy_active()
     };
     
     int test_count = sizeof(tests) / sizeof(tests[0]);
