@@ -110,7 +110,7 @@ typedef struct {
  * 
  * Represents a node with both client and server capabilities.
  */
-typedef struct ipc_node {
+typedef struct ssn_node {
     // Identity
     char node_id[64];                    /**< Node ID */
     char node_type[32];                  /**< Node type */

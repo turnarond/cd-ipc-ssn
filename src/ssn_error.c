@@ -20,15 +20,6 @@
     ((uint32_t)((SSN_ECODE_VERSION << 28) | (category << 24) | (subcategory << 16) | (code)))
 
 /**
- * @brief 获取错误码版本
- * @param error 错误码
- * @return 错误码版本
- */
-uint8_t ssn_ecode_version(ssn_ecode_t error) {
-    return (error >> 28) & 0x0F;
-}
-
-/**
  * @brief 错误消息映射表
  */
 static struct {
