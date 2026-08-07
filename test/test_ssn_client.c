@@ -313,6 +313,71 @@ static int test_timer_thread_survives(void)
     return 0;
 }
 
+/* ---- Test 8: set_on_message + 订阅消息分发（回归：set_on_message 恢复 onsub 赋值） ---- */
+
+static volatile int g_pub_received = 0;
+static char g_pub_buf[256];
+static size_t g_pub_len = 0;
+
+/* set_on_message 设置的消息回调：订阅（无回调）后收到的发布消息应分发到这里 */
+static void pub_handler(ssn_client_t *client, ssn_url_ref_t *url,
+                        ssn_data_ref_t *data, void *arg)
+{
+    (void)client; (void)url; (void)arg;
+    if (data && data->data && data->length < sizeof(g_pub_buf)) {
+        memcpy(g_pub_buf, data->data, data->length);
+        g_pub_len = data->length;
+    }
+    g_pub_received = 1;
+}
+
+static int test_set_on_message_subscribe(void)
+{
+    printf("  Test 8: set_on_message + subscribe + publish... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/pubtopic");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    {
+        struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+        if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+            if (cli) ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (connect)\n"); return 1;
+        }
+    }
+
+    /* set_on_message 后订阅（订阅不带回调）：发布消息应分发到该回调；
+     * 同时覆盖 NULL 订阅回调的保护（不得因空回调崩溃） */
+    ssn_client_set_on_message(cli, pub_handler, NULL);
+
+    ssn_url_ref_t url = { .url = "/pubtopic", .url_len = 9 };
+    if (!ssn_client_subscribe(cli, &url, NULL, NULL, TEST_TIMEOUT_MS)) {
+        ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (subscribe)\n"); return 1;
+    }
+
+    /* ssn_client_subscribe 为异步发送（无回调时不登记 pending）：
+     * 需等服务端 poll 处理完 SUBSCRIBE 并注册订阅后再发布 */
+    ssn_client_poll(cli, 100);
+    usleep(500000); // 服务端 poll 间隔 100ms，留足处理余量
+
+    /* 服务端发布 → 客户端 poll 驱动消息分发到 set_on_message 回调 */
+    g_pub_received = 0; g_pub_len = 0;
+    const char *payload = "hello-pub";
+    ssn_data_ref_t pub_data = { .data = (void*)payload, .length = 9 };
+    if (!ssn_server_publish(srv, &url, &pub_data)) {
+        ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (publish)\n"); return 1;
+    }
+
+    for (int i = 0; i < 20 && !g_pub_received; i++) { ssn_client_poll(cli, 100); usleep(50000); }
+
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!g_pub_received) { printf("FAIL (no message)\n"); return 1; }
+    if (g_pub_len != 9 || memcmp(g_pub_buf, "hello-pub", 9) != 0) { printf("FAIL (bad message)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -325,7 +390,8 @@ int main(void)
     failed += test_send_message();
     failed += test_poll_timeout();
     failed += test_timer_thread_survives();
+    failed += test_set_on_message_subscribe();
 
-    printf("=== Result: %d/7 passed, %d failed ===\n", 7 - failed, failed);
+    printf("=== Result: %d/8 passed, %d failed ===\n", 8 - failed, failed);
     return failed ? 1 : 0;
 }

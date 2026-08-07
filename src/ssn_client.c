@@ -918,8 +918,13 @@ static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hd
     for (h = client->sub_handlers; h; h = h->next) {
         if (h->url_len == url.url_len &&
             memcmp(h->url, url.url, url.url_len) == 0) {
-            h->callback(client, &url, &data, h->arg);
-            return true;
+            /* 订阅时允许传 NULL 回调（仅登记订阅）：此时消息未被处理，
+             * 回退到 onmsg（ssn_client_set_on_message 设置的兜底回调） */
+            if (h->callback) {
+                h->callback(client, &url, &data, h->arg);
+                return true;
+            }
+            break;
         }
     }
 
@@ -1454,9 +1459,9 @@ void ssn_client_set_on_message (ssn_client_t *client, ssn_client_msg_handler_t c
     ssn_client_ref(client);
 
     client->onmsg = callback;
-    // client->onsub = callback;
+    client->onsub = callback;
     client->msg_arg  = arg;
-    // client->sub_arg  = arg;
+    client->sub_arg  = arg;
 
     // 减少引用计数
     ssn_client_unref(client);
