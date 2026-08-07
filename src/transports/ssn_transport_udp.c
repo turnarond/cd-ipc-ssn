@@ -2,6 +2,8 @@
  * UDP Transport Adapter Implementation
  */
 
+/* 限制：UDP 为无连接传输，不支持 accept/server 模式握手；仅适用于对等/客户端模式收发 */
+
 #include "ssn_transport.h"
 #include <errno.h>
 #include <fcntl.h>
