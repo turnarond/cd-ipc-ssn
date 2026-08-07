@@ -378,6 +378,72 @@ static int test_set_on_message_subscribe(void)
     return 0;
 }
 
+/* ---- Test 9: 64 KiB 大消息往返（回归：SSN_MAX_PACKET_SIZE 宏重定义） ---- */
+
+#define BIG_MSG_SIZE (64 * 1024)
+
+static volatile int g_big_reply = 0;
+static char *g_big_buf = NULL;
+static size_t g_big_len = 0;
+
+/* 应答回调：校验长度并拷贝内容，供主流程逐字节比对 */
+static void big_reply_cb(ssn_client_t *client, ssn_header_t *ssn_hdr,
+                         ssn_data_ref_t *data, void *arg)
+{
+    (void)client; (void)ssn_hdr; (void)arg;
+    if (data && data->data && data->length == BIG_MSG_SIZE && g_big_buf) {
+        memcpy(g_big_buf, data->data, data->length);
+        g_big_len = data->length;
+    }
+    g_big_reply = 1;
+}
+
+static int test_big_message_roundtrip(void)
+{
+    printf("  Test 9: 64 KiB message round trip... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/bigmsg");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        if (cli) ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (connect)\n"); return 1;
+    }
+
+    /* 64 KiB（> 旧 server 侧 8192 上限）递增模式数据，RPC echo 后逐字节比对 */
+    unsigned char *payload = (unsigned char *)malloc(BIG_MSG_SIZE);
+    g_big_buf = (char *)malloc(BIG_MSG_SIZE);
+    if (!payload || !g_big_buf) {
+        free(payload); free(g_big_buf); g_big_buf = NULL;
+        ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (malloc)\n"); return 1;
+    }
+    for (int i = 0; i < BIG_MSG_SIZE; i++) {
+        payload[i] = (unsigned char)(i & 0xFF);
+    }
+
+    g_big_reply = 0; g_big_len = 0;
+    ssn_url_ref_t url = { .url = "/bigmsg", .url_len = 7 };
+    ssn_data_ref_t req = { .data = payload, .length = BIG_MSG_SIZE };
+
+    if (ssn_client_call(cli, &url, &req, big_reply_cb, NULL, TEST_TIMEOUT_MS) < 0) {
+        free(payload); free(g_big_buf); g_big_buf = NULL;
+        ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (call)\n"); return 1;
+    }
+
+    for (int i = 0; i < 20 && !g_big_reply; i++) { ssn_client_poll(cli, 100); usleep(50000); }
+
+    int ok = g_big_reply && g_big_len == BIG_MSG_SIZE &&
+             memcmp(payload, g_big_buf, BIG_MSG_SIZE) == 0;
+
+    free(payload); free(g_big_buf); g_big_buf = NULL;
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!ok) { printf("FAIL (round trip mismatch)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -391,7 +457,8 @@ int main(void)
     failed += test_poll_timeout();
     failed += test_timer_thread_survives();
     failed += test_set_on_message_subscribe();
+    failed += test_big_message_roundtrip();
 
-    printf("=== Result: %d/8 passed, %d failed ===\n", 8 - failed, failed);
+    printf("=== Result: %d/9 passed, %d failed ===\n", 9 - failed, failed);
     return failed ? 1 : 0;
 }

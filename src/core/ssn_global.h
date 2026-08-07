@@ -9,7 +9,6 @@
 #include <stdint.h>
 #include <sys/types.h>
 
-#define SSN_MAX_PACKET_SIZE 8192
 #define SSN_TIMER_PERIOD 100
 #define SSN_DEF_SEND_TIMEOUT 5000
 #define SSN_SERVER_BACKLOG 128

@@ -12,6 +12,8 @@
 #include <errno.h>
 
 /* ------------------ Helper Functions ------------------ */
+/* 校验头部（协议层面）并计算包总长度。不校验数据是否完整：
+ * 调用方区分「截断等待」（流式接收）与「截断拒绝」（单包输入）。 */
 static bool validate_and_get_total_length(const uint8_t *buf, size_t buf_size, size_t *out_total_len)
 {
     if (buf_size < SSN_HEADER_SIZE) {
@@ -33,13 +35,8 @@ static bool validate_and_get_total_length(const uint8_t *buf, size_t buf_size, s
         return false;
     }
 
-    size_t total_length = SSN_HEADER_SIZE + url_len + data_len;
-    if (total_length > buf_size) {
-        return false; // Truncated packet
-    }
-
     if (out_total_len) {
-        *out_total_len = total_length;
+        *out_total_len = SSN_HEADER_SIZE + url_len + data_len;
     }
     return true;
 }
@@ -187,6 +184,10 @@ ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
     if (!validate_and_get_total_length((const uint8_t*)buf, buf_len, &total_len)) {
         ssn_print_error((const uint8_t*)buf, "Invalid header or truncated", 0, buf_len);
         return NULL;
+    }
+    if (total_len > buf_len) {
+        ssn_print_error((const uint8_t*)buf, "Invalid header or truncated", 0, buf_len);
+        return NULL; // Truncated packet
     }
     return (ssn_header_t*)buf;
 }
