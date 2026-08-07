@@ -26,7 +26,7 @@ make -j4 || { echo "[FAIL] 构建失败"; exit 1; }
 TESTS=(
     test_transport            # 传输层（55 用例）
     test_node_basic           # 节点基础（3 用例）
-    test_node                 # 节点完整（5 用例）
+    test_node                 # 节点完整（6 用例）
     test_protocol             # 协议层（25 用例）
     test_protocol_integration # 协议集成（19 用例）
     example_server            # 服务端 API 功能测试（4 用例）

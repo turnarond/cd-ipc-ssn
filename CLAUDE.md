@@ -20,7 +20,7 @@ cmake .. && make -j$(nproc)
 ```bash
 ./test_transport            # 传输层（55 用例）
 ./test_node_basic           # 节点基础（3 用例）
-./test_node                 # 节点完整（5 用例）
+./test_node                 # 节点完整（6 用例）
 ./test_protocol             # 协议层（25 用例）
 ./test_protocol_integration # 协议集成（19 用例）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
@@ -75,10 +75,10 @@ cmake .. && make -j$(nproc)
 docs/
 ├── README.md（文档总索引）
 ├── 01-白皮书（架构白皮书）
-├── 02-需求分析（占位，待补写）
+├── 02-需求分析（需求分析文档）
 ├── 03-设计（架构设计、核心模块）
 ├── 04-实施规划（迁移指南）
-├── 05-部署手册（占位，待补写）
+├── 05-部署手册（部署手册）
 ├── 06-使用手册（API使用指南、使用指南）
 ├── 07-测试方案
 └── 09-归档（已归档历史文档）
