@@ -30,7 +30,7 @@ TESTS=(
     test_protocol             # 协议层（25 用例）
     test_protocol_integration # 协议集成（19 用例）
     example_server            # 服务端 API 功能测试（4 用例）
-    example_client            # 客户端 API 功能测试（5 用例）
+    example_client            # 客户端 API 功能测试（8 用例）
 )
 
 PASS=0
