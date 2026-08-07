@@ -9,6 +9,8 @@ All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 - IPv6 地址 snprintf 截断警告（超长地址返回错误）
 - examples：error_handling/timeout 超时测试断言改为基于回调结果
 - UDP 传输标注「不支持 server 模式握手」限制（源码/设计文档/示例 README）
+- ssn_client_poll 毫秒超时换算错误（poll(500) 实际仅等待 500ns，回归测试）
+- 客户端定时器线程空列表时不再退出（pending 超时机制可靠，回归测试）
 
 ### Changed
 - 删除无引用死符号 `ssn_ecode_version`；`struct ipc_node` 内部标签统一为 `ssn_node`
