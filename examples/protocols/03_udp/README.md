@@ -39,7 +39,7 @@
 
 3. **连接处理**
    - 注册连接处理回调函数 `connect_handler`
-   - 当客户端连接或断开时，打印连接状态
+   - 注意：UDP 为无连接传输，服务端 accept 恒返回 NULL，连接/断开回调不会触发（见文首框架限制标注），因此实际运行不会输出连接状态日志
 
 ### 客户端 (client.c)
 
@@ -88,12 +88,12 @@ make run
 [INFO] [server.c:84] main(): UDP server created successfully
 [INFO] [server.c:99] main(): UDP server started on udp://127.0.0.1:9999
 [INFO] [server.c:102] main(): Server running for 10 seconds...
-[INFO] [server.c:56] connect_handler(): Client connected: id=0
 [INFO] [server.c:38] message_handler(): Received message: Hello from UDP client!
-[INFO] [server.c:56] connect_handler(): Client disconnected: id=0
 [INFO] [server.c:111] main(): Stopping UDP server...
 [INFO] [server.c:116] main(): UDP server destroyed
 ```
+
+> 注：UDP 为无连接传输，服务端 accept 恒返回 NULL，连接/断开回调不会触发，因此服务器输出中不含连接状态日志（与文首限制标注一致）。
 
 ### 客户端输出
 
