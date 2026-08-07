@@ -1480,7 +1480,7 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
     int max_fd, cnt;
     fd_set fds;
     sigset_t empty_mask;
-    struct timespec timeout = { timeout_ms / 1000, timeout_ms % 1000 };
+    struct timespec timeout = { timeout_ms / 1000, (timeout_ms % 1000) * 1000000LL };
 
     if (!client || !client->valid) {
         LOG_ERROR("ssn client poll: invalid client handle.");

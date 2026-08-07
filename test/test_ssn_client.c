@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 #include "ssn_client.h"
 #include "ssn_server.h"
@@ -207,6 +208,44 @@ static int test_send_message(void)
     return 0;
 }
 
+/* ---- Test 6: Poll Timeout ---- */
+
+static int test_poll_timeout(void)
+{
+    printf("  Test 6: Poll timeout (500ms)... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/poll");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    {
+        struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+        if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+            if (cli) ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (connect)\n"); return 1;
+        }
+    }
+
+    /* 测量 ssn_client_poll(cli, 500) 的实际等待时长：
+     * 修复前毫秒余数被直接当作纳秒（500ms 只等约 500ns），修复后应等待约 500ms。
+     * 最多轮询 3 次并累计（防止残留事件导致 pselect 提前返回），累计须 ≥ 400ms。 */
+    long long elapsed_ms = 0;
+    for (int i = 0; i < 3 && elapsed_ms < 400; i++) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        ssn_client_poll(cli, 500);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        elapsed_ms += (t1.tv_sec - t0.tv_sec) * 1000LL +
+                      (t1.tv_nsec - t0.tv_nsec) / 1000000LL;
+    }
+
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    printf("waited %lldms... ", elapsed_ms);
+    if (elapsed_ms < 400) { printf("FAIL (poll(500) 实际等待不足 400ms)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -217,7 +256,8 @@ int main(void)
     failed += test_rpc_call();
     failed += test_subscribe();
     failed += test_send_message();
+    failed += test_poll_timeout();
 
-    printf("=== Result: %d/5 passed, %d failed ===\n", 5 - failed, failed);
+    printf("=== Result: %d/6 passed, %d failed ===\n", 6 - failed, failed);
     return failed ? 1 : 0;
 }
