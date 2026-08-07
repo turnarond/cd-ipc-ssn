@@ -47,8 +47,12 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
         strncpy(addr->addr.unix_addr.sun_path, path,
                 sizeof(addr->addr.unix_addr.sun_path) - 1);
 
-        snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
-                 "unix://%s", path);
+        int n = snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
+                         "unix://%s", path);
+        if (n < 0 || (size_t)n >= SSN_TRANSPORT_MAX_ADDRESS_LEN) {
+            LOG_ERROR("address too long: unix://%s", path);
+            return false;
+        }
 
     } else if (strcmp(protocol, "tcp") == 0) {
         addr->type = SSN_TRANSPORT_TCP;
@@ -88,8 +92,12 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
                    he->h_addr_list[0], he->h_length);
         }
 
-        snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
-                 "tcp://%s:%d", host, port);
+        int n = snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
+                         "tcp://%s:%d", host, port);
+        if (n < 0 || (size_t)n >= SSN_TRANSPORT_MAX_ADDRESS_LEN) {
+            LOG_ERROR("address too long: tcp://%s:%d", host, port);
+            return false;
+        }
 
     } else if (strcmp(protocol, "udp") == 0) {
         addr->type = SSN_TRANSPORT_UDP;
@@ -129,8 +137,12 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
                    he->h_addr_list[0], he->h_length);
         }
 
-        snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
-                 "udp://%s:%d", host, port);
+        int n = snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
+                         "udp://%s:%d", host, port);
+        if (n < 0 || (size_t)n >= SSN_TRANSPORT_MAX_ADDRESS_LEN) {
+            LOG_ERROR("address too long: udp://%s:%d", host, port);
+            return false;
+        }
 
     } else if (strcmp(protocol, "tcp6") == 0) {
         addr->type = SSN_TRANSPORT_TCP6;
@@ -165,8 +177,12 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
             return false;
         }
 
-        snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
-                 "tcp6://[%s]:%d", host, port);
+        int n = snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
+                         "tcp6://[%s]:%d", host, port);
+        if (n < 0 || (size_t)n >= SSN_TRANSPORT_MAX_ADDRESS_LEN) {
+            LOG_ERROR("address too long: tcp6://[%s]:%d", host, port);
+            return false;
+        }
 
     } else if (strcmp(protocol, "udp6") == 0) {
         addr->type = SSN_TRANSPORT_UDP6;
@@ -201,8 +217,12 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
             return false;
         }
 
-        snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
-                 "udp6://[%s]:%d", host, port);
+        int n = snprintf(addr->address_str, SSN_TRANSPORT_MAX_ADDRESS_LEN,
+                         "udp6://[%s]:%d", host, port);
+        if (n < 0 || (size_t)n >= SSN_TRANSPORT_MAX_ADDRESS_LEN) {
+            LOG_ERROR("address too long: udp6://[%s]:%d", host, port);
+            return false;
+        }
 
     } else {
         LOG_ERROR("Unsupported protocol: %s", protocol);
