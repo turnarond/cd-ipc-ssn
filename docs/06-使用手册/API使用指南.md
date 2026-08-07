@@ -20,6 +20,7 @@
 8. [回调函数](#回调函数)
 9. [错误处理](#错误处理)
 10. [示例代码](#示例代码)
+11. [注意事项](#注意事项)
 
 ## 概述
 
@@ -483,6 +484,8 @@ void ssn_handle_error(ssn_ecode_t error,
 
 ## 示例代码
 
+示例中的 `ssn_url_ref_t.url_len` 与 `ssn_data_ref_t.length` 均为 **strlen 语义（不含 NUL 终止符）**，与代码 `ssn_get_url`/`ssn_get_data` 的解析行为一致；字面量均取对应字符串的 strlen 值（如 `"/test/rpc"` 为 9、`"hello"` 为 5）。
+
 ### Unix Socket 服务器和客户端
 
 ```c
@@ -592,7 +595,8 @@ void subscriber_example() {
     ssn_client_connect(client, "unix:///tmp/test.sock", &(struct timespec){1, 0});
 
     ssn_url_ref_t url = {"/topic/news", 11};
-    ssn_client_subscribe(client, &url, NULL, NULL, 1000);
+    // 订阅回调也可通过 set_on_message 兜底分发
+    ssn_client_subscribe(client, &url, on_message, NULL, 1000);
 
     ssn_client_run(client);
     ssn_client_close(client);
