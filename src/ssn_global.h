@@ -19,6 +19,7 @@ typedef struct ssn_client ssn_client_t;
 /* 全局资源声明（供 ssn_client.c / ssn_server.c 使用） */
 extern struct ssn_client *g_ssn_client_list;
 extern ipc_mutex_t  *g_ssn_client_lock;
+extern int g_ssn_client_timer_exit;    /* 客户端定时器线程退出标志（ssn_global_cleanup 置位） */
 
 extern struct ssn_server *g_ssn_server_list;
 extern ipc_mutex_t  *g_ssn_server_lock;

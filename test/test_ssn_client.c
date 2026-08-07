@@ -246,6 +246,73 @@ static int test_poll_timeout(void)
     return 0;
 }
 
+/* ---- Test 7: 定时器线程空列表存活（回归：空列表 break 导致线程永久退出） ---- */
+
+static volatile int g_timeout_fired = 0;
+
+/* 超时回调：应答头为 NULL 说明是超时触发而非服务端应答 */
+static void timeout_cb(ssn_client_t *client, ssn_header_t *ipc_hdr,
+                       ssn_data_ref_t *data, void *arg)
+{
+    (void)client; (void)data; (void)arg;
+    if (ipc_hdr == NULL) g_timeout_fired = 1;
+}
+
+/* 故意不回包的 RPC 方法：使客户端请求只能通过超时机制结束 */
+static void no_reply_handler(ssn_server_t *server, ssn_peer_id_t cid,
+                             ssn_header_t *ssn_hdr, ssn_url_ref_t *url,
+                             ssn_data_ref_t *data, void *arg)
+{
+    (void)server; (void)cid; (void)ssn_hdr; (void)url; (void)data; (void)arg;
+}
+
+static int test_timer_thread_survives(void)
+{
+    printf("  Test 7: Timer thread survives empty list... ");
+
+    /* 确保无存活 client（前面用例的 client 均已关闭）：
+     * 空转 100ms（> 50ms 定时器周期），若定时器线程在空列表时 break
+     * 退出，此窗口内线程已永久死亡，之后所有 pending 超时不再被处理。 */
+    usleep(100000);
+
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/timer");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    /* 注册一个不回包的方法（不与 start_test_server 的 echo 方法重名） */
+    ssn_url_ref_t no_reply_url = { .url = "/timer-no-reply", .url_len = 15 };
+    if (!ssn_server_add_method(srv, &no_reply_url, no_reply_handler, NULL)) {
+        stop_test_server(srv, tid); printf("FAIL (add_method)\n"); return 1;
+    }
+
+    ssn_client_t *cli = ssn_client_create();
+    {
+        struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+        if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+            if (cli) ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (connect)\n"); return 1;
+        }
+    }
+
+    /* 发送 RPC（服务端不回包）→ 依赖定时器线程递减超时并触发超时回调 */
+    g_timeout_fired = 0;
+    const char *msg = "ping";
+    ssn_data_ref_t req = { .data = (void*)msg, .length = 4 };
+    if (ssn_client_call(cli, &no_reply_url, &req, timeout_cb, NULL, 500) < 0) {
+        ssn_client_close(cli); stop_test_server(srv, tid); printf("FAIL (call)\n"); return 1;
+    }
+
+    /* poll 驱动事件循环，最多约 3s（500ms 超时 + 定时器 50ms 周期余量） */
+    for (int i = 0; i < 20 && !g_timeout_fired; i++) { ssn_client_poll(cli, 100); usleep(50000); }
+
+    int fired = g_timeout_fired;
+
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!fired) { printf("FAIL (timeout callback not fired)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -257,7 +324,8 @@ int main(void)
     failed += test_subscribe();
     failed += test_send_message();
     failed += test_poll_timeout();
+    failed += test_timer_thread_survives();
 
-    printf("=== Result: %d/6 passed, %d failed ===\n", 6 - failed, failed);
+    printf("=== Result: %d/7 passed, %d failed ===\n", 7 - failed, failed);
     return failed ? 1 : 0;
 }

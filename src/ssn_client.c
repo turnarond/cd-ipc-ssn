@@ -176,11 +176,17 @@ void *ssn_client_timer_handle(void *arg)
     do {
         ipc_thread_msleep(IPC_TIMER_PERIOD);
 
+        /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
+        if (__atomic_load_n(&g_ssn_client_timer_exit, __ATOMIC_ACQUIRE)) {
+            break;
+        }
+
         ipc_mutex_lock(g_ssn_client_lock);
 
         if (!g_ssn_client_list) {
             ipc_mutex_unlock(g_ssn_client_lock);
-            break;
+            continue;   // 空列表时继续轮询而不是退出：定时器线程启动后只执行一次，
+                        // 若首个 50ms 内无存活 client 即 break，之后所有 pending 超时不再被处理
         }
 
         LIST_FOREACH(client, g_ssn_client_list) {
