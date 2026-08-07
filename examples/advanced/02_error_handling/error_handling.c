@@ -122,7 +122,7 @@ static bool test_rpc_error(void)
     // 注册无响应方法：接收请求但不回复，使客户端调用超时
     ssn_url_ref_t no_reply_url = {
         .url = "/non_existent_method",
-        .url_len = 21
+        .url_len = 20
     };
     if (!ssn_server_add_method(server, &no_reply_url, no_reply_handler, NULL)) {
         LOG_ERROR("Failed to register no-reply method");
@@ -175,7 +175,7 @@ static bool test_rpc_error(void)
     // Prepare URL reference for non-existent method
     ssn_url_ref_t url = {
         .url = "/non_existent_method",
-        .url_len = 21
+        .url_len = 20
     };
 
     // Make RPC call to non-existent method
@@ -204,13 +204,13 @@ static bool test_rpc_error(void)
 }
 
 /**
- * @brief Test 3: Message send with timeout
+ * @brief Test 3: Connection failure without server
  */
-static bool test_timeout_error(void)
+static bool test_connection_without_server(void)
 {
-    LOG_INFO("\nTest 3: Message send with timeout");
+    LOG_INFO("\nTest 3: Connection failure without server");
 
-    // Create server (but don't start it to cause timeout)
+    // Create server object but do not start it, so the client cannot connect
     ssn_server_t *server = ssn_server_create(SERVER_NAME);
     if (!server) {
         LOG_ERROR("Failed to create IPC server");
@@ -304,7 +304,7 @@ int main(void)
     // Run tests
     bool test1 = test_connection_error();
     bool test2 = test_rpc_error();
-    bool test3 = test_timeout_error();
+    bool test3 = test_connection_without_server();
     bool test4 = test_error_recovery();
 
     if (test1 && test2 && test3 && test4) {

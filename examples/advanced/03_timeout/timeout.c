@@ -122,7 +122,7 @@ static bool test_rpc_timeout(void)
     // 注册无响应方法：接收请求但不回复，使客户端调用超时
     ssn_url_ref_t no_reply_url = {
         .url = "/test",
-        .url_len = 6
+        .url_len = 5
     };
     if (!ssn_server_add_method(server, &no_reply_url, no_reply_handler, NULL)) {
         LOG_ERROR("Failed to register no-reply method");
@@ -175,7 +175,7 @@ static bool test_rpc_timeout(void)
     // Prepare URL reference
     ssn_url_ref_t url = {
         .url = "/test",
-        .url_len = 6
+        .url_len = 5
     };
 
     // Make RPC call with short timeout (200ms)
@@ -223,10 +223,22 @@ static bool test_message_timeout(void)
         return false;
     }
 
+    // 启动服务端事件循环线程（连接握手需要服务端 poll 驱动）
+    g_srv_running = true;
+    pthread_t srv_thread;
+    if (pthread_create(&srv_thread, NULL, server_poll_thread, server) != 0) {
+        LOG_ERROR("Failed to create server poll thread");
+        g_srv_running = false;
+        ssn_server_destroy(server);
+        return false;
+    }
+
     // Create IPC client
     ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_server_destroy(server);
         return false;
     }
@@ -240,13 +252,15 @@ static bool test_message_timeout(void)
     // Connect to server
     if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_client_close(client);
         ssn_server_destroy(server);
         return false;
     }
 
-    // Prepare large message to increase chances of timeout
-    char large_message[1024 * 1024]; // 1MB message
+    // Prepare large message（4 KiB，小于 SSN_MAX_PACKET_SIZE 128 KiB 包上限）
+    char large_message[4096]; // 4KB message
     memset(large_message, 'A', sizeof(large_message));
     large_message[sizeof(large_message) - 1] = '\0';
 
@@ -275,6 +289,8 @@ static bool test_message_timeout(void)
     LOG_INFO("Test 3 completed");
 
     // Cleanup
+    g_srv_running = false;
+    pthread_join(srv_thread, NULL);
     ssn_client_close(client);
     ssn_server_destroy(server);
     return true;
@@ -307,10 +323,22 @@ static bool test_idle_timeout(void)
         return false;
     }
 
+    // 启动服务端事件循环线程（连接握手与空闲超时处理需要服务端 poll 驱动）
+    g_srv_running = true;
+    pthread_t srv_thread;
+    if (pthread_create(&srv_thread, NULL, server_poll_thread, server) != 0) {
+        LOG_ERROR("Failed to create server poll thread");
+        g_srv_running = false;
+        ssn_server_destroy(server);
+        return false;
+    }
+
     // Create IPC client
     ssn_client_t *client = ssn_client_create();
     if (!client) {
         LOG_ERROR("Failed to create IPC client");
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_server_destroy(server);
         return false;
     }
@@ -324,6 +352,8 @@ static bool test_idle_timeout(void)
     // Connect to server
     if (!ssn_client_connect(client, SERVER_NAME, &conn_timeout)) {
         LOG_ERROR("Failed to connect to server: %s", SERVER_NAME);
+        g_srv_running = false;
+        pthread_join(srv_thread, NULL);
         ssn_client_close(client);
         ssn_server_destroy(server);
         return false;
@@ -342,7 +372,7 @@ static bool test_idle_timeout(void)
 
     ssn_url_ref_t url = {
         .url = "/test",
-        .url_len = 6
+        .url_len = 5
     };
 
     int result = ssn_client_message(client, &url, &data);
@@ -353,6 +383,8 @@ static bool test_idle_timeout(void)
     }
 
     // Cleanup
+    g_srv_running = false;
+    pthread_join(srv_thread, NULL);
     ssn_client_close(client);
     ssn_server_destroy(server);
     return true;
