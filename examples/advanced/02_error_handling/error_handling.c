@@ -4,6 +4,8 @@
  * This example demonstrates how to handle various error scenarios in cd-ipc-ssn library.
  */
 
+#define _XOPEN_SOURCE 500 /* 启用 usleep 等 POSIX 接口（-std=c99 下需显式特性宏） */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -278,7 +280,7 @@ static bool test_error_recovery(void)
             break;
         }
         LOG_INFO("Connection attempt %d failed, retrying...", i);
-        sleep(500000 / 1000000); // Wait 500ms before retrying
+        usleep(500000); // Wait 500ms before retrying
     }
 
     if (connected) {

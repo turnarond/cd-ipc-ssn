@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "ssn_client.h"
@@ -65,7 +66,8 @@ static void *client_thread(void *arg)
     LOG_INFO("Client thread %d started", thread_id);
 
     // Wait a bit to ensure all threads are started
-    sleep((100000 * thread_id) / 1000000);
+    struct timespec delay = { 0, 100000000 * thread_id }; /* 线程 1/2 分别延迟 0.1/0.2 秒，错开调用时机 */
+    nanosleep(&delay, NULL);
 
     // Prepare message
     char message[64];
