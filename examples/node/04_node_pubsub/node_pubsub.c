@@ -49,8 +49,8 @@ static void subscriber1_message_handler(ssn_client_t *client, ssn_url_ref_t *url
     (void)client;
     (void)arg;
 
-    LOG_INFO("Subscriber1 received message on %s: %.*s", 
-             url->url, (int)data->length, (const char*)data->data);
+    LOG_INFO("Subscriber1 received message on %.*s: %.*s",
+             (int)url->url_len, url->url, (int)data->length, (const char*)data->data);
 
     g_news_messages_received++;
 }
@@ -69,8 +69,8 @@ static void subscriber2_message_handler(ssn_client_t *client, ssn_url_ref_t *url
     (void)client;
     (void)arg;
 
-    LOG_INFO("Subscriber2 received message on %s: %.*s", 
-             url->url, (int)data->length, (const char*)data->data);
+    LOG_INFO("Subscriber2 received message on %.*s: %.*s",
+             (int)url->url_len, url->url, (int)data->length, (const char*)data->data);
 
     g_weather_messages_received++;
 }

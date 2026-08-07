@@ -30,8 +30,8 @@ static void message_handler(ssn_client_t *client, ssn_url_ref_t *url,
     (void)client;
     (void)arg;
 
-    LOG_INFO("Received message on %s: %.*s",
-             url->url, (int)data->length, (const char*)data->data);
+    LOG_INFO("Received message on %.*s: %.*s",
+             (int)url->url_len, url->url, (int)data->length, (const char*)data->data);
 }
 
 int main(void)
