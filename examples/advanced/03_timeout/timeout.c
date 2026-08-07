@@ -259,7 +259,7 @@ static bool test_message_timeout(void)
         return false;
     }
 
-    // Prepare large message（4 KiB，小于 SSN_MAX_PACKET_SIZE 128 KiB 包上限）
+    // Prepare large message（4 KiB，远小于包大小上限）
     char large_message[4096]; // 4KB message
     memset(large_message, 'A', sizeof(large_message));
     large_message[sizeof(large_message) - 1] = '\0';
