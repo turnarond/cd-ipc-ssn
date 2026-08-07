@@ -79,7 +79,7 @@ static void *client_thread(void *arg)
     // Prepare URL reference
     ssn_url_ref_t url = {
         .url = "/echo",
-        .url_len = 6
+        .url_len = 5
     };
 
     // Make RPC call

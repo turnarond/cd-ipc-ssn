@@ -1,8 +1,13 @@
 /*
  * server.c - Multithreaded IPC server example
  *
- * This example demonstrates how to create a multithreaded IPC server that can
- * handle multiple concurrent connections and RPC calls.
+ * This example demonstrates an IPC server with a dedicated event-loop thread
+ * that handles multiple concurrent connections and RPC calls.
+ *
+ * 注意：ssn_server 为单线程事件循环模型（ssn_server_poll 驱动）。多个线程
+ * 并发 poll 同一 server 不受支持（会并发 accept/recv 同一套接字造成竞态、
+ * 阻塞与崩溃），因此服务端使用单个事件循环线程；多线程并发能力由客户端
+ * 多线程 RPC 调用演示（见同目录 client.c）。
  */
 
 #include <stdio.h>
@@ -16,7 +21,9 @@
 #include "util/ssn_mutex.h"
 
 #define SERVER_NAME "unix:///tmp/multithread_server"
-#define MAX_THREADS 4
+
+/* 服务端事件循环停止标志：主线程在销毁服务器前置位，使 poll 线程正常退出 */
+static volatile int g_server_running = 1;
 
 /**
  * @brief Thread data structure
@@ -99,8 +106,8 @@ static void *server_thread(void *arg)
 
     LOG_INFO("Server thread %d started", thread_id);
 
-    // Run server loop
-    while (1) {
+    // Run server loop (退出条件由主线程置位 g_server_running 控制)
+    while (g_server_running) {
         // Poll for events with timeout
         if (ssn_server_poll(server, 1000) < 0) {
             break;
@@ -138,12 +145,13 @@ int main(void)
     // Set connection handler
     ssn_server_set_connect_handler(server, connect_handler, NULL);
 
-    // Register RPC method with thread-specific argument
-    ssn_url_ref_t echo_url = {.url = "/echo", .url_len = 6};
-    static int thread_ids[MAX_THREADS];
-    for (int i = 0; i < MAX_THREADS; i++) {
-        thread_ids[i] = i + 1;
-        ssn_server_add_method(server, &echo_url, echo_handler, &thread_ids[i]);
+    // Register RPC method with thread-specific argument (只注册一次)
+    ssn_url_ref_t echo_url = {.url = "/echo", .url_len = 5};
+    static int thread_id = 1;
+    if (!ssn_server_add_method(server, &echo_url, echo_handler, &thread_id)) {
+        LOG_ERROR("Failed to register RPC method");
+        ssn_server_destroy(server);
+        return 1;
     }
 
     LOG_INFO("RPC methods registered successfully");
@@ -157,26 +165,24 @@ int main(void)
 
     LOG_INFO("Multithreaded server started on %s", SERVER_NAME);
 
-    // Create server threads
-    pthread_t threads[MAX_THREADS];
-    for (int i = 0; i < MAX_THREADS; i++) {
-        if (pthread_create(&threads[i], NULL, server_thread, server) != 0) {
-            LOG_ERROR("Failed to create server thread %d", i + 1);
-            // Continue with remaining threads
-        }
+    // Create server event-loop thread (单个事件循环线程：ssn_server 不支持多线程并发 poll)
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, server_thread, server) != 0) {
+        LOG_ERROR("Failed to create server thread");
+        ssn_server_destroy(server);
+        return 1;
     }
 
     // Run for 20 seconds
     LOG_INFO("Server running for 20 seconds...");
     sleep(20);
 
-    // Server is stopped automatically when destroyed
+    // Stop the server event loop thread (置位停止标志后 join)
     LOG_INFO("Stopping multithreaded server...");
+    g_server_running = 0;
 
-    // Wait for threads to exit
-    for (int i = 0; i < MAX_THREADS; i++) {
-        pthread_join(threads[i], NULL);
-    }
+    // Wait for the thread to exit
+    pthread_join(thread, NULL);
 
     LOG_INFO("Multithreaded server stopped");
 
