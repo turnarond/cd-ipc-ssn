@@ -2,6 +2,18 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.3.1] - 2026-08-06
+
+### Fixed
+- `ssn_node_destroy` 对 ACTIVE 节点直接销毁时的持锁自锁（回归测试）
+- IPv6 地址 snprintf 截断警告（超长地址返回错误）
+- examples：error_handling/timeout 超时测试断言改为基于回调结果
+- UDP 传输标注「不支持 server 模式握手」限制（源码/设计文档/示例 README）
+
+### Changed
+- 删除无引用死符号 `ssn_ecode_version`；`struct ipc_node` 内部标签统一为 `ssn_node`
+- 补写 02 需求分析（含 DDS 对标需求映射）与 05 部署手册；修复 superpowers 文档坏链
+
 ## [2.3.0] - 2026-05-07
 
 ### Added
