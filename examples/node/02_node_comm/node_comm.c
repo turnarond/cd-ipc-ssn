@@ -58,7 +58,7 @@ static void node_a_message_handler(ssn_server_t *server, ssn_peer_id_t id,
     // Send reply back to Node B
     ssn_data_ref_t reply_data = {
         .data = "Hello from Node A!",
-        .length = 17
+        .length = 18
     };
 
     ssn_url_ref_t reply_url = {
@@ -174,7 +174,7 @@ static bool test_node_communication(void)
     // Send message from Node B to Node A
     ssn_data_ref_t message_data = {
         .data = "Hello from Node B!",
-        .length = 17
+        .length = 18
     };
 
     ssn_url_ref_t message_url = {

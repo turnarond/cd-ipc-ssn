@@ -71,7 +71,7 @@ int main(void)
     // Subscribe to news topic
     ssn_url_ref_t news_topic = {
         .url = "/news",
-        .url_len = 6
+        .url_len = 5
     };
 
     if (!ssn_client_subscribe(client, &news_topic, message_handler, NULL, 5000)) {

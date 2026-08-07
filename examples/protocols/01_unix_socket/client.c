@@ -70,7 +70,7 @@ int main(void)
     // Prepare message data
     ssn_data_ref_t data = {
         .data = "Hello from Unix Socket client!",
-        .length = 29
+        .length = 30
     };
 
     // Prepare URL reference

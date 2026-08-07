@@ -169,7 +169,7 @@ static void divide_handler(ssn_server_t *server, ssn_peer_id_t id, ssn_header_t 
         // Send error response
         ssn_data_ref_t error_data = {
             .data = "Error: Division by zero",
-            .length = 21
+            .length = 23
         };
         ssn_server_response(server, id, 1, ssn_get_seqno(hdr), &error_data);
         return;

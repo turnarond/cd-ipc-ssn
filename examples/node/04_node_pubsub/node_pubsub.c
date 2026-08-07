@@ -182,14 +182,12 @@ static bool test_node_pubsub(void)
 
     LOG_INFO("Subscriber2 node started");
 
-    // Set message handlers
-    ssn_node_set_client_message_handler(subscriber1_node, subscriber1_message_handler, NULL);
-    ssn_node_set_client_message_handler(subscriber2_node, subscriber2_message_handler, NULL);
+    // 消息回调在 subscribe 中传入（订阅即注册 per-URL 消息处理），无需另行设置
 
     // Subscribe to topics
     ssn_url_ref_t news_topic = {
         .url = "/news",
-        .url_len = 6
+        .url_len = 5
     };
 
     ssn_url_ref_t weather_topic = {
@@ -228,7 +226,7 @@ static bool test_node_pubsub(void)
     LOG_INFO("Publisher publishing to /news: Breaking news! Server is online");
     ssn_data_ref_t news_data = {
         .data = "Breaking news! Server is online",
-        .length = 29
+        .length = 31
     };
 
     if (!ssn_node_publish(publisher_node, &news_topic, &news_data)) {
@@ -248,7 +246,7 @@ static bool test_node_pubsub(void)
     LOG_INFO("Publisher publishing to /weather: Today's weather is sunny");
     ssn_data_ref_t weather_data = {
         .data = "Today's weather is sunny",
-        .length = 23
+        .length = 24
     };
 
     if (!ssn_node_publish(publisher_node, &weather_topic, &weather_data)) {
