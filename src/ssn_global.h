@@ -23,6 +23,7 @@ extern int g_ssn_client_timer_exit;    /* 客户端定时器线程退出标志�
 
 extern struct ssn_server *g_ssn_server_list;
 extern ipc_mutex_t  *g_ssn_server_lock;
+extern int g_ssn_server_timer_exit;   /* 服务端定时器线程退出标志（ssn_global_cleanup 置位） */
 
 /* 显式初始化函数（供不支持 constructor 的平台使用） */
 int ssn_global_init(void);

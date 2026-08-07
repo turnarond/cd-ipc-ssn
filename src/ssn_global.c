@@ -14,6 +14,7 @@ int g_ssn_client_timer_exit = 0;       /* 客户端定时器线程退出标志 *
 ipc_thread_t *g_ssn_server_timer = NULL;
 ssn_server_t *g_ssn_server_list = NULL;
 ipc_mutex_t  *g_ssn_server_lock = NULL;
+int g_ssn_server_timer_exit = 0;      /* 服务端定时器线程退出标志 */
 
 static int g_initialized = 0;
 
@@ -32,6 +33,7 @@ int ssn_global_init(void)
 
     /* 重置定时器线程退出标志（支持清理后重新初始化） */
     __atomic_store_n(&g_ssn_client_timer_exit, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_ssn_server_timer_exit, 0, __ATOMIC_RELEASE);
 
     if (ipc_platform_init() != 0) {
         __atomic_store_n(&g_initialized, 0, __ATOMIC_RELEASE);
@@ -74,13 +76,14 @@ void ssn_global_cleanup(void)
     }
 
     // 停止并等待 timer 线程：置位退出标志后 join。
-    // 定时器线程在空列表时不再退出（见 ssn_client_timer_handle），
+    // 定时器线程在空列表时不再退出（见 ssn_client_timer_handle / ssn_server_timer_handle），
     // 因此必须显式通知其退出，否则 join 将永久阻塞。
     __atomic_store_n(&g_ssn_client_timer_exit, 1, __ATOMIC_RELEASE);
     if (g_ssn_client_timer) {
         ipc_thread_join(g_ssn_client_timer);
         g_ssn_client_timer = NULL;
     }
+    __atomic_store_n(&g_ssn_server_timer_exit, 1, __ATOMIC_RELEASE);
     if (g_ssn_server_timer) {
         ipc_thread_join(g_ssn_server_timer);
         g_ssn_server_timer = NULL;

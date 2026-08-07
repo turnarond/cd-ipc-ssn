@@ -156,6 +156,65 @@ cleanup:
     return 1;
 }
 
+/* ---- Test 5: idle 超时断开（回归：服务端定时器线程空列表退出） ---- */
+
+static int test_idle_timeout_disconnect(void)
+{
+    printf("  Test 5: Idle timeout disconnects idle client... ");
+
+    /* 空转 150ms（> 定时器 50ms 周期）：确保至少一个 tick 观察到空列表。
+     * 修复前服务端定时器线程在空列表时 break 永久退出（死亡窗口），
+     * 之后所有超时检测（idle/握手）全部失效。 */
+    usleep(150000);
+
+    /* conn_timeout_ms 未设置（0）：客户端握手完成后 hst.alive 为 0，
+     * 定时器线程任一次 tick 检查即触发断开。 */
+    server_options_t opts = { .idle_timeout_sec = 1 };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create server)\n"); return 1; }
+    if (!ssn_server_start(srv)) { printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1; }
+
+    pthread_t tid;
+    g_srv_running = 1;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(50000); /* Give server poll time to start */
+
+    ssn_client_t *cli = ssn_client_create();
+    if (!cli) { printf("FAIL (create client)\n"); goto cleanup; }
+
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        printf("FAIL (connect)\n"); ssn_client_close(cli); goto cleanup;
+    }
+
+    /* 保持连接（期间无消息）并驱动事件循环，等待服务端超时断开。
+     * 修复前定时器线程已死 → alive 不递减 → 连接一直保持 → 断言失败。 */
+    int dropped = 0;
+    for (int i = 0; i < 35 && !dropped; i++) {
+        ssn_client_poll(cli, 100);
+        if (!ssn_client_is_connect(cli)) {
+            dropped = 1;
+            break;
+        }
+        usleep(100000);
+    }
+
+    ssn_client_close(cli);
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (!dropped) { printf("FAIL (connection not dropped by timeout)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+
+cleanup:
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+    return 1;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -165,7 +224,8 @@ int main(void)
     failed += test_start_stop();
     failed += test_add_method();
     failed += test_rpc_echo();
+    failed += test_idle_timeout_disconnect();
 
-    printf("=== Result: %d/4 passed, %d failed ===\n", 4 - failed, failed);
+    printf("=== Result: %d/5 passed, %d failed ===\n", 5 - failed, failed);
     return failed ? 1 : 0;
 }
