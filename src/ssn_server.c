@@ -1500,9 +1500,15 @@ static bool ssn_server_input (ssn_header_t *ipc_hdr, void *arg)
     }
 
     /* 握手完成后（active）每次收到数据包都重置 idle 计时：
-     * 定时器线程按 keepalive_timeout 递减 hst.alive，活跃连接借此续期不被断开 */
-    if (cli->active && cli->hst.alive && server->keepalive_timeout > 0) {
-        cli->hst.alive = server->keepalive_timeout * 1000;
+     * 定时器线程按 keepalive_timeout 递减 hst.alive，活跃连接借此续期不被断开。
+     * hst.alive 为双线程共享字段（定时器线程持 server->lock 读改写），读改写必须持锁；
+     * MESSAGE 分支在加锁区之前提前返回，故重置需自带锁并在入口统一执行。 */
+    if (cli->active && server->keepalive_timeout > 0) {
+        ipc_mutex_lock(server->lock);
+        if (cli->hst.alive) {
+            cli->hst.alive = server->keepalive_timeout * 1000;
+        }
+        ipc_mutex_unlock(server->lock);
     }
 
     if (ipc_hdr->msg_type == SSN_MSG_TYPE_MESSAGE) {
@@ -1651,16 +1657,16 @@ static void ipc_server_handle_event_input(ssn_server_t *server, const fd_set *rf
 
         LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
             if (hst->alive == 0) {
-            DELETE_FROM_LIST(hst, server->hst_h);
+                DELETE_FROM_LIST(hst, server->hst_h);
 
-            cli = (ssn_server_cli_t *)((char *)hst - offsetof(ssn_server_cli_t, hst));
-            if (cli->transport) {
-                ssn_transport_disconnect(cli->transport);
+                cli = (ssn_server_cli_t *)((char *)hst - offsetof(ssn_server_cli_t, hst));
+                if (cli->transport) {
+                    ssn_transport_disconnect(cli->transport);
+                }
+                /* 断开后立即销毁：fd 已关闭，poll 循环无法再观察到该连接的 EOF，
+                 * 若不销毁则 cli 悬挂在哈希表中，peer_count 无法归零并造成内存泄漏 */
+                ssn_server_cli_destroy(server, cli);
             }
-            /* 断开后立即销毁：fd 已关闭，poll 循环无法再观察到该连接的 EOF，
-             * 若不销毁则 cli 悬挂在哈希表中，peer_count 无法归零并造成内存泄漏 */
-            ssn_server_cli_destroy(server, cli);
-        }
         }
 
         ipc_mutex_unlock(server->lock);
