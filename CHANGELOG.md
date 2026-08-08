@@ -2,6 +2,23 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.3.2] - 2026-08-08
+
+### Added
+- 回归测试：服务端 idle 超时（定时器线程存活）、64 KiB 大消息往返
+- 发布就绪评估报告（`docs/09-归档/发布评估-v2.3.1.md`，双视角评分）
+
+### Changed
+- 使用手册与示例全面完善：API 使用指南/使用指南与代码一致（版本号 v2.3.1、`url_len` strlen 语义、示例回调、事件循环驱动说明）、15 个示例 README 按实际代码重写（预期输出/日志/行号真实）、CLAUDE.md 固化开发规范（TDD 红-绿-重构、Clean Code/架构整洁、开发工具集、问题记录）
+- 恢复 `ssn_client_set_on_message` 同时设置 onmsg 与 onsub 的行为（与 v2.1 文档描述一致）
+- 测试用例数同步：共 122 例（test_node 6、example_client 8）
+
+### Fixed
+- 服务端定时器线程在空列表时退出且不重启（ISSUE-D：对称退出标志，idle 超时/心跳检测失效）
+- `SSN_MAX_PACKET_SIZE` 宏重定义（ISSUE-E：删除 8192 死宏，统一为协议设计值 131072）
+- `ssn_stream_feed` 分片帧接收缺陷（跨多次 recv 的大包被丢弃，累积重组修复）
+- examples：multithread 服务器挂死（单事件循环线程 + 停止标志）、timeout/transport_selection 事件循环缺失、消息长度 off-by-one（9 处）、`url_len` 含 NUL 不一致（统一 strlen）、sleep 整数除法延迟失效（2 处）、订阅回调日志 url 乱码（`%s` → `%.*s`）
+
 ## [2.3.1] - 2026-08-06
 
 ### Fixed
