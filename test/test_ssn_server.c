@@ -215,6 +215,111 @@ cleanup:
     return 1;
 }
 
+/* ---- Test 6: idle 断开（idle_timeout_sec 接线回归：握手完成后应用层 idle 检测） ---- */
+
+static int test_idle_timeout_disconnect_after_handshake(void)
+{
+    printf("  Test 6: Idle timeout disconnects idle client after handshake... ");
+
+    /* idle_timeout_sec=1：握手完成后进入 1s idle 计时；
+     * conn_timeout_ms=3000：握手超时路径由 Test 5 覆盖，此处保持默认不受影响。 */
+    server_options_t opts = { .conn_timeout_ms = 3000, .idle_timeout_sec = 1 };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create server)\n"); return 1; }
+    if (!ssn_server_start(srv)) { printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1; }
+
+    pthread_t tid;
+    g_srv_running = 1;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(50000); /* Give server poll time to start */
+
+    ssn_client_t *cli = ssn_client_create();
+    if (!cli) { printf("FAIL (create client)\n"); goto cleanup; }
+
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        printf("FAIL (connect)\n"); ssn_client_close(cli); goto cleanup;
+    }
+
+    /* 保持空闲 2.5 秒（无消息），期间驱动客户端事件循环感知服务端断开。
+     * 修复前握手完成后无应用层 idle 检测 → 连接保持 → peer_count 仍为 1 → 断言失败。 */
+    for (int i = 0; i < 25; i++) {
+        ssn_client_poll(cli, 100);
+        usleep(100000);
+    }
+
+    int cnt = ssn_server_peer_count(srv);
+
+    ssn_client_close(cli);
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (cnt != 0) { printf("FAIL (peer count %d, expected 0)\n", cnt); return 1; }
+    printf("PASS\n");
+    return 0;
+
+cleanup:
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+    return 1;
+}
+
+/* ---- Test 7: 活跃保持（活动重置回归：idle 计时必须在每次收包后重置） ---- */
+
+static int test_active_connection_kept(void)
+{
+    printf("  Test 7: Active connection kept alive by messages... ");
+
+    server_options_t opts = { .conn_timeout_ms = 3000, .idle_timeout_sec = 1 };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create server)\n"); return 1; }
+    if (!ssn_server_start(srv)) { printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1; }
+
+    pthread_t tid;
+    g_srv_running = 1;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(50000); /* Give server poll time to start */
+
+    ssn_client_t *cli = ssn_client_create();
+    if (!cli) { printf("FAIL (create client)\n"); goto cleanup; }
+
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        printf("FAIL (connect)\n"); ssn_client_close(cli); goto cleanup;
+    }
+
+    /* 每 300ms 发一条消息，持续 3 秒（> idle 周期 1s）：
+     * 若活动重置未实现，连接空闲 1s 即被断开 → 断言失败。 */
+    ssn_url_ref_t url = { .url = "/activity", .url_len = 9 };
+    const char *msg = "ping";
+    ssn_data_ref_t data = { .data = (void *)msg, .length = strlen(msg) };
+    for (int i = 0; i < 10; i++) {
+        if (ssn_client_message(cli, &url, &data) < 0) {
+            printf("FAIL (message send)\n"); ssn_client_close(cli); goto cleanup;
+        }
+        usleep(300000);
+    }
+
+    int cnt = ssn_server_peer_count(srv);
+
+    ssn_client_close(cli);
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (cnt != 1) { printf("FAIL (peer count %d, expected 1)\n", cnt); return 1; }
+    printf("PASS\n");
+    return 0;
+
+cleanup:
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+    return 1;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -225,7 +330,9 @@ int main(void)
     failed += test_add_method();
     failed += test_rpc_echo();
     failed += test_idle_timeout_disconnect();
+    failed += test_idle_timeout_disconnect_after_handshake();
+    failed += test_active_connection_kept();
 
-    printf("=== Result: %d/5 passed, %d failed ===\n", 5 - failed, failed);
+    printf("=== Result: %d/7 passed, %d failed ===\n", 7 - failed, failed);
     return failed ? 1 : 0;
 }
