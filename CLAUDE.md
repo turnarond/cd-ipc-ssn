@@ -126,4 +126,8 @@ wsl bash -c "cd /mnt/d/personal/cd-ipc-ssn && bash test/run_tests.sh"
   2. `src/version/ssn_version.h` 的 `SSN_VERSION_*` 宏与 `SSN_VERSION_STRING`
   3. `CMakeLists.txt` 的 `VERSION_MAJOR/MINOR/PATCH` 与 `SOVERSION`
   4. `CHANGELOG.md`（按 Added / Changed / Fixed / Removed 分组记录，格式参照现有条目）
-- 发版提交后打 git 标签：`git tag vX.Y.Z`（当前仓库尚无任何 tag）。
+- 发版提交后打 git 标签：`git tag vX.Y.Z` 并推送（仓库现有 tag：v2.3.1、v2.3.2）。
+
+## 产品级约定（最高优先级）
+
+- 完整工程治理规范见 `docs/08-工程规范/产品级框架约定规则.md`（战略对齐、SemVer、需求冻结、SOP、测试体系、防腐败机制、强制检查清单）——与本文档冲突时以规范书最新修订为准，并同步此处。
