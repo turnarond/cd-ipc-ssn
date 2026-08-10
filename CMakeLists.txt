@@ -162,6 +162,10 @@ target_link_libraries(example_client ${PROJECT_NAME} pthread)
 add_executable(test_cpp_service_base test/test_cpp_service_base.cpp)
 target_link_libraries(test_cpp_service_base ssn_framework pthread)
 
+# C++ 服务框架测试（批次 2 任务 3：ServiceTask 线程池基类）
+add_executable(test_cpp_service_task test/test_cpp_service_task.cpp)
+target_link_libraries(test_cpp_service_task ssn_framework pthread)
+
 # Advanced tests (require running server, use for manual/CI testing)
 add_executable(test_comprehensive test/test_ssn_comprehensive.c)
 target_link_libraries(test_comprehensive ${PROJECT_NAME} pthread)
