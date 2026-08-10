@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(ssn_transport)
+project(ssn_transport LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 99)
 
@@ -109,6 +109,31 @@ install(FILES src/ssn_frame.h
 
 install(FILES src/ssn_cliauto.h
     DESTINATION include
+)
+
+# ---- C++ 服务框架（v2.4.0，独立库，链接 ssn_transport）----
+add_library(ssn_framework SHARED
+    src/framework/ServiceBase.cpp
+    src/framework/ServiceTask.cpp
+    src/framework/ServiceManager.cpp
+    src/framework/SsnService.cpp
+    src/framework/SsnClient.cpp
+)
+
+target_compile_features(ssn_framework PUBLIC cxx_std_17)
+target_include_directories(ssn_framework PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(ssn_framework ssn_transport pthread)
+
+install(TARGETS ssn_framework
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/ssn/framework/
+    DESTINATION include/ssn/framework
 )
 
 add_executable(test_transport test/test_transport.c)
