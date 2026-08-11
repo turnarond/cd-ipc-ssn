@@ -14,6 +14,10 @@
 
 #include "../ssn_export.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef enum {
     SSN_LOG_LEVEL_DEBUG = 0,
     SSN_LOG_LEVEL_INFO,
@@ -49,6 +53,10 @@ SSN_API void ssn_log_set_level(ssn_log_level_t level);
 SSN_API ssn_log_level_t ssn_log_get_level(void);
 SSN_API void ssn_log_set_file(FILE* file);
 SSN_API FILE* ssn_log_get_file(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

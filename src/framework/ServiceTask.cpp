@@ -6,9 +6,7 @@
 
 #include <exception>
 
-extern "C" {
-#include "util/ssn_log.h"   // C 头文件，需 extern "C" 保证链接 C 符号
-}
+#include "util/ssn_log.h"   // C 头已带 extern "C" 保护，可直接包含
 
 namespace ssn {
 

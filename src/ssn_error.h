@@ -8,6 +8,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief 错误码版本
  */
@@ -118,5 +122,9 @@ uint16_t ssn_ecode_code(ssn_ecode_t error);
  * @param ... 可变参数
  */
 void ssn_handle_error(ssn_ecode_t error, const char *file, int line, const char *func, const char *format, ...);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SSN_ERROR_H */
