@@ -26,6 +26,11 @@ namespace ssn {
 // {"error": {"code": <int>, "message": "<中文描述>"}}：
 //   1001 方法不存在 / 1002 请求 JSON 解析失败 / 1003 handler 抛出异常
 //   （1004 客户端超时归 Task 6 SsnClient 使用）
+// 线程与锁约束：RPC 分发、连接与消息回调在节点 poll 线程（svc）内执行，
+// 期间持有 C 层 node->lock——回调内不得调用任何会加 node 锁的 API
+//（ssn_node_rpc_call / ssn_node_publish / ssn_node_subscribe /
+// ssn_node_send_to_peer / ssn_node_get_stats / ssn_node_stop 等），否则自锁
+// 死锁；同一约束适用于客户端订阅回调（SsnClient::MsgHandler）。
 class SsnService : public ServiceTask {
 public:
     SsnService();

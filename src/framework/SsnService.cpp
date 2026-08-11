@@ -144,6 +144,14 @@ bool SsnService::OnInit(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
+    // 清理残留节点：destroy() 从 Initialized 态直接归位 Created（不调用
+    // OnShutdown，见 ServiceBase::destroy），重复 initialize 时旧节点仍存活，
+    // 直接重建会泄漏（此态下 svc 线程从未运行，可安全直接回收）
+    if (node_) {
+        ssn_node_destroy(node_);
+        node_ = nullptr;
+    }
+
     // 构造服务节点：服务端 + RPC + PubSub，监听 TCP host:port
     ssn_node_config_t cfg = {};
     std::strncpy(cfg.node_type, "server", sizeof(cfg.node_type) - 1);
