@@ -123,6 +123,7 @@ add_library(ssn_framework SHARED
 target_compile_features(ssn_framework PUBLIC cxx_std_17)
 target_include_directories(ssn_framework PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 target_link_libraries(ssn_framework ssn_transport pthread)
 
@@ -169,6 +170,10 @@ target_link_libraries(test_cpp_service_task ssn_framework pthread)
 # C++ 服务框架测试（批次 2 任务 4：ServiceManager 编排与信号停止）
 add_executable(test_cpp_service_manager test/test_cpp_service_manager.cpp)
 target_link_libraries(test_cpp_service_manager ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 5：SsnService 通信服务基类 + 内置端点）
+add_executable(test_cpp_ssn_service test/test_cpp_ssn_service.cpp)
+target_link_libraries(test_cpp_ssn_service ssn_framework pthread)
 
 # Advanced tests (require running server, use for manual/CI testing)
 add_executable(test_comprehensive test/test_ssn_comprehensive.c)
