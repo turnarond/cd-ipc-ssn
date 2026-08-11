@@ -166,6 +166,10 @@ target_link_libraries(test_cpp_service_base ssn_framework pthread)
 add_executable(test_cpp_service_task test/test_cpp_service_task.cpp)
 target_link_libraries(test_cpp_service_task ssn_framework pthread)
 
+# C++ 服务框架测试（批次 2 任务 4：ServiceManager 编排与信号停止）
+add_executable(test_cpp_service_manager test/test_cpp_service_manager.cpp)
+target_link_libraries(test_cpp_service_manager ssn_framework pthread)
+
 # Advanced tests (require running server, use for manual/CI testing)
 add_executable(test_comprehensive test/test_ssn_comprehensive.c)
 target_link_libraries(test_comprehensive ${PROJECT_NAME} pthread)
