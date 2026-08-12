@@ -53,7 +53,7 @@ bool SsnClient::connect(const std::string& peer_address, uint64_t timeout_ms) {
     std::strncpy(cfg.node_type, "client", sizeof(cfg.node_type) - 1);
     std::strncpy(cfg.node_name, "SsnClient", sizeof(cfg.node_name) - 1);
     cfg.capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB;
-    cfg.idle_timeout_sec = 0;   // 禁用 idle 断连，避免长连接被服务端断开
+    cfg.idle_timeout_sec = 0;   // idle 超时仅服务端生效，客户端节点该字段无效（C 层不消费）
 
     ssn_node_t* node = ssn_node_create(&cfg);
     if (!node) {

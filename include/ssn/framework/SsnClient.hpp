@@ -54,6 +54,21 @@ public:
     bool callJson(const std::string& url, const nlohmann::json& req,
                   nlohmann::json& resp, uint64_t timeout_ms = 3000);
 
+    // 类型安全调用（Task 7）：Req/Resp 为 DTO 结构体（配合
+    // NLOHMANN_DEFINE_TYPE_INTRUSIVE 或 to_json/from_json 特化）。
+    // 语义与 callJson 一致（单 in-flight 串行化、超时/框架错误返回 false）；
+    // 区别在于 Resp 反序列化失败会向调用方抛异常（DTO 与应答不匹配属编程错误）。
+    template <typename Req, typename Resp>
+    bool Call(const std::string& url, const Req& req, Resp& resp, uint64_t timeout_ms = 3000) {
+        nlohmann::json jreq = req;   // 依赖 NLOHMANN_DEFINE_TYPE_INTRUSIVE / json 转换
+        nlohmann::json jresp;
+        if (!callJson(url, jreq, jresp, timeout_ms)) {
+            return false;
+        }
+        resp = jresp.get<Resp>();
+        return true;
+    }
+
     // PubSub 订阅（回调在 SSN 内部线程执行，需快速返回）
     // 锁约束：回调执行期间持有 node->lock，不得调用任何会加 node 锁的 API
     //（rpc_call / publish / subscribe / unsubscribe / send_to_peer / get_stats 等），

@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -43,6 +44,19 @@ public:
     using JsonHandler = std::function<nlohmann::json(const nlohmann::json&)>;
     bool registerJson(const std::string& url, JsonHandler handler);   // 重复注册同 URL 返回 false
     bool unregister(const std::string& url);
+
+    // 类型安全方法注册（Task 7）：用户传入 DTO 结构体 Req/Resp（配合
+    // NLOHMANN_DEFINE_TYPE_INTRUSIVE），handler 收到反序列化后的 Req，
+    // 返回值自动序列化为 JSON 应答。
+    // 异常路径：Req 反序列化失败（如请求体字段缺失/类型不符）由包装 lambda
+    // 抛出，SsnService::handleRpc 捕获后按框架错误码 1003（handler 异常）应答。
+    template <typename Req, typename Resp, typename Fn>
+    bool RegisterMethod(const std::string& url, Fn&& fn) {
+        return registerJson(url, [fn = std::forward<Fn>(fn)](const nlohmann::json& jreq) -> nlohmann::json {
+            Req req = jreq.get<Req>();   // 反序列化失败 → 抛异常 → 框架捕获 → 1003
+            return fn(req);
+        });
+    }
 
     // 发布（PubSub 主题，任意客户端可订阅）
     bool publish(const std::string& topic, const nlohmann::json& data);

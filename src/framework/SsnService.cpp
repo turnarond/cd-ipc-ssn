@@ -163,7 +163,7 @@ bool SsnService::OnInit(int argc, char** argv) {
     std::strncpy(cfg.listen_address, listen_host_.c_str(), sizeof(cfg.listen_address) - 1);
     cfg.listen_port = listen_port_;
     cfg.capabilities = SSN_NODE_CAP_SERVER | SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB;
-    cfg.idle_timeout_sec = 0;   // 禁用 idle 断连，避免长测/长连接被服务端断开
+    cfg.idle_timeout_sec = 0;   // 服务端 TCP keepalive idle 超时：0 回退默认 60s（并非禁用）
 
     node_ = ssn_node_create(&cfg);
     if (!node_) {
