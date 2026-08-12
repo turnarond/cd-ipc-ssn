@@ -6,8 +6,10 @@
 //       publish 走节点发布通道。
 #include "ssn/framework/SsnService.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <exception>
+#include <thread>
 #include <vector>
 
 #include "util/ssn_log.h"
@@ -238,6 +240,11 @@ int SsnService::svc() {
             break;   // 节点已清理，无事件源，直接退出
         }
         ssn_node_poll(node_, 100);
+        // 解锁后主动让出 1ms：node->lock 为 pthread 非公平互斥锁，svc 循环若
+        // 解锁后立即重锁，外部线程（如独立发布线程）调 publish 会锁饥饿
+        //（实测等锁数十秒）；让出后外部线程可在窗口内获得锁。代价：poll
+        // 周期增加约 1ms（对 RPC 应答延迟影响可忽略）。
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return 0;
 }
