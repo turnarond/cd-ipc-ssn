@@ -75,24 +75,42 @@ install(FILES src/ssn_export.h
     DESTINATION include
 )
 
+# 公共头以源码相对路径互相引用（如 ssn_frame.h → "transports/ssn_transport.h"、
+# ssn_transport.h → "util/ssn_log.h"），安装时同时保留顶层扁平路径（既有
+# 文档约定，向后兼容）与镜像源码树的子目录路径（相对引用成立的前提）
 install(FILES src/version/ssn_version.h
     DESTINATION include
+)
+install(FILES src/version/ssn_version.h
+    DESTINATION include/version
 )
 
 install(FILES src/transports/ssn_transport.h
     DESTINATION include
 )
+install(FILES src/transports/ssn_transport.h
+    DESTINATION include/transports
+)
 
 install(FILES src/util/ssn_log.h
     DESTINATION include
+)
+install(FILES src/util/ssn_log.h
+    DESTINATION include/util
 )
 
 install(FILES src/util/ssn_mutex.h
     DESTINATION include
 )
+install(FILES src/util/ssn_mutex.h
+    DESTINATION include/util
+)
 
 install(FILES src/util/ssn_hash_table.h
     DESTINATION include
+)
+install(FILES src/util/ssn_hash_table.h
+    DESTINATION include/util
 )
 
 install(FILES src/ssn_client.h
@@ -109,6 +127,24 @@ install(FILES src/ssn_frame.h
 
 install(FILES src/ssn_cliauto.h
     DESTINATION include
+)
+
+# ssn_node.h 内部以 "../ssn_client.h" 等相对引用包含顶层头文件，
+# 安装到 include/node/ 后相对引用成立（include/ssn_client.h 等已在顶层）
+install(FILES src/node/ssn_node.h
+    DESTINATION include/node
+)
+
+# 以下头文件构成已安装头文件的完整引用链（缺一则安装后无法编译）：
+# ssn_node.h → ssn_error.h；ssn_client.h → ssn_global.h → vsi/ipc_platform.h
+install(FILES src/ssn_error.h
+    DESTINATION include
+)
+install(FILES src/ssn_global.h
+    DESTINATION include
+)
+install(FILES src/vsi/ipc_platform.h
+    DESTINATION include/vsi
 )
 
 # ---- C++ 服务框架（v2.4.0，独立库，链接 ssn_transport）----
@@ -135,6 +171,11 @@ install(TARGETS ssn_framework
 
 install(DIRECTORY include/ssn/framework/
     DESTINATION include/ssn/framework
+)
+
+# nlohmann/json 为单头文件 vendor（框架公共头依赖 <nlohmann/json.hpp>），随安装分发
+install(FILES third_party/nlohmann/json.hpp
+    DESTINATION include/nlohmann
 )
 
 add_executable(test_transport test/test_transport.c)
