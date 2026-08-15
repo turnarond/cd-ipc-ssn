@@ -5,9 +5,13 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.." || exit 1
 
-# 预检：动态库必须已构建（示例链接 -Lbuild -lssn_transport）
+# 预检：动态库必须已构建（示例链接 -Lbuild -lssn_transport / -lssn_framework）
 if [ ! -f "build/libssn_transport.so" ]; then
     echo "错误：build/libssn_transport.so 不存在，请先构建库（mkdir -p build && cd build && cmake .. && make）"
+    exit 1
+fi
+if [ ! -f "build/libssn_framework.so" ]; then
+    echo "错误：build/libssn_framework.so 不存在，请先构建库（mkdir -p build && cd build && cmake .. && make）"
     exit 1
 fi
 

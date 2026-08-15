@@ -4,6 +4,8 @@
 //       信号处理采用"阻塞 + sigtimedwait 轮询"：本线程阻塞 SIGINT/SIGTERM，
 //       信号由处理器置位停止标志；若信号被其他线程的处理器消费（如测试中
 //       子线程 raise(SIGINT)），本线程以超时轮询感知标志，避免永久阻塞。
+//       Run 入口先安装信号处理（阻塞 + 处理器）再 initialize/start（Task 4-M2
+//       硬化），消除「initialize 期间收到信号走默认动作直接终止」的窗口。
 #ifndef SSN_FRAMEWORK_SERVICEMANAGER_HPP
 #define SSN_FRAMEWORK_SERVICEMANAGER_HPP
 
@@ -27,12 +29,20 @@ public:
 
 private:
     static std::atomic<bool> s_stop_requested_;
+    // 阻塞 SIGINT/SIGTERM 并安装停止处理器（Run 入口最先调用），返回信号集
+    // 供 Run 的 sigtimedwait 等待循环复用
+    static sigset_t installSignalHandlers();
 };
 
 template <typename ServiceT>
 int ServiceManager::Run(int argc, char** argv) {
     // 单次运行开始时复位停止标志，支持重复调用
     s_stop_requested_ = false;
+
+    // 先安装信号处理再进入 initialize/start（Task 4-M2 硬化）：若不先阻塞并
+    // 安装处理器，initialize 期间收到 SIGINT/SIGTERM 会走默认动作直接终止
+    // 进程；安装后信号由本线程 sigtimedwait 消费或由处理器置位停止标志
+    sigset_t set = installSignalHandlers();
 
     ServiceT svc;
     if (!svc.initialize(argc, argv)) {
@@ -43,18 +53,6 @@ int ServiceManager::Run(int argc, char** argv) {
         // LOG_ERROR("服务启动失败");
         return 1;
     }
-
-    // 阻塞 SIGINT/SIGTERM 于本线程，并安装停止信号处理器（POSIX）
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, SIGINT);
-    sigaddset(&set, SIGTERM);
-    pthread_sigmask(SIG_BLOCK, &set, nullptr);
-    struct sigaction sa = {};
-    sa.sa_handler = [](int) { ServiceManager::requestStop(); };
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, nullptr);
-    sigaction(SIGTERM, &sa, nullptr);
 
     // 等待停止请求：sigwait 仅在本线程有未消费信号时返回；若信号被其他
     // 线程的处理器消费，处理器已置位标志，本线程以 sigtimedwait 超时轮询感知

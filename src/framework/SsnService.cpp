@@ -39,6 +39,14 @@ nlohmann::json make_error(int code, const char* message) {
     return {{"error", {{"code", code}, {"message", message}}}};
 }
 
+// 应答失败：状态码置 1（失败）并携带框架错误体（handleRpc 四个错误分支共用）
+void reply_error(ssn_server_t* server, ssn_peer_id_t id, uint16_t seqno, int code, const char* message) {
+    nlohmann::json err = make_error(code, message);
+    std::string body = err.dump();
+    ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
+    ssn_server_response(server, id, kStatusFail, seqno, &resp);
+}
+
 // 从方法表收集全部 URL（调用方持有 methods_mutex_ 语义：先拷贝后释放锁）
 std::vector<std::string> collect_urls(const std::map<std::string, SsnService::JsonHandler>& methods) {
     std::vector<std::string> urls;
@@ -289,10 +297,7 @@ void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t*
     if (!handler) {
         // 方法不存在（含未注册 URL 经 "/" 兜底进入此处）
         LOG_WARN("SsnService: 方法不存在: %s", key.c_str());
-        nlohmann::json err = make_error(kErrMethodNotFound, "方法不存在");
-        std::string body = err.dump();
-        ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-        ssn_server_response(server, id, kStatusFail, seqno, &resp);
+        reply_error(server, id, seqno, kErrMethodNotFound, "方法不存在");
         return;
     }
 
@@ -304,10 +309,7 @@ void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t*
             req = nlohmann::json::parse(begin, begin + data->length);
         } catch (const std::exception& e) {
             LOG_WARN("SsnService: 请求 JSON 解析失败: %s", e.what());
-            nlohmann::json err = make_error(kErrJsonParse, "请求 JSON 解析失败");
-            std::string body = err.dump();
-            ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-            ssn_server_response(server, id, kStatusFail, seqno, &resp);
+            reply_error(server, id, seqno, kErrJsonParse, "请求 JSON 解析失败");
             return;
         }
     }
@@ -318,17 +320,11 @@ void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t*
         result = handler(req);
     } catch (const std::exception& e) {
         LOG_ERROR("SsnService: 方法 %s 处理异常: %s", key.c_str(), e.what());
-        nlohmann::json err = make_error(kErrHandlerException, "handler 抛出异常");
-        std::string body = err.dump();
-        ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-        ssn_server_response(server, id, kStatusFail, seqno, &resp);
+        reply_error(server, id, seqno, kErrHandlerException, "handler 抛出异常");
         return;
     } catch (...) {
         LOG_ERROR("SsnService: 方法 %s 抛出未知异常", key.c_str());
-        nlohmann::json err = make_error(kErrHandlerException, "handler 抛出未知异常");
-        std::string body = err.dump();
-        ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-        ssn_server_response(server, id, kStatusFail, seqno, &resp);
+        reply_error(server, id, seqno, kErrHandlerException, "handler 抛出未知异常");
         return;
     }
 

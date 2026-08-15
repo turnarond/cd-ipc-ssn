@@ -72,7 +72,9 @@ public:
 protected:
     bool OnInit(int argc, char** argv) override;   // 创建 node、注册内置端点与用户方法、node start
     void OnShutdown() override;                    // 卸载方法、node stop/destroy
-    int svc() override;                            // while (isRunning()) ssn_node_poll(node_, 100);
+    // 事件循环：while (isRunning()) 内 ssn_node_poll(node_, 100) 之后 sleep 1ms
+    // 让出锁窗口（外部线程 publish 锁饥饿修复，详见实现注释）
+    int svc() override;
 
 private:
     static void onRpcCb(ssn_server_t*, ssn_peer_id_t, ssn_header_t*, ssn_url_ref_t*, ssn_data_ref_t*, void*);

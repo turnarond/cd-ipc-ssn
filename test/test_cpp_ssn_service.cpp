@@ -235,6 +235,39 @@ void test_rpc_roundtrip() {
     server.destroy();
 }
 
+// 重复 initialize→destroy→initialize：销毁后重新初始化不泄漏、功能正常
+// （Task 6-M4 用例，Task 5 Minor-1 修复的回归——destroy 从 Initialized 态直接
+// 归位 Created（不调 OnShutdown），旧节点仍存活；若 OnInit 不回收旧节点，
+// 新节点监听同端口会 EADDRINUSE，initialize 失败，此用例即变红）
+void test_reinit() {
+    TestServer server;
+    CHECK(server.initialize(0, nullptr));
+    CHECK(server.state() == ssn::ServiceState::Initialized);
+    server.destroy();                                    // 未 start 直接销毁：归位 Created
+    CHECK(server.state() == ssn::ServiceState::Created);
+    CHECK(server.initialize(0, nullptr));                // 重新初始化：旧节点必须回收
+    CHECK(server.start());
+    CHECK(server.state() == ssn::ServiceState::Started);
+
+    // 功能验证：重新初始化后的实例仍可正常响应 RPC
+    ssn_node_t* client = make_client_node();
+    CHECK(client != nullptr);
+    CHECK(ssn_node_start(client));
+
+    RpcReply out;
+    CHECK(rpc_json(client, "/add", {{"a", 5}, {"b", 6}}, out));
+    CHECK(out.replied);
+    CHECK(out.status == 0);
+    nlohmann::json resp = nlohmann::json::parse(out.body);
+    CHECK(resp.at("sum").get<int>() == 11);
+
+    ssn_node_stop(client);
+    ssn_node_destroy(client);
+    server.stop();
+    server.destroy();
+    CHECK(server.state() == ssn::ServiceState::Created);
+}
+
 // publish：订阅客户端收到发布消息
 void test_publish() {
     TestServer server;
@@ -278,6 +311,7 @@ int main() {
     test_registration();
     test_lifecycle();
     test_rpc_roundtrip();
+    test_reinit();
     test_publish();
     std::printf("C++ test results: %d/%d passed\n", g_cpp_passed, g_cpp_passed + g_cpp_failed);
     return g_cpp_failed == 0 ? 0 : 1;
