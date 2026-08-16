@@ -223,10 +223,10 @@ void test_rpc_roundtrip() {
     CHECK(rpc_json(client, "/version", nlohmann::json::object(), out));
     CHECK(out.replied && out.status == 0);
     resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("version").get<std::string>() == "2.3.2");
+    CHECK(resp.at("version").get<std::string>() == "2.4.0");
 
     // 框架内置端点直接访问（非 IPC 路径）
-    CHECK(server.builtinVersion().at("version").get<std::string>() == "2.3.2");
+    CHECK(server.builtinVersion().at("version").get<std::string>() == "2.4.0");
     CHECK(server.builtinHealth().at("status").get<std::string>() == "ok");
 
     ssn_node_stop(client);

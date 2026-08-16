@@ -2,16 +2,23 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
-## 2.4.0 (unreleased)
+## [2.4.0] - 2026-08-16
 
 ### Added
 - C++ 服务框架（libssn_framework）：ServiceBase/ServiceTask/ServiceManager 三层渐进基类，ServiceManager::Run\<T\>() 一行启动
 - SsnService 服务端基类：类型安全 RegisterMethod\<Req,Resp\>、内置端点 /urls、/health、/version、publish 发布
 - SsnClient 客户端：同步 Call\<Req,Resp\>、订阅 subscribe、连接管理
 - nlohmann/json v3.11.3 vendor（MIT，DTO 序列化）
-- 新增 6 个 C++ 测试套件与 2 个 C++ 示例（examples/cpp/）
+- 新增 6 个 C++ 测试套件（170 断言）与 2 个 C++ 示例（examples/cpp/），全量 13 套件 294 例 + 17 示例
 - 安装布局修复：ssn_node.h/ssn_error.h/ssn_global.h/nlohmann 纳入 install，并补齐相对引用所需的子目录路径（transports/util/version/vsi），安装后框架头可直接编译
 - C++ 服务框架使用指南（docs/06-使用手册/C++服务框架指南.md）与 README/白皮书同步
+
+### Changed
+- C 公开头（ssn_log.h、ssn_error.h）加 extern "C" 保护：C++ 可直接包含 C API 头
+- 发布前文档修正：README 链接空格修复、C++ 编译器要求补注（GCC ≥ 7 / Clang ≥ 6）
+
+### Fixed
+- 服务端 accept 后无条件 recv(timeout=0) 无限阻塞（Issue #4，P1）：任意客户端 connect 后不发数据即可挂死整个服务端（单连接 DoS）——删除立即 recv，由下一轮 poll 的 FD_ISSET 先验接管，回归测试 Test 8
 
 ## [2.3.2] - 2026-08-08
 
