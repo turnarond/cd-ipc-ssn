@@ -1628,16 +1628,10 @@ static void ipc_server_handle_new_connection(ssn_server_t *server, const fd_set 
                 ipc_mutex_lock(server->lock);
                 ssn_server_cli_init(server, cli);
                 ipc_mutex_unlock(server->lock);
-                
-                // 立即处理客户端发送的第一个消息（服务信息请求）
-                struct input_arg input_arg;
-                input_arg.server = server;
-                input_arg.cli = cli;
-                
-                ssize_t num = ssn_transport_recv(cli->transport, server->recvbuf, SSN_MAX_PACKET_SIZE, 0);
-                if (num > 0) {
-                    ssn_stream_feed(&cli->recv, server->recvbuf, num, ssn_server_input, &input_arg);
-                }
+
+                /* 首包处理交给下一轮 poll：client fd 已入 clis 表，FD_ISSET 先验后
+                 * 由 ssn_server_handle_client_input 接管（修复 Issue #4——原实现在此
+                 * 无条件 recv(timeout=0) 无限阻塞，空连接可挂死整个服务端）。 */
             } else {
                 ssn_transport_destroy(client_transport);
             }

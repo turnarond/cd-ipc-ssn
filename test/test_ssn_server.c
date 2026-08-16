@@ -320,6 +320,100 @@ cleanup:
     return 1;
 }
 
+/* ---- Test 8: 空连接不阻塞服务端（回归：Issue #4 accept 后 recv(0) 无限阻塞） ----
+ *
+ * 缺陷：ipc_server_handle_new_connection 在 accept 后无条件 ssn_transport_recv(..., 0)，
+ *       timeout=0 不设置 SO_RCVTIMEO → recv 无限阻塞。任意客户端 connect 后不发数据
+ *       即让 poll 线程永久卡死（持锁），整个服务端挂死（单连接 DoS）。
+ * 修复：删除 accept 后的立即 recv——新连接 fd 进入 clis 表后，下一轮 poll 的
+ *       FD_ISSET 先验（ssn_server_handle_client_input）自然接管，无阻塞风险。
+ */
+
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+static int test_empty_connection_not_blocking(void)
+{
+    printf("  Test 8: Empty connection does not block server... ");
+
+    /* TCP 服务端（unix 路径同样受影响，此处用 TCP 复现 Issue 场景） */
+    ssn_server_t *srv = ssn_server_create("tcp://127.0.0.1:18951");
+    if (!srv) { printf("FAIL (create server)\n"); return 1; }
+
+    ssn_url_ref_t url = { .url = "/echo", .url_len = 5 };
+    ssn_server_add_method(srv, &url, echo_handler, NULL);
+    if (!ssn_server_start(srv)) { printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1; }
+
+    pthread_t tid;
+    g_srv_running = 1;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(100000);
+
+    /* 1. 恶意空连接：connect 后不发任何数据，保持连接 */
+    int bad_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (bad_fd < 0) { printf("FAIL (bad socket)\n"); goto cleanup; }
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(18951);
+    inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr);
+    if (connect(bad_fd, (struct sockaddr *)&sa, sizeof(sa)) < 0) {
+        printf("FAIL (bad connect)\n"); close(bad_fd); goto cleanup;
+    }
+
+    /* 2. 给缺陷留出触发时间（修复前：poll 线程卡死在 recv(0)） */
+    usleep(1000000);
+
+    /* 3. 正常客户端应仍能完成 RPC 往返（修复前：无应答 → 红） */
+    g_handler_called = 0;
+    g_reply_received = 0;
+    g_reply_len = 0;
+
+    ssn_client_t *cli = ssn_client_create();
+    if (!cli) { printf("FAIL (create client)\n"); close(bad_fd); goto cleanup; }
+
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!ssn_client_connect(cli, "tcp://127.0.0.1:18951", &ts)) {
+        printf("FAIL (connect)\n"); ssn_client_close(cli); close(bad_fd); goto cleanup;
+    }
+
+    const char *msg = "alive";
+    ssn_data_ref_t req = { .data = (void *)msg, .length = strlen(msg) };
+    int ret = ssn_client_call(cli, &url, &req, reply_cb, NULL, 2000);
+    if (ret < 0) {
+        printf("FAIL (call)\n"); ssn_client_close(cli); close(bad_fd); goto cleanup;
+    }
+
+    for (int i = 0; i < 10 && !g_reply_received; i++) {
+        ssn_client_poll(cli, 100);
+        usleep(50000);
+    }
+
+    ssn_client_close(cli);
+    close(bad_fd);
+
+    if (!g_reply_received) {
+        printf("FAIL (no reply - server blocked by empty connection)\n");
+        goto cleanup;
+    }
+    if (g_reply_len != strlen(msg) || memcmp(g_reply_buf, msg, g_reply_len) != 0) {
+        printf("FAIL (reply mismatch)\n"); goto cleanup;
+    }
+
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+    printf("PASS\n");
+    return 0;
+
+cleanup:
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+    return 1;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -332,7 +426,8 @@ int main(void)
     failed += test_idle_timeout_disconnect();
     failed += test_idle_timeout_disconnect_after_handshake();
     failed += test_active_connection_kept();
+    failed += test_empty_connection_not_blocking();
 
-    printf("=== Result: %d/7 passed, %d failed ===\n", 7 - failed, failed);
+    printf("=== Result: %d/8 passed, %d failed ===\n", 8 - failed, failed);
     return failed ? 1 : 0;
 }
