@@ -55,6 +55,16 @@ public:
         });
     }
 
+    // 失败路径兜底：若 start() 失败（Run 返回 1 直接析构，不触发 OnShutdown），
+    // 已启动的发布线程在此回收，避免 joinable 析构 → std::terminate（技术债 #11）。
+    // 注意：析构须在 public 区（Run<ChatServer> 栈上实例化需要可访问析构）。
+    ~ChatServer() override {
+        stop_pub_ = true;
+        if (pub_thread_.joinable()) {
+            pub_thread_.join();
+        }
+    }
+
 protected:
     // 服务初始化完成后启动发布线程（独立线程：publish 不持有节点锁，安全）
     bool OnInit(int argc, char** argv) override {

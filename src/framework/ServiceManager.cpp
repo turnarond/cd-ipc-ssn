@@ -31,27 +31,41 @@ ServiceManager::SignalState ServiceManager::installSignalHandlers() {
     sigemptyset(&st.blocked);
     sigaddset(&st.blocked, SIGINT);
     sigaddset(&st.blocked, SIGTERM);
-    if (pthread_sigmask(SIG_BLOCK, &st.blocked, &st.old_mask) != 0) {
+    if (pthread_sigmask(SIG_BLOCK, &st.blocked, &st.old_mask) == 0) {
+        st.mask_ok = true;
+    } else {
         LOG_WARN("ServiceManager: 信号阻塞失败，SIGINT/SIGTERM 硬化不可用");
     }
     struct sigaction sa = {};
     sa.sa_handler = [](int) { ServiceManager::requestStop(); };
     sigemptyset(&sa.sa_mask);
-    if (sigaction(SIGINT, &sa, &st.old_int) != 0) {
+    if (sigaction(SIGINT, &sa, &st.old_int) == 0) {
+        st.int_ok = true;
+    } else {
         LOG_WARN("ServiceManager: SIGINT 处理器安装失败");
     }
-    if (sigaction(SIGTERM, &sa, &st.old_term) != 0) {
+    if (sigaction(SIGTERM, &sa, &st.old_term) == 0) {
+        st.term_ok = true;
+    } else {
         LOG_WARN("ServiceManager: SIGTERM 处理器安装失败");
     }
     return st;
 }
 
 void ServiceManager::restoreSignalHandlers(const SignalState& st) {
-    // 还原顺序：先处理器后掩码——掩码尚未恢复时迟到的信号仍由我们的处理器
-    // 消费（置位停止标志），不会走默认动作直接终止进程
-    sigaction(SIGINT, &st.old_int, nullptr);
-    sigaction(SIGTERM, &st.old_term, nullptr);
-    pthread_sigmask(SIG_SETMASK, &st.old_mask, nullptr);
+    // 还原顺序：先掩码后处理器——掩码恢复后仍未决的挂起信号随即投递，此时
+    // 处理器尚未还原仍是我们自己的（仅置位停止标志，无副作用）；若先还原
+    // 处理器，挂起信号会走旧处理器（默认则终止进程）。仅还原安装成功的项
+    // （失败时 old_* 为零值，写回会破坏调用方原状态）。
+    if (st.mask_ok) {
+        pthread_sigmask(SIG_SETMASK, &st.old_mask, nullptr);
+    }
+    if (st.int_ok) {
+        sigaction(SIGINT, &st.old_int, nullptr);
+    }
+    if (st.term_ok) {
+        sigaction(SIGTERM, &st.old_term, nullptr);
+    }
 }
 
 }  // namespace ssn

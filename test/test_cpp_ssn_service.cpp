@@ -135,7 +135,8 @@ void test_registration() {
 
     // Issue #5-3 回归：尾斜杠 URL（长度 > 1）拒绝注册/退订——C 层把 "/foo/"
     // 注册为前缀规则而框架分发为精确匹配，注册后永不命中（语义缝隙）；
-    // "/"（长度 1）兜底命令不受影响（仍为保留端点，下方已断言拒绝）
+    // "/"（长度 1）兜底命令不受影响（仍为保留端点，拒绝注册）
+    CHECK(!server.registerJson("/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
     CHECK(!server.registerJson("/foo/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
     CHECK(!server.registerJson("//", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
     CHECK(!server.unregister("/foo/"));

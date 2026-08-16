@@ -43,6 +43,9 @@ private:
         sigset_t old_mask;            // 安装前原线程信号掩码
         struct sigaction old_int;     // 安装前原 SIGINT 处理器
         struct sigaction old_term;    // 安装前原 SIGTERM 处理器
+        bool mask_ok = false;         // 掩码安装成功标志（失败则不还原，避免写回零值）
+        bool int_ok = false;          // SIGINT 处理器安装成功标志
+        bool term_ok = false;         // SIGTERM 处理器安装成功标志
     };
     // 阻塞 SIGINT/SIGTERM 并安装停止处理器（Run 入口最先调用），返回快照
     static SignalState installSignalHandlers();
