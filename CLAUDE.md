@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 常用命令
 
-构建（产物 `libssn_transport.so`，仅支持 Linux/POSIX，CMake ≥ 3.12，GCC ≥ 4.8）：
+构建（产物 `libssn_transport.so` + `libssn_framework.so`，仅支持 Linux/POSIX，CMake ≥ 3.12；C 库 GCC ≥ 4.8，C++ 框架库需 GCC ≥ 7 / Clang ≥ 6，C++17）：
 
 ```bash
 mkdir -p build && cd build
@@ -24,13 +24,14 @@ cmake .. && make -j$(nproc)
 ./test_protocol             # 协议层（25 用例）
 ./test_protocol_integration # 协议集成（19 用例）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
+./test_cpp_*                # C++ 框架套件（6 个：service_base / service_task / service_manager / ssn_service / ssn_client / json）
 ```
 
 注意：
 
-- 测试框架为各测试文件内自定义的 `ASSERT` 宏（统计 `g_tests_passed`/`g_tests_failed`），无外部测试框架；无法按用例名过滤，只能整体运行一个测试文件。
+- 测试框架为各测试文件内自定义的 `ASSERT` 宏（C 套件）/ `CHECK` 宏（C++ 套件，统计 `g_cpp_passed`/`g_cpp_failed`），无外部测试框架；无法按用例名过滤，只能整体运行一个测试文件。
 - 高级/手工测试：`./test_comprehensive`、`./test_thread_safety`、`./test_stress`（需要先手工启动服务端）。
-- 一键验证：`bash test/run_tests.sh`（构建 + 7 个自动化套件）、`bash test/verify_examples.sh`（15 个示例构建）。
+- 一键验证：`bash test/run_tests.sh`（构建 + 13 个自动化套件）、`bash test/verify_examples.sh`（17 个示例构建）。
 
 ## 架构分层
 

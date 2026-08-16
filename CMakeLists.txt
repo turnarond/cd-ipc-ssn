@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(ssn_transport)
+project(ssn_transport LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 99)
 
@@ -75,24 +75,42 @@ install(FILES src/ssn_export.h
     DESTINATION include
 )
 
+# 公共头以源码相对路径互相引用（如 ssn_frame.h → "transports/ssn_transport.h"、
+# ssn_transport.h → "util/ssn_log.h"），安装时同时保留顶层扁平路径（既有
+# 文档约定，向后兼容）与镜像源码树的子目录路径（相对引用成立的前提）
 install(FILES src/version/ssn_version.h
     DESTINATION include
+)
+install(FILES src/version/ssn_version.h
+    DESTINATION include/version
 )
 
 install(FILES src/transports/ssn_transport.h
     DESTINATION include
 )
+install(FILES src/transports/ssn_transport.h
+    DESTINATION include/transports
+)
 
 install(FILES src/util/ssn_log.h
     DESTINATION include
+)
+install(FILES src/util/ssn_log.h
+    DESTINATION include/util
 )
 
 install(FILES src/util/ssn_mutex.h
     DESTINATION include
 )
+install(FILES src/util/ssn_mutex.h
+    DESTINATION include/util
+)
 
 install(FILES src/util/ssn_hash_table.h
     DESTINATION include
+)
+install(FILES src/util/ssn_hash_table.h
+    DESTINATION include/util
 )
 
 install(FILES src/ssn_client.h
@@ -109,6 +127,55 @@ install(FILES src/ssn_frame.h
 
 install(FILES src/ssn_cliauto.h
     DESTINATION include
+)
+
+# ssn_node.h 内部以 "../ssn_client.h" 等相对引用包含顶层头文件，
+# 安装到 include/node/ 后相对引用成立（include/ssn_client.h 等已在顶层）
+install(FILES src/node/ssn_node.h
+    DESTINATION include/node
+)
+
+# 以下头文件构成已安装头文件的完整引用链（缺一则安装后无法编译）：
+# ssn_node.h → ssn_error.h；ssn_client.h → ssn_global.h → vsi/ipc_platform.h
+install(FILES src/ssn_error.h
+    DESTINATION include
+)
+install(FILES src/ssn_global.h
+    DESTINATION include
+)
+install(FILES src/vsi/ipc_platform.h
+    DESTINATION include/vsi
+)
+
+# ---- C++ 服务框架（v2.4.0，独立库，链接 ssn_transport）----
+add_library(ssn_framework SHARED
+    src/framework/ServiceBase.cpp
+    src/framework/ServiceTask.cpp
+    src/framework/ServiceManager.cpp
+    src/framework/SsnService.cpp
+    src/framework/SsnClient.cpp
+)
+
+target_compile_features(ssn_framework PUBLIC cxx_std_17)
+target_include_directories(ssn_framework PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+)
+target_link_libraries(ssn_framework ssn_transport pthread)
+
+install(TARGETS ssn_framework
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/ssn/framework/
+    DESTINATION include/ssn/framework
+)
+
+# nlohmann/json 为单头文件 vendor（框架公共头依赖 <nlohmann/json.hpp>），随安装分发
+install(FILES third_party/nlohmann/json.hpp
+    DESTINATION include/nlohmann
 )
 
 add_executable(test_transport test/test_transport.c)
@@ -132,6 +199,30 @@ target_link_libraries(example_server ${PROJECT_NAME} pthread)
 
 add_executable(example_client test/test_ssn_client.c)
 target_link_libraries(example_client ${PROJECT_NAME} pthread)
+
+# C++ 服务框架测试（批次 2 任务 2：ServiceBase 生命周期）
+add_executable(test_cpp_service_base test/test_cpp_service_base.cpp)
+target_link_libraries(test_cpp_service_base ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 3：ServiceTask 线程池基类）
+add_executable(test_cpp_service_task test/test_cpp_service_task.cpp)
+target_link_libraries(test_cpp_service_task ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 4：ServiceManager 编排与信号停止）
+add_executable(test_cpp_service_manager test/test_cpp_service_manager.cpp)
+target_link_libraries(test_cpp_service_manager ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 5：SsnService 通信服务基类 + 内置端点）
+add_executable(test_cpp_ssn_service test/test_cpp_ssn_service.cpp)
+target_link_libraries(test_cpp_ssn_service ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 6：SsnClient 客户端——同步 callJson + 订阅）
+add_executable(test_cpp_ssn_client test/test_cpp_ssn_client.cpp)
+target_link_libraries(test_cpp_ssn_client ssn_framework pthread)
+
+# C++ 服务框架测试（批次 2 任务 7：类型安全层——RegisterMethod/Call + DTO 全链路）
+add_executable(test_cpp_json test/test_cpp_json.cpp)
+target_link_libraries(test_cpp_json ssn_framework pthread)
 
 # Advanced tests (require running server, use for manual/CI testing)
 add_executable(test_comprehensive test/test_ssn_comprehensive.c)

@@ -2,6 +2,17 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## 2.4.0 (unreleased)
+
+### Added
+- C++ 服务框架（libssn_framework）：ServiceBase/ServiceTask/ServiceManager 三层渐进基类，ServiceManager::Run\<T\>() 一行启动
+- SsnService 服务端基类：类型安全 RegisterMethod\<Req,Resp\>、内置端点 /urls、/health、/version、publish 发布
+- SsnClient 客户端：同步 Call\<Req,Resp\>、订阅 subscribe、连接管理
+- nlohmann/json v3.11.3 vendor（MIT，DTO 序列化）
+- 新增 6 个 C++ 测试套件与 2 个 C++ 示例（examples/cpp/）
+- 安装布局修复：ssn_node.h/ssn_error.h/ssn_global.h/nlohmann 纳入 install，并补齐相对引用所需的子目录路径（transports/util/version/vsi），安装后框架头可直接编译
+- C++ 服务框架使用指南（docs/06-使用手册/C++服务框架指南.md）与 README/白皮书同步
+
 ## [2.3.2] - 2026-08-08
 
 ### Added

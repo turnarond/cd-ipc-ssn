@@ -80,6 +80,15 @@ int main(void) {
 }
 ```
 
+### C++ 服务框架（v2.4.0）
+
+面向「快速开发 IPC 服务」的 C++ 封装（`libssn_framework.so`，C++17）：类型安全的
+RPC 方法注册与调用（`RegisterMethod<Req,Resp>` / `Call<Req,Resp>`）、内置管理端点
+（`/urls` `/health` `/version`）、PubSub 发布/订阅，`ServiceManager::Run<T>()` 一行
+启动服务（信号优雅停止）。示例：`examples/cpp/01_echo_service`（echo 服务）、
+`examples/cpp/02_pubsub_chat`（聊天室）。完整教学文档见
+[C++ 服务框架指南](docs/06-使用手册/C++服务框架指南.md)。
+
 ## 架构概述
 
 ```
@@ -257,6 +266,7 @@ cd build
 - [架构设计总览](docs/03-设计/架构设计/架构设计总览.md)
 - [传输层设计](docs/03-设计/架构设计/传输层设计.md)
 - [协议层模块化设计](docs/03-设计/核心模块/协议层模块化设计.md)
+- [C++ 服务框架指南](docs/06-使用手册/C++服务框架指南.md)
 - [API 使用指南](docs/06-使用手册/API使用指南.md)
 - [使用指南](docs/06-使用手册/使用指南.md)
 - [迁移指南](docs/04-实施规划/迁移指南.md)

@@ -33,18 +33,34 @@ TESTS=(
     example_client            # 客户端 API 功能测试（9 用例）
 )
 
+# C++ 服务框架套件（v2.4.0，自包含测试，无需外部服务端）
+CPP_TESTS=(
+    test_cpp_service_base     # 生命周期状态机 + 钩子顺序（41 断言）
+    test_cpp_service_task     # 线程池任务调度（12 断言）
+    test_cpp_service_manager  # Run 编排 + 信号停止（6 断言）
+    test_cpp_ssn_service      # 服务端基类 IPC 回环（76 断言）
+    test_cpp_ssn_client       # 客户端调用/订阅（24 断言）
+    test_cpp_json             # 类型安全层 DTO（11 断言）
+)
+
 PASS=0
 FAIL=0
-for t in "${TESTS[@]}"; do
+
+# 运行单个套件并聚合结果（调用方保证 cwd 为 build/，位置无关）
+run_one() {
     echo ""
-    echo "=== 运行 $t ==="
-    if ./"$t"; then
-        echo "[PASS] $t"
+    echo "=== 运行 $1 ==="
+    if ./"$1"; then
+        echo "[PASS] $1"
         PASS=$((PASS + 1))
     else
-        echo "[FAIL] $t"
+        echo "[FAIL] $1"
         FAIL=$((FAIL + 1))
     fi
+}
+
+for t in "${TESTS[@]}" "${CPP_TESTS[@]}"; do
+    run_one "$t"
 done
 
 echo ""

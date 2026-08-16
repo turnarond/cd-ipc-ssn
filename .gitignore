@@ -17,3 +17,8 @@ examples/*/*/node_lifecycle
 examples/*/*/node_comm
 examples/*/*/node_rpc
 examples/*/*/node_pubsub
+# C++ 框架示例构建产物
+examples/*/*/echo_server
+examples/*/*/echo_client
+examples/*/*/pub_server
+examples/*/*/sub_client
