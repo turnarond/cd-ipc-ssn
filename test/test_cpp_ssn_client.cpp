@@ -82,6 +82,23 @@ void test_call_not_found() {
     srv.destroy();
 }
 
+// Issue #5-5 回归：disconnect 后 callJson 返回 false（不崩溃）、connected() == false
+void test_disconnect_then_call() {
+    EchoServer srv;
+    CHECK(srv.initialize(0, nullptr));
+    CHECK(srv.start());
+    ssn::SsnClient cli;
+    CHECK(cli.connect("tcp://127.0.0.1:18902"));
+
+    cli.disconnect();
+    CHECK(!cli.connected());
+    nlohmann::json resp;
+    CHECK(!cli.callJson("/echo", {{"msg", "x"}}, resp));   // 断开后调用直接失败，不崩溃
+
+    srv.stop();
+    srv.destroy();
+}
+
 void test_subscribe_pubsub() {
     EchoServer srv;
     CHECK(srv.initialize(0, nullptr));
@@ -113,6 +130,7 @@ int main() {
     test_call_roundtrip();
     test_call_timeout();
     test_call_not_found();
+    test_disconnect_then_call();
     test_subscribe_pubsub();
     std::printf("C++ test results: %d/%d passed\n", g_cpp_passed, g_cpp_passed + g_cpp_failed);
     return g_cpp_failed == 0 ? 0 : 1;

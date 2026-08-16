@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 服务线程池基类（线程生命周期管理）
+ */
 // 文件: include/ssn/framework/ServiceTask.hpp
 // 功能: 服务线程池基类——继承 ServiceBase，覆写 startImpl/stopImpl
 //       实现线程生命周期管理；派生类实现 svc() 作为线程入口，
@@ -17,6 +23,7 @@ namespace ssn {
 // requestShutdown 置 running_=false 通知 svc 退出，wait 回收全部线程
 class ServiceTask : public ServiceBase {
 public:
+    ~ServiceTask() override;              // 兜底回收线程（requestShutdown + wait）
     bool activate(int num_threads = 1);  // 重复调用或已运行返回 false
     void wait();                          // join 全部线程
     void requestShutdown();               // 置 running_=false，svc 应据此退出

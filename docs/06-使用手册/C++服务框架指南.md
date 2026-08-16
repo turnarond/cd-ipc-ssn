@@ -217,7 +217,7 @@ void publishLoop() {
 |-----|------|----------|
 | `/urls` | 已注册方法列表 | `{"urls":["/echo","/health","/urls","/version"]}` |
 | `/health` | 健康状态、连接数与累计消息数 | `{"status":"ok","connections":0,"messages":0}` |
-| `/version` | 框架版本（`ssn_version_get_string()`） | `{"version":"2.4.0"}` |
+| `/version` | 框架版本（`ssn_version_get_string()`） | `{"version":"2.4.1"}` |
 
 ### 3.5 异常与错误码
 
@@ -294,6 +294,9 @@ int main() {
 - **单 in-flight 限制**：同一 `SsnClient` 的并发调用被内部互斥串行化，后到者排队
   等待——不要在同一客户端上发起需要并行的调用，多并发请使用多个 `SsnClient`
   实例；
+- **超时竞态（Issue #5-7）**：同一客户端超时失败后立即发起下一次调用，理论上
+  有极窄窗口被迟到应答覆盖（C API 无请求序号回调，不可修）；实际超时路径的
+  应用应避免紧接重试（如先断开重连、或改用新客户端实例）；
 - `Call` 的 Resp 反序列化失败会向调用方抛异常（DTO 与应答不匹配属编程错误）。
 
 DTO 定义与服务端一致（`NLOHMANN_DEFINE_TYPE_INTRUSIVE`，成员名即 JSON 字段名），

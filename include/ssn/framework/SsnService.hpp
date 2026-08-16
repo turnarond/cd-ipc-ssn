@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 通信服务基类（服务端：方法注册/分发/内置端点/发布）
+ */
 // 文件: include/ssn/framework/SsnService.hpp
 // 功能: 通信服务基类（服务端）——绑定 SSN C API：OnInit 创建服务节点并注册
 //       内置端点（/urls /health /version）与用户方法，svc() 运行 poll 事件
@@ -32,6 +38,9 @@ namespace ssn {
 //（ssn_node_rpc_call / ssn_node_publish / ssn_node_subscribe /
 // ssn_node_send_to_peer / ssn_node_get_stats / ssn_node_stop 等），否则自锁
 // 死锁；同一约束适用于客户端订阅回调（SsnClient::MsgHandler）。
+// 生命周期约束（Issue #5-4）：stop()/destroy() 后不得调用 publish/unregister
+//（node_ 已销毁；publish 内部对 node_ 空指针有守卫但非原子——与延迟调用
+// 存在 TOCTOU 窗口，属文档约束而非代码保证）。
 class SsnService : public ServiceTask {
 public:
     SsnService();

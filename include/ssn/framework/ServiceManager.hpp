@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 服务管理器（Run<T> 一行启动与信号优雅停止）
+ */
 // 文件: include/ssn/framework/ServiceManager.hpp
 // 功能: 服务管理器——"一行启动服务"的入口。Run<T> 编排完整生命周期：
 //       initialize → start → 等待 SIGINT/SIGTERM → stop → destroy → 返回 0。
@@ -5,7 +11,8 @@
 //       信号由处理器置位停止标志；若信号被其他线程的处理器消费（如测试中
 //       子线程 raise(SIGINT)），本线程以超时轮询感知标志，避免永久阻塞。
 //       Run 入口先安装信号处理（阻塞 + 处理器）再 initialize/start（Task 4-M2
-//       硬化），消除「initialize 期间收到信号走默认动作直接终止」的窗口。
+//       硬化），消除「initialize 期间收到信号走默认动作直接终止」的窗口；
+//       Run 返回前还原调用前的掩码与处理器（Issue #5-2，不向调用方泄漏信号状态）。
 #ifndef SSN_FRAMEWORK_SERVICEMANAGER_HPP
 #define SSN_FRAMEWORK_SERVICEMANAGER_HPP
 
@@ -29,9 +36,20 @@ public:
 
 private:
     static std::atomic<bool> s_stop_requested_;
-    // 阻塞 SIGINT/SIGTERM 并安装停止处理器（Run 入口最先调用），返回信号集
-    // 供 Run 的 sigtimedwait 等待循环复用
-    static sigset_t installSignalHandlers();
+    // 安装前的信号状态快照（原掩码与处理器），供 Run 结束恢复，避免信号
+    // 状态泄漏（Issue #5-2：Run 返回后不再阻塞信号、处理器还原默认）
+    struct SignalState {
+        sigset_t blocked;             // 本线程阻塞信号集（sigtimedwait 等待循环复用）
+        sigset_t old_mask;            // 安装前原线程信号掩码
+        struct sigaction old_int;     // 安装前原 SIGINT 处理器
+        struct sigaction old_term;    // 安装前原 SIGTERM 处理器
+        bool mask_ok = false;         // 掩码安装成功标志（失败则不还原，避免写回零值）
+        bool int_ok = false;          // SIGINT 处理器安装成功标志
+        bool term_ok = false;         // SIGTERM 处理器安装成功标志
+    };
+    // 阻塞 SIGINT/SIGTERM 并安装停止处理器（Run 入口最先调用），返回快照
+    static SignalState installSignalHandlers();
+    static void restoreSignalHandlers(const SignalState& st);   // Run 结束还原
 };
 
 template <typename ServiceT>
@@ -41,16 +59,17 @@ int ServiceManager::Run(int argc, char** argv) {
 
     // 先安装信号处理再进入 initialize/start（Task 4-M2 硬化）：若不先阻塞并
     // 安装处理器，initialize 期间收到 SIGINT/SIGTERM 会走默认动作直接终止
-    // 进程；安装后信号由本线程 sigtimedwait 消费或由处理器置位停止标志
-    sigset_t set = installSignalHandlers();
+    // 进程；安装后信号由本线程 sigtimedwait 消费或由处理器置位停止标志。
+    // 安装前保存原掩码与处理器，全部退出路径结束前还原（Issue #5-2）。
+    SignalState sig = installSignalHandlers();
 
     ServiceT svc;
     if (!svc.initialize(argc, argv)) {
-        // LOG_ERROR("服务初始化失败");
+        restoreSignalHandlers(sig);
         return 1;
     }
     if (!svc.start()) {
-        // LOG_ERROR("服务启动失败");
+        restoreSignalHandlers(sig);
         return 1;
     }
 
@@ -59,7 +78,7 @@ int ServiceManager::Run(int argc, char** argv) {
     siginfo_t info = {};
     struct timespec ts = {0, 100 * 1000 * 1000};   // 100ms 轮询间隔
     while (!s_stop_requested_) {
-        if (sigtimedwait(&set, &info, &ts) > 0) {
+        if (sigtimedwait(&sig.blocked, &info, &ts) > 0) {
             // 本线程直接收到信号（处理器不会执行）：同样视为停止请求
             requestStop();
         }
@@ -69,7 +88,8 @@ int ServiceManager::Run(int argc, char** argv) {
     svc.stop();
     svc.destroy();
 
-    // 单次运行结束后复位停止标志，供下次 Run 或外部查询使用
+    // 还原信号状态（恢复调用前掩码与处理器），再复位停止标志
+    restoreSignalHandlers(sig);
     s_stop_requested_ = false;
     return 0;
 }

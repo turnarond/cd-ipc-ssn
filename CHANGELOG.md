@@ -2,6 +2,20 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.4.1] - 2026-08-16
+
+### Fixed
+- Issue #5 技术债 12 项集中修复：
+  - ServiceTask::activate 边界（num_threads<=0 拒绝、线程创建异常回滚）
+  - ServiceManager Run 结束还原信号掩码与处理器（含还原顺序修正）
+  - registerJson 尾斜杠 URL 拒绝（保留 "/" 兜底）
+  - SsnClient disconnect 与 callJson 互斥（并发 UAF 窗口消除）
+  - SsnService OnInit 失败回滚（销毁已建节点）
+  - ServiceTask 析构回收线程（消除 joinable 线程 terminate）
+  - 框架文件版权头补齐、死代码删除
+  - pubsub 示例析构兜底（start 失败路径不再 terminate）
+- 文档化：publish/unregister 与 stop 并发约束、超时窗口竞态说明
+
 ## [2.4.0] - 2026-08-16
 
 ### Added

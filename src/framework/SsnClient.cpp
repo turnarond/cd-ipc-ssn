@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * SsnClient 客户端实现
+ */
 // 文件: src/framework/SsnClient.cpp
 // 功能: SsnClient 客户端实现——connect 创建客户端节点（client + RPC + PubSub）
 //       并启动内部驱动线程（ssn_node_poll 事件循环；C 层 node start 不自动
@@ -92,6 +98,11 @@ bool SsnClient::connect(const std::string& peer_address, uint64_t timeout_ms) {
 }
 
 void SsnClient::disconnect() {
+    // 与 callJson 互斥（Issue #5-5）：等待在途调用结束再销毁节点，消除
+    // 「disconnect 与并发 callJson」的 UAF 窗口。在途调用最迟在自身超时后
+    // 返回，disconnect 可能因此阻塞至多一个超时周期——调用方应避免跨线程
+    // 同时调用（见头文件并发约束注释）
+    std::lock_guard<std::mutex> call_lock(call_mutex_);
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         if (!connected_) {

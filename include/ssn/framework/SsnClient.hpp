@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 通信客户端（同步调用/订阅/连接管理）
+ */
 // 文件: include/ssn/framework/SsnClient.hpp
 // 功能: 通信客户端——连接管理 + 同步 callJson + PubSub 订阅。封装 SSN C 层
 //       node（client + RPC + PubSub 能力）：connect 创建并启动节点与内部驱动
@@ -43,7 +49,11 @@ public:
     // peer_address 为传输层地址格式（如 tcp://127.0.0.1:18902）。
     // 注意：C 层节点连接的同步超时固定为 3 秒，timeout_ms 参数暂留作扩展。
     bool connect(const std::string& peer_address, uint64_t timeout_ms = 5000);
-    void disconnect();              // 停止驱动线程并销毁节点；未连接时为幂等空操作
+    // 停止驱动线程并销毁节点；未连接时为幂等空操作。
+    // 并发约束（Issue #5-5）：内部已与 callJson 互斥（等待在途调用结束），
+    // 但调用方应避免跨线程同时调用 disconnect 与 callJson/subscribe——
+    // disconnect 会阻塞至在途调用超时返回；回调中禁止调用本方法（见类注释）
+    void disconnect();
     bool connected() const;
     const std::string& peer() const;
 
@@ -51,6 +61,8 @@ public:
     // 注意：单 in-flight——同一 client 并发 Call 串行化（内部互斥锁保护）。
     // 应答由内部驱动线程接收（见类注释的锁约束）；超时或服务端返回
     // 框架错误（应答含 error 字段，如 1001 方法不存在）时返回 false。
+    // 竞态提示（Issue #5-7）：超时失败后立即发起下一次调用，理论上有极窄
+    // 窗口被迟到应答覆盖（C API 无请求序号回调，不可修）；超时路径应避免紧接重试。
     bool callJson(const std::string& url, const nlohmann::json& req,
                   nlohmann::json& resp, uint64_t timeout_ms = 3000);
 

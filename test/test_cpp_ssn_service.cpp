@@ -132,6 +132,14 @@ void test_registration() {
     CHECK(server.registerJson("/add", [](const nlohmann::json& req) -> nlohmann::json {
         return {{"sum", req.at("a").get<int>() + req.at("b").get<int>()}};
     }));
+
+    // Issue #5-3 回归：尾斜杠 URL（长度 > 1）拒绝注册/退订——C 层把 "/foo/"
+    // 注册为前缀规则而框架分发为精确匹配，注册后永不命中（语义缝隙）；
+    // "/"（长度 1）兜底命令不受影响（仍为保留端点，拒绝注册）
+    CHECK(!server.registerJson("/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
+    CHECK(!server.registerJson("/foo/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
+    CHECK(!server.registerJson("//", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
+    CHECK(!server.unregister("/foo/"));
 }
 
 // 生命周期：initialize/start/stop/destroy 状态迁移
@@ -223,10 +231,10 @@ void test_rpc_roundtrip() {
     CHECK(rpc_json(client, "/version", nlohmann::json::object(), out));
     CHECK(out.replied && out.status == 0);
     resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("version").get<std::string>() == "2.4.0");
+    CHECK(resp.at("version").get<std::string>() == "2.4.1");
 
     // 框架内置端点直接访问（非 IPC 路径）
-    CHECK(server.builtinVersion().at("version").get<std::string>() == "2.4.0");
+    CHECK(server.builtinVersion().at("version").get<std::string>() == "2.4.1");
     CHECK(server.builtinHealth().at("status").get<std::string>() == "ok");
 
     ssn_node_stop(client);
@@ -305,6 +313,33 @@ void test_publish() {
     server.destroy();
 }
 
+// Issue #5-6 回归：OnInit 失败（监听端口冲突 → 节点 start 失败）后不得悬挂——
+// initialize 返回 false 且状态归位 Created，换端口二次 initialize 可成功
+void test_init_failure_rollback() {
+    // A 先占用 18903 端口
+    TestServer server_a;
+    server_a.listenTcp("127.0.0.1", 18903);
+    CHECK(server_a.initialize(0, nullptr));
+    CHECK(server_a.start());
+
+    // B 监听同端口：节点 start 失败（EADDRINUSE）→ initialize 返回 false，不悬挂
+    TestServer server_b;
+    server_b.listenTcp("127.0.0.1", 18903);
+    CHECK(!server_b.initialize(0, nullptr));
+    CHECK(server_b.state() == ssn::ServiceState::Created);
+
+    // 换端口二次 initialize 成功（无泄漏：内部节点已随失败路径回收）
+    server_b.listenTcp("127.0.0.1", 18904);
+    CHECK(server_b.initialize(0, nullptr));
+    CHECK(server_b.start());
+    CHECK(server_b.state() == ssn::ServiceState::Started);
+
+    server_a.stop();
+    server_a.destroy();
+    server_b.stop();
+    server_b.destroy();
+}
+
 }  // namespace
 
 int main() {
@@ -313,6 +348,7 @@ int main() {
     test_rpc_roundtrip();
     test_reinit();
     test_publish();
+    test_init_failure_rollback();
     std::printf("C++ test results: %d/%d passed\n", g_cpp_passed, g_cpp_passed + g_cpp_failed);
     return g_cpp_failed == 0 ? 0 : 1;
 }
