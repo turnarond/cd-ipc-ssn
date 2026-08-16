@@ -34,6 +34,19 @@ void test_run_signal_stop() {
     CHECK(g_started);
     CHECK(g_stopped);
     CHECK(!ssn::ServiceManager::stopRequested());   // 单次运行后标志复位
+
+    // Issue #5-2 回归：Run 返回后必须还原信号状态——SIGINT/SIGTERM 处理器恢复
+    // 默认（本测试进程未安装过其他处理器，还原后即 SIG_DFL），且不再被阻塞
+    struct sigaction sa = {};
+    sigaction(SIGINT, nullptr, &sa);
+    CHECK(sa.sa_handler == SIG_DFL);
+    sigaction(SIGTERM, nullptr, &sa);
+    CHECK(sa.sa_handler == SIG_DFL);
+    sigset_t cur;
+    sigemptyset(&cur);
+    pthread_sigmask(SIG_SETMASK, nullptr, &cur);
+    CHECK(!sigismember(&cur, SIGINT));
+    CHECK(!sigismember(&cur, SIGTERM));
 }
 
 void test_request_stop_api() {

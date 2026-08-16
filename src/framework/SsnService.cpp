@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * SsnService 通信服务基类实现
+ */
 // 文件: src/framework/SsnService.cpp
 // 功能: SsnService 通信服务基类实现——OnInit 创建服务节点并注册方法
 //       （内置端点 /urls /health /version + 用户方法 + "/" 兜底命令），
@@ -83,6 +89,13 @@ bool SsnService::registerJson(const std::string& url, JsonHandler handler) {
         LOG_ERROR("SsnService: registerJson 参数非法: %s", url.c_str());
         return false;
     }
+    // 尾斜杠 URL（长度 > 1）拒绝（Issue #5-3）：C 层把 "/foo/" 注册为前缀规则，
+    // 而框架 handleRpc 为精确匹配，注册后永不命中（语义缝隙）；"/" 兜底命令
+    //（长度 1）不受此限制
+    if (url.size() > 1 && url.back() == '/') {
+        LOG_WARN("SsnService: %s 为尾斜杠 URL（C 层前缀规则，框架精确匹配不可达），拒绝注册", url.c_str());
+        return false;
+    }
     // 内置端点与 "/" 兜底命令为保留路径，拒绝用户注册
     if (url == kCatchAllUrl || url == kBuiltinUrls || url == kBuiltinHealth || url == kBuiltinVersion) {
         LOG_WARN("SsnService: %s 为保留端点，拒绝注册", url.c_str());
@@ -98,6 +111,11 @@ bool SsnService::registerJson(const std::string& url, JsonHandler handler) {
 }
 
 bool SsnService::unregister(const std::string& url) {
+    // 与 registerJson 同规则（Issue #5-3）：尾斜杠 URL（长度 > 1）从未能注册，
+    // 无需（也不应）退订
+    if (url.size() > 1 && url.back() == '/') {
+        return false;
+    }
     std::lock_guard<std::mutex> lock(methods_mutex_);
     return methods_.erase(url) > 0;
 }
@@ -205,15 +223,20 @@ bool SsnService::OnInit(int argc, char** argv) {
         urls = collect_urls(methods_);
     }
     urls.push_back(kCatchAllUrl);
-    bool ok = true;
     for (const auto& u : urls) {
         ssn_url_ref_t ref = {const_cast<char*>(u.data()), u.size()};
         if (!ssn_node_add_rpc_method(node_, &ref, onRpcCb, this)) {
-            LOG_WARN("SsnService: 方法注册失败: %s", u.c_str());
-            ok = false;
+            LOG_ERROR("SsnService: 方法注册失败: %s", u.c_str());
+            // 失败即回滚（Issue #5-6）：销毁已 start 的节点并置空，避免
+            // initialize 返回 false 后 node_ 悬挂（泄漏）；此时 svc 线程尚未
+            // 启动（initialize 在 start 之前），可直接 stop + destroy
+            ssn_node_stop(node_);
+            ssn_node_destroy(node_);
+            node_ = nullptr;
+            return false;
         }
     }
-    return ok;
+    return true;
 }
 
 void SsnService::OnShutdown() {

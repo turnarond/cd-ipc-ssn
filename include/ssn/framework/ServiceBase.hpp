@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 服务生命周期基类（状态机与钩子编排）
+ */
 // 文件: include/ssn/framework/ServiceBase.hpp
 // 功能: 服务生命周期基类——统一编排服务的创建/初始化/启动/停止/销毁
 //       状态机，提供 OnInit/OnShutdown 用户钩子与 startImpl/stopImpl

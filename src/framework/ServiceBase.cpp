@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 SSN Project.
+ * All rights reserved.
+ *
+ * 服务生命周期基类实现
+ */
 // 文件: src/framework/ServiceBase.cpp
 // 功能: ServiceBase 生命周期基类实现——状态机切换与钩子调用顺序
 //       在此统一编排，非法状态转移一律拒绝（返回 false 或直接返回）。
