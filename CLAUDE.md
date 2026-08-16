@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 常用命令
 
-构建（产物 `libssn_transport.so`，仅支持 Linux/POSIX，CMake ≥ 3.12，GCC ≥ 4.8）：
+构建（产物 `libssn_transport.so` + `libssn_framework.so`，仅支持 Linux/POSIX，CMake ≥ 3.12；C 库 GCC ≥ 4.8，C++ 框架库需 GCC ≥ 7 / Clang ≥ 6，C++17）：
 
 ```bash
 mkdir -p build && cd build
