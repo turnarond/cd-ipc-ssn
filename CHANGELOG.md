@@ -2,6 +2,21 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.4.2] - 2026-08-18
+
+### Fixed
+- 稳定性加固（深度评审 C1/I1/I2/I4/I5）：
+  - 订阅回调异常保护（handleMsg try/catch，修复回调异常 → std::terminate 进程崩溃）
+  - ServiceManager::Run 用户钩子异常路径信号状态还原（掩码/处理器/停止标志，全退出路径覆盖）
+  - subscribe/unsubscribe 与 disconnect 共享互斥锁（并发 node 释放后使用窗口消除）
+  - ServiceTask failed() 失败标志 + /health status "degraded"（svc 线程异常退出可观测，修复服务「假活」）
+  - SsnClient pollLoop 空转让步（消除连接后忙等 100% CPU）
+- 测试版本断言改为引用 SSN_VERSION_STRING（发版不再触发测试红）
+
+### Added
+- 稳定性测试套件（test_cpp_stability，13 用例 286 断言）：回调异常回归、Run 异常信号还原、并发串行化、超时/handler 风暴恢复、服务端重启重连、重复 Run、生命周期 fd 循环、空/半开连接清理、信号风暴、在途调用、并发 subscribe、svc 失败可观测
+- 示例：03_robust_client（三态错误处理 + 重连退避 + RAII）、04_concurrent_client（两层串行化教学）——示例总数 15→19
+
 ## [2.4.1] - 2026-08-16
 
 ### Fixed
