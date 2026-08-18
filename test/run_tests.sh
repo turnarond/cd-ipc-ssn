@@ -41,6 +41,7 @@ CPP_TESTS=(
     test_cpp_ssn_service      # 服务端基类 IPC 回环（76 断言）
     test_cpp_ssn_client       # 客户端调用/订阅（24 断言）
     test_cpp_json             # 类型安全层 DTO（11 断言）
+    test_cpp_stability        # 稳定性套件（13 用例，回调异常/并发/超时风暴/生命周期/信号风暴）
 )
 
 PASS=0
