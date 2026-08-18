@@ -7,6 +7,7 @@
 // C 层直连客户端 API（头已带 extern "C" 保护，可直接包含）
 #include "node/ssn_node.h"
 #include "ssn_frame.h"
+#include "version/ssn_version.h"   // M7：版本断言引用宏而非硬编码
 
 #include <atomic>
 #include <chrono>
@@ -227,14 +228,14 @@ void test_rpc_roundtrip() {
     CHECK(resp.at("connections").get<int>() >= 1);
     CHECK(resp.at("messages").get<uint64_t>() >= 1);
 
-    // 内置端点 /version：与 SSN_VERSION_STRING 一致
+    // 内置端点 /version：与 SSN_VERSION_STRING 一致（M7：引用宏，版本升级不再红）
     CHECK(rpc_json(client, "/version", nlohmann::json::object(), out));
     CHECK(out.replied && out.status == 0);
     resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("version").get<std::string>() == "2.4.1");
+    CHECK(resp.at("version").get<std::string>() == SSN_VERSION_STRING);
 
     // 框架内置端点直接访问（非 IPC 路径）
-    CHECK(server.builtinVersion().at("version").get<std::string>() == "2.4.1");
+    CHECK(server.builtinVersion().at("version").get<std::string>() == SSN_VERSION_STRING);
     CHECK(server.builtinHealth().at("status").get<std::string>() == "ok");
 
     ssn_node_stop(client);

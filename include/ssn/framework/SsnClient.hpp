@@ -85,6 +85,9 @@ public:
     // 锁约束：回调执行期间持有 node->lock，不得调用任何会加 node 锁的 API
     //（rpc_call / publish / subscribe / unsubscribe / send_to_peer / get_stats 等），
     // 且不得在回调中阻塞等待本客户端的 callJson（单 in-flight 串行化）。
+    // 稳定性加固：回调抛出的异常由框架捕获并丢弃该消息（不影响进程与后续消息）；
+    // subscribe/unsubscribe 内部与 disconnect 同锁（call_mutex_），并发调用被
+    // 串行化（disconnect 会等待在途订阅/退订完成，见 disconnect 并发约束注释）。
     using MsgHandler = std::function<void(const std::string& topic, const nlohmann::json& data)>;
     bool subscribe(const std::string& topic, MsgHandler handler, uint64_t timeout_ms = 5000);
     bool unsubscribe(const std::string& topic);

@@ -39,7 +39,7 @@ set(IPC_SOURCES
 # 版本信息
 set(VERSION_MAJOR 2)
 set(VERSION_MINOR 4)
-set(VERSION_PATCH 1)
+set(VERSION_PATCH 2)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 # 创建动态库
@@ -223,6 +223,10 @@ target_link_libraries(test_cpp_ssn_client ssn_framework pthread)
 # C++ 服务框架测试（批次 2 任务 7：类型安全层——RegisterMethod/Call + DTO 全链路）
 add_executable(test_cpp_json test/test_cpp_json.cpp)
 target_link_libraries(test_cpp_json ssn_framework pthread)
+
+# C++ 服务框架测试（稳定性加固批次：T1-T13 回调异常/并发/超时风暴/生命周期泄漏/信号风暴）
+add_executable(test_cpp_stability test/test_cpp_stability.cpp)
+target_link_libraries(test_cpp_stability ssn_framework pthread)
 
 # Advanced tests (require running server, use for manual/CI testing)
 add_executable(test_comprehensive test/test_ssn_comprehensive.c)

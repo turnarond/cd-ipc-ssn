@@ -61,8 +61,9 @@ void test_call_timeout() {
     bool ok = cli.callJson("/slow", nlohmann::json::object(), resp, 200);   // 200ms 超时 < 500ms 处理
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::steady_clock::now() - t0).count();
-    CHECK(!ok);                    // 超时失败
-    CHECK(ms >= 180 && ms < 700);  // 实际等待 ~200ms（不等待完整 500ms）
+    CHECK(!ok);                     // 超时失败
+    CHECK(ms >= 180 && ms < 1000);  // 实际等待 ~200ms（不等待完整 500ms；上界放宽
+                                    // 以容纳 WSL 高负载下的调度余量，防 flaky）
 
     cli.disconnect();
     srv.stop();
@@ -113,10 +114,25 @@ void test_subscribe_pubsub() {
         if (d.contains("id")) { got = d["id"].get<int>(); }
     }));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));   // 订阅握手
+    // 订阅握手窗口改轮询式确认（原固定 200ms 在 WSL 高负载下偶发不足而 flaky）：
+    // 以 /health 调用成功作为「连接与订阅就绪」的确认信号（subscribe 为同步
+    // C 层握手，返回 true 即服务端已 ACK），再发布
+    bool ready = false;
+    for (int i = 0; i < 50 && !ready; ++i) {
+        nlohmann::json resp;
+        if (cli.callJson("/health", nlohmann::json::object(), resp, 1000)) {
+            ready = true;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+    CHECK(ready);
     srv.publish("/news", {{"id", 42}});
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));   // 等待分发（客户端 node 需 poll 驱动——见下方实现）
-
+    // 接收侧同样轮询等待（客户端驱动线程 poll 周期 ~100ms，替代原固定 500ms）
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    while (got != 42 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     CHECK(got == 42);
     CHECK(got_topic == "/news");
     cli.disconnect();

@@ -217,7 +217,7 @@ void publishLoop() {
 |-----|------|----------|
 | `/urls` | 已注册方法列表 | `{"urls":["/echo","/health","/urls","/version"]}` |
 | `/health` | 健康状态、连接数与累计消息数 | `{"status":"ok","connections":0,"messages":0}` |
-| `/version` | 框架版本（`ssn_version_get_string()`） | `{"version":"2.4.1"}` |
+| `/version` | 框架版本（`ssn_version_get_string()`） | `{"version":"2.4.2"}` |
 
 ### 3.5 异常与错误码
 
