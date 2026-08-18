@@ -1,5 +1,5 @@
 #!/bin/bash
-# 验证全部 17 个示例构建（15 个 C 示例 + 2 个 C++ 框架示例）
+# 验证全部 19 个示例目录构建（15 个 C 示例 + 4 个 C++ 框架示例）
 # 以脚本位置定位仓库根目录（与调用时的 cwd 无关）
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +22,8 @@ for d in examples/basic/01_hello_world examples/basic/02_rpc_call examples/basic
          examples/advanced/03_timeout examples/advanced/04_transport_selection \
          examples/protocols/01_unix_socket examples/protocols/02_tcp examples/protocols/03_udp \
          examples/node/01_node_lifecycle examples/node/02_node_comm examples/node/03_node_rpc \
-         examples/node/04_node_pubsub examples/cpp/01_echo_service examples/cpp/02_pubsub_chat; do
+         examples/node/04_node_pubsub examples/cpp/01_echo_service examples/cpp/02_pubsub_chat \
+         examples/cpp/03_robust_client examples/cpp/04_concurrent_client; do
     if (cd "$d" && make clean >/dev/null 2>&1 && make >/dev/null 2>&1); then
         ok=$((ok + 1))
     else
