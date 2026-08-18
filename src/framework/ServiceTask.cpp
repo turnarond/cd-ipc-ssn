@@ -30,6 +30,7 @@ bool ServiceTask::activate(int num_threads) {
         return false;   // 不置 running_，保持未运行状态（Issue #5-1 边界态）
     }
     if (running_.exchange(true)) { return false; }  // 已运行则拒绝重复激活
+    failed_ = false;   // 新一轮运行复位失败标志（I4：failed() 反映最近一次运行）
     try {
         threads_.reserve(num_threads);
         for (int i = 0; i < num_threads; ++i) {
@@ -38,8 +39,10 @@ bool ServiceTask::activate(int num_threads) {
                     svc();  // 派生类线程入口
                 } catch (const std::exception& e) {
                     LOG_ERROR("svc() 线程异常退出: %s", e.what());
+                    failed_ = true;   // I4：异常退出可观测（正常退出不置位）
                 } catch (...) {
                     LOG_ERROR("svc() 线程抛出未知异常");
+                    failed_ = true;
                 }
             });
         }
@@ -76,6 +79,10 @@ void ServiceTask::stopImpl() {
 
 bool ServiceTask::isRunning() const {
     return running_.load();
+}
+
+bool ServiceTask::failed() const {
+    return failed_.load();
 }
 
 int ServiceTask::threadCount() const {

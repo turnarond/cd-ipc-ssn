@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <exception>
+#include <thread>
 #include <utility>
 
 #include "util/ssn_log.h"
@@ -181,6 +182,10 @@ bool SsnClient::callJson(const std::string& url, const nlohmann::json& req,
 }
 
 bool SsnClient::subscribe(const std::string& topic, MsgHandler handler, uint64_t timeout_ms) {
+    // 与 disconnect 互斥（稳定性加固 I2）：持锁覆盖「取 node 指针 → C 层订阅
+    // 调用」整个窗口，避免 disconnect 在窗口内销毁节点造成 UAF。与 callJson
+    // 同锁同顺序（call_mutex_ → state_mutex_），无死锁风险
+    std::lock_guard<std::mutex> call_lock(call_mutex_);
     if (topic.empty() || topic[0] != '/' || !handler) {
         LOG_ERROR("SsnClient: subscribe 参数非法: %s", topic.c_str());
         return false;
@@ -211,6 +216,9 @@ bool SsnClient::subscribe(const std::string& topic, MsgHandler handler, uint64_t
 }
 
 bool SsnClient::unsubscribe(const std::string& topic) {
+    // 与 disconnect 互斥（稳定性加固 I2）：与 subscribe 同锁，防止退订的 C 层
+    // 调用与 disconnect 销毁节点交错（UAF 窗口）
+    std::lock_guard<std::mutex> call_lock(call_mutex_);
     ssn_node_t* node;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -250,6 +258,10 @@ void SsnClient::pollLoop() {
             node = node_;
         }
         ssn_node_poll(node, 100);
+        // 主动让出 1ms（稳定性加固 I5）：pselect 空信号集可被任意信号中断，
+        // 无可等事件时 poll 会立即返回形成忙等（100% CPU）；与 SsnService::svc
+        // 同模式，代价为 poll 周期增加约 1ms（对调用延迟影响可忽略）
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
@@ -320,7 +332,18 @@ void SsnClient::handleMsg(ssn_url_ref_t* url, ssn_data_ref_t* data) {
             LOG_WARN("SsnClient: 消息 JSON 解析失败: %s", e.what());
         }
     }
-    handler(topic, payload);   // 用户回调：需快速返回（见头文件锁约束）
+    // 用户回调：需快速返回（见头文件锁约束）。回调抛出的异常一律捕获并丢弃
+    // 该消息（稳定性加固 C1）：异常若穿越 C 层回调边界（期间持有 node->lock）
+    // 直达驱动线程将触发 std::terminate 终止整个进程——捕获后仅记录日志，
+    // 不影响后续消息分发
+    try {
+        handler(topic, payload);
+    } catch (const std::exception& e) {
+        LOG_ERROR("SsnClient: 订阅回调异常已捕获（该消息丢弃）: topic=%s, error=%s",
+                  topic.c_str(), e.what());
+    } catch (...) {
+        LOG_ERROR("SsnClient: 订阅回调抛出未知异常（该消息丢弃）: topic=%s", topic.c_str());
+    }
 }
 
 }  // namespace ssn

@@ -20,7 +20,10 @@
 namespace ssn {
 
 // 线程池服务基类：activate 启动 num_threads 个线程并发执行 svc()，
-// requestShutdown 置 running_=false 通知 svc 退出，wait 回收全部线程
+// requestShutdown 置 running_=false 通知 svc 退出，wait 回收全部线程。
+// 失败可观测性（稳定性加固 I4）：svc() 抛出异常被线程捕获后置失败标志，
+// failed() 返回 true（正常 requestShutdown 退出不置位）；activate 会复位
+// 失败标志，failed() 反映最近一次运行的结局
 class ServiceTask : public ServiceBase {
 public:
     ~ServiceTask() override;              // 兜底回收线程（requestShutdown + wait）
@@ -28,6 +31,7 @@ public:
     void wait();                          // join 全部线程
     void requestShutdown();               // 置 running_=false，svc 应据此退出
     bool isRunning() const;
+    bool failed() const;                  // svc() 是否曾异常退出（最近一次运行）
     int threadCount() const;
 
 protected:
@@ -37,6 +41,7 @@ protected:
 
 private:
     std::atomic<bool> running_{false};
+    std::atomic<bool> failed_{false};   // svc 异常退出标志（activate 时复位）
     std::vector<std::thread> threads_;
 };
 

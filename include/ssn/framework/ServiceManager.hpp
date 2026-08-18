@@ -13,12 +13,19 @@
 //       Run 入口先安装信号处理（阻塞 + 处理器）再 initialize/start（Task 4-M2
 //       硬化），消除「initialize 期间收到信号走默认动作直接终止」的窗口；
 //       Run 返回前还原调用前的掩码与处理器（Issue #5-2，不向调用方泄漏信号状态）。
+//       异常安全（稳定性加固 I1）：initialize/start/等待/stop/destroy 任一步抛
+//       出异常（如用户 OnInit 抛 std::runtime_error）均被捕获——还原信号状态、
+//       复位停止标志后返回 1（与失败语义一致），保证所有退出路径都不向调用方
+//       泄漏信号状态，且可再次 Run。
 #ifndef SSN_FRAMEWORK_SERVICEMANAGER_HPP
 #define SSN_FRAMEWORK_SERVICEMANAGER_HPP
 
 #include "ssn/framework/ServiceBase.hpp"
 
+#include "util/ssn_log.h"   // C 头已带 extern "C" 保护，可直接包含
+
 #include <atomic>
+#include <exception>
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
@@ -63,30 +70,46 @@ int ServiceManager::Run(int argc, char** argv) {
     // 安装前保存原掩码与处理器，全部退出路径结束前还原（Issue #5-2）。
     SignalState sig = installSignalHandlers();
 
-    ServiceT svc;
-    if (!svc.initialize(argc, argv)) {
-        restoreSignalHandlers(sig);
-        return 1;
-    }
-    if (!svc.start()) {
-        restoreSignalHandlers(sig);
-        return 1;
-    }
-
-    // 等待停止请求：sigwait 仅在本线程有未消费信号时返回；若信号被其他
-    // 线程的处理器消费，处理器已置位标志，本线程以 sigtimedwait 超时轮询感知
-    siginfo_t info = {};
-    struct timespec ts = {0, 100 * 1000 * 1000};   // 100ms 轮询间隔
-    while (!s_stop_requested_) {
-        if (sigtimedwait(&sig.blocked, &info, &ts) > 0) {
-            // 本线程直接收到信号（处理器不会执行）：同样视为停止请求
-            requestStop();
+    // 全部生命周期步骤包在 try 内（稳定性加固 I1）：任一步抛异常（含用户钩子
+    // 抛出的 std::exception）都会在 catch 中还原信号状态并复位停止标志后返回 1，
+    // 与 initialize/start 失败语义一致——进程内的异常不得携带信号状态泄漏到
+    // 调用方（ServiceT 析构在栈展开时执行，先于 catch 中的还原）
+    try {
+        ServiceT svc;
+        if (!svc.initialize(argc, argv)) {
+            restoreSignalHandlers(sig);
+            return 1;
         }
-    }
+        if (!svc.start()) {
+            restoreSignalHandlers(sig);
+            return 1;
+        }
 
-    // 优雅停止：先 stop 后 destroy（销毁前必须 stop 的所有权约定）
-    svc.stop();
-    svc.destroy();
+        // 等待停止请求：sigwait 仅在本线程有未消费信号时返回；若信号被其他
+        // 线程的处理器消费，处理器已置位标志，本线程以 sigtimedwait 超时轮询感知
+        siginfo_t info = {};
+        struct timespec ts = {0, 100 * 1000 * 1000};   // 100ms 轮询间隔
+        while (!s_stop_requested_) {
+            if (sigtimedwait(&sig.blocked, &info, &ts) > 0) {
+                // 本线程直接收到信号（处理器不会执行）：同样视为停止请求
+                requestStop();
+            }
+        }
+
+        // 优雅停止：先 stop 后 destroy（销毁前必须 stop 的所有权约定）
+        svc.stop();
+        svc.destroy();
+    } catch (const std::exception& e) {
+        LOG_ERROR("ServiceManager: Run 异常退出，信号状态已还原: %s", e.what());
+        restoreSignalHandlers(sig);
+        s_stop_requested_ = false;
+        return 1;
+    } catch (...) {
+        LOG_ERROR("ServiceManager: Run 抛出未知异常，信号状态已还原");
+        restoreSignalHandlers(sig);
+        s_stop_requested_ = false;
+        return 1;
+    }
 
     // 还原信号状态（恢复调用前掩码与处理器），再复位停止标志
     restoreSignalHandlers(sig);

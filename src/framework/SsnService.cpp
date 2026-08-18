@@ -150,8 +150,9 @@ nlohmann::json SsnService::builtinHealth() const {
         return {{"status", "error"}, {"connections", 0}, {"messages", 0}};
     }
     // 读数取自框架侧原子计数（见头文件说明：RPC 分发在 node->lock 内执行，
-    // 此处不得再调用 ssn_node_get_stats，否则自锁死锁）
-    return {{"status", "ok"},
+    // 此处不得再调用 ssn_node_get_stats，否则自锁死锁）。
+    // svc 线程异常退出（事件循环崩溃）后健康状态降级为 degraded（I4）
+    return {{"status", failed() ? "degraded" : "ok"},
             {"connections", connections_.load()},
             {"messages", messages_.load()}};
 }
