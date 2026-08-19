@@ -33,6 +33,11 @@ SSN_API ssn_client_t *ssn_client_create();
 /* Close IPC client */
 SSN_API void ssn_client_close(ssn_client_t *client);
 
+/* 引用计数接口（内部使用：node 层 poll 保活等；公开以便跨模块正确调用，
+ * 缺陷背景：未声明导致 node 层隐式声明（UB 风险）） */
+SSN_API void ssn_client_ref(ssn_client_t *client);
+SSN_API void ssn_client_unref(ssn_client_t *client);
+
 /* Connect to server (Synchronous) */
 SSN_API bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
                          const struct timespec *timeout);

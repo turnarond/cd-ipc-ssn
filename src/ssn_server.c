@@ -1129,43 +1129,6 @@ int ssn_server_response (ssn_server_t *server, ssn_peer_id_t id,
 }
 
 /**
- * @brief 远程客户端心跳
- * 
- * @param server 服务器实例指针
- * @param id 客户端ID
- * @param keepalive 心跳时间
- * @return 设置成功返回true，失败返回false
- */
-bool ssn_server_cli_keepalive (ssn_server_t *server, ssn_peer_id_t id, int keepalive)
-{
-    ssn_server_cli_t *cli;
-
-    int count = 3, idle = server->keepalive_timeout;
-
-    if (!server || !server->valid) {
-        LOG_ERROR("ssn server cli keepalive: invalid server handle.");
-        return  (false);
-    }
-
-    ipc_mutex_lock(server->lock);
-
-    cli = ssn_server_cli_find(server, id);
-    if (!cli || !cli->transport) {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server cli keepalive: invalid cli of id %d.", id);
-        return  (false);
-    }
-
-    // 保活设置已在transport创建时配置
-
-    ipc_mutex_unlock(server->lock);
-
-    LOG_DEBUG("ssn server cli keepalive %d success.", id);
-
-    return  (true);
-}
-
-/**
  * @brief 获取远程客户端ID列表
  * 
  * @param server 服务器实例指针
@@ -1202,47 +1165,6 @@ out:
     ipc_mutex_unlock(server->lock);
 
     return  (cnt);
-}
-
-/**
- * @brief 设置服务器发送数据包到客户端的超时时间
- * 
- * NULL表示拥塞时无限等待
- * 
- * @param server 服务器实例指针
- * @param id 客户端ID
- * @param timeout_ms 超时时间（毫秒）
- * @return 设置成功返回true，失败返回false
- */
-bool ssn_server_cli_send_timeout (ssn_server_t *server, ssn_peer_id_t id, int timeout_ms)
-{
-    int timeval;
-    ssn_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        LOG_ERROR("ssn server send timeout failed: invalid server handle.");
-        return  (false);
-    }
-
-    if (timeout_ms > 0) {
-        timeval = timeout_ms;
-    } else {
-        timeval = server->send_timeout;
-    }
-
-    ipc_mutex_lock(server->lock);
-
-    cli = ssn_server_cli_find(server, id);
-    
-    if (cli && cli->transport) {
-        // 发送超时已在transport创建时设置
-    }
-    ipc_mutex_unlock(server->lock);
-
-
-    LOG_DEBUG("ssn server cli send timeout of cid %d success.", id);
-
-    return  (cli ? true : false);
 }
 
 /**
@@ -1674,7 +1596,7 @@ static void ssn_server_handle_client_input(ssn_server_t *server, ssn_server_cli_
     }
 }
 
-static void ipc_server_handle_new_connection(ssn_server_t *server, const fd_set *rfds)
+static void ssn_server_handle_new_connection(ssn_server_t *server, const fd_set *rfds)
 {
     int sock;
     socklen_t addr_len = sizeof(struct sockaddr_storage);
@@ -1707,7 +1629,7 @@ static void ipc_server_handle_new_connection(ssn_server_t *server, const fd_set 
     }
 }
 
-static void ipc_server_handle_event_input(ssn_server_t *server, const fd_set *rfds)
+static void ssn_server_handle_event_input(ssn_server_t *server, const fd_set *rfds)
 {
     int evt_fd = ipc_event_pair_get_read_fd(server->evtfd);
     ssn_server_hst_t *hst, *hst_temp;
@@ -1750,8 +1672,8 @@ static void ssn_server_input_fds (ssn_server_t *server, const fd_set *rfds)
         }
     }
 
-    ipc_server_handle_new_connection(server, rfds);
-    ipc_server_handle_event_input(server, rfds);
+    ssn_server_handle_new_connection(server, rfds);
+    ssn_server_handle_event_input(server, rfds);
 }
 
 /*

@@ -27,6 +27,11 @@ typedef struct {
     char ifname[IF_NAMESIZE];     /* Not used for AF_UNIX. */
 } server_options_t;
 
+/* 命名规范别名（缺陷背景：公开类型无 ssn_ 前缀违反「类型 ssn_<module>_t」规范；
+ * 直接重命名 server_options_t 属破坏性变更，故新增别名——既有代码不受影响，
+ * 新代码应使用 ssn_server_options_t） */
+typedef server_options_t ssn_server_options_t;
+
 /* Server on client connect or lost callback */
 typedef void (*ssn_on_connect_t)(ssn_server_t *server, ssn_peer_id_t id, bool connect, void *arg);
 
