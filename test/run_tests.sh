@@ -24,24 +24,24 @@ make -j4 || { echo "[FAIL] 构建失败"; exit 1; }
 
 # 自动化测试套件（均为自包含测试，无需外部服务端）
 TESTS=(
-    test_transport            # 传输层（55 用例）
+    test_transport            # 传输层（67 断言）
     test_node_basic           # 节点基础（3 用例）
     test_node                 # 节点完整（6 用例）
-    test_protocol             # 协议层（25 用例）
+    test_protocol             # 协议层（25 断言）
     test_protocol_integration # 协议集成（19 用例）
-    example_server            # 服务端 API 功能测试（7 用例）
-    example_client            # 客户端 API 功能测试（10 用例）
+    example_server            # 服务端 API 功能测试（8 用例）
+    example_client            # 客户端 API 功能测试（12 用例）
 )
 
 # C++ 服务框架套件（v2.4.0，自包含测试，无需外部服务端）
 CPP_TESTS=(
     test_cpp_service_base     # 生命周期状态机 + 钩子顺序（41 断言）
-    test_cpp_service_task     # 线程池任务调度（12 断言）
-    test_cpp_service_manager  # Run 编排 + 信号停止（6 断言）
-    test_cpp_ssn_service      # 服务端基类 IPC 回环（76 断言）
-    test_cpp_ssn_client       # 客户端调用/订阅（24 断言）
+    test_cpp_service_task     # 线程池任务调度（21 断言）
+    test_cpp_service_manager  # Run 编排 + 信号停止（10 断言）
+    test_cpp_ssn_service      # 服务端基类 IPC 回环（87 断言）
+    test_cpp_ssn_client       # 客户端调用/订阅（30 断言）
     test_cpp_json             # 类型安全层 DTO（11 断言）
-    test_cpp_stability        # 稳定性套件（13 用例，回调异常/并发/超时风暴/生命周期/信号风暴）
+    test_cpp_stability        # 稳定性套件（285 断言，回调异常/并发/超时风暴/生命周期/信号风暴）
 )
 
 PASS=0
