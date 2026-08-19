@@ -37,7 +37,7 @@ ssn_pubsub_pub_t *ssn_pubsub_pub_create(void)
 
     pub->base.role = SSN_ROLE_PUB;
     pub->base.type = SSN_PROTOCOL_PUBSUB;
-    pub->base.destroy = NULL;
+    pub->base.destroy = ssn_pubsub_destroy;   /* 销毁职责由 destroy 回调承载 */
 
     pub->subscriber_table = ssn_hash_table_create(16);
     if (!pub->subscriber_table) {
@@ -62,7 +62,7 @@ ssn_pubsub_sub_t *ssn_pubsub_sub_create(
 
     sub->base.role = SSN_ROLE_SUB;
     sub->base.type = SSN_PROTOCOL_PUBSUB;
-    sub->base.destroy = NULL;
+    sub->base.destroy = ssn_pubsub_destroy;   /* 销毁职责由 destroy 回调承载 */
     sub->on_message = on_message;
     sub->user_arg = arg;
 

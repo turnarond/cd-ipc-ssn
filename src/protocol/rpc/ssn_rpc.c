@@ -18,7 +18,6 @@
 
 #define RPC_MAX_PENDING 256
 #define RPC_DEFAULT_TIMEOUT_MS 5000
-#define RPC_MSG_TYPE_RPC_RESPONSE 0x10
 
 typedef struct rpc_method_entry {
     char method_name[64];
@@ -64,7 +63,7 @@ ssn_rpc_req_t *ssn_rpc_req_create(ssn_rpc_reply_handler_t on_reply, void *arg)
 
     req->base.role = SSN_ROLE_REQ;
     req->base.type = SSN_PROTOCOL_RPC;
-    req->base.destroy = NULL;
+    req->base.destroy = ssn_rpc_destroy;   /* 销毁职责由 destroy 回调承载（基类不重复 free） */
     req->on_reply = on_reply;
     req->base.user_data = arg;
     req->next_seqno = 1;
@@ -90,7 +89,7 @@ ssn_rpc_rep_t *ssn_rpc_rep_create(ssn_rpc_handler_t on_request, void *arg)
 
     rep->base.role = SSN_ROLE_REP;
     rep->base.type = SSN_PROTOCOL_RPC;
-    rep->base.destroy = NULL;
+    rep->base.destroy = ssn_rpc_destroy;
     rep->on_request = on_request;
     rep->base.user_data = arg;
 
@@ -213,7 +212,21 @@ int ssn_rpc_call(ssn_rpc_req_t *req, const char *method_name,
         return -1;
     }
 
-    pending->seqno = req->next_seqno++;
+    /* seqno 分配：跳过仍在途的序号（缺陷背景：uint16_t 回绕后复用旧 seqno，
+     * 延迟应答会被错配到新请求）。64K 次调用内必有空闲序号（pending 仅 256 槽） */
+    uint16_t seqno = req->next_seqno++;
+    for (int i = 0; i < RPC_MAX_PENDING + 1; i++) {
+        if (!pending_pool_find(req, seqno)) {
+            break;
+        }
+        seqno = req->next_seqno++;
+        if (i == RPC_MAX_PENDING) {
+            LOG_ERROR("No free seqno available (all in-flight)");
+            pending_pool_free(req, pending);
+            return -1;
+        }
+    }
+    pending->seqno = seqno;
     pending->timeout_ms = timeout_ms ? timeout_ms : RPC_DEFAULT_TIMEOUT_MS;
     pending->callback = req->on_reply;
     pending->arg = req->base.user_data;
@@ -257,8 +270,11 @@ int ssn_rpc_response(ssn_rpc_rep_t *rep, uint16_t seqno, uint32_t status,
         return -1;
     }
 
+    /* 应答复用 SSN_MSG_TYPE_RPC_REQUEST + status（缺陷背景：原用私有宏
+     * RPC_MSG_TYPE_RPC_RESPONSE(0x10)，与 client/server 主路径（0x01+status）
+     * 两套体系不一致，跨实现组合 RPC 应答永远无法匹配） */
     uint8_t sendbuf[SSN_MAX_PACKET_SIZE];
-    ssn_header_t *header = ssn_create_header(sendbuf, RPC_MSG_TYPE_RPC_RESPONSE, status, seqno);
+    ssn_header_t *header = ssn_create_header(sendbuf, SSN_MSG_TYPE_RPC_REQUEST, status, seqno);
 
     ssn_data_ref_t data_ref = {
         .data = (void *)data,
@@ -311,7 +327,11 @@ int ssn_rpc_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
 
     /* 根据角色分发 */
     if (ctx->role == SSN_ROLE_REQ) {
-        /* RPC 请求端: 处理应答 */
+        /* RPC 请求端: 处理应答。缺陷背景：原不校验 msg_type，任意帧按 seqno
+         * 匹配即触发应答回调（误配）；现仅接受 RPC 请求类型（应答复用它） */
+        if (hdr->msg_type != SSN_MSG_TYPE_RPC_REQUEST) {
+            return 0;
+        }
         ssn_rpc_req_t *req = (ssn_rpc_req_t *)ctx;
         uint16_t seqno = ssn_get_seqno(hdr);
         rpc_pending_entry_t *pending = pending_pool_find(req, seqno);
