@@ -12,6 +12,8 @@
 
 #include "ssn_cliauto.h"
 #include "ssn_client.h"
+#include "util/ssn_log.h"
+#include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,9 +58,6 @@ static void *ssn_client_auto_thread(void *arg);
 
 /* SSN client message callback */
 static void ssn_client_auto_msg_cb(ssn_client_t *client, ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg);
-
-/* SSN client connection callback */
-static void ssn_client_auto_conn_cb(ssn_client_t *client, bool connected, void *arg);
 
 /* Create client auto object */
 ssn_client_auto_t *ssn_client_auto_create(void)
@@ -130,6 +129,8 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
                             unsigned int keepalive, unsigned int conn_timeout, unsigned int reconn_delay)
 {
     if (!cliauto || !server) {
+        LOG_ERROR("cliauto start: invalid argument (cliauto=%p, server=%p)",
+                  (void *)cliauto, (void *)server);
         return false;
     }
     
@@ -137,6 +138,8 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
     
     if (cliauto->state != SSN_CLIENT_AUTO_STATE_IDLE && 
         cliauto->state != SSN_CLIENT_AUTO_STATE_STOPPED) {
+        LOG_WARN("cliauto start: already running (state=%d), start rejected",
+                 (int)cliauto->state);
         pthread_mutex_unlock(&cliauto->mutex);
         return false;
     }
@@ -144,6 +147,7 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
     /* Save parameters */
     cliauto->server = strdup(server);
     if (!cliauto->server) {
+        LOG_ERROR("cliauto start: strdup server failed (errno %d)", errno);
         pthread_mutex_unlock(&cliauto->mutex);
         return false;
     }
@@ -151,6 +155,7 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
     if (urls && url_cnt > 0) {
         cliauto->urls = (char **)malloc(sizeof(char *) * url_cnt);
         if (!cliauto->urls) {
+            LOG_ERROR("cliauto start: malloc urls failed (errno %d)", errno);
             free(cliauto->server);
             cliauto->server = NULL;
             pthread_mutex_unlock(&cliauto->mutex);
@@ -158,7 +163,27 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
         }
         
         for (int i = 0; i < url_cnt; i++) {
+            if (!urls[i]) {
+                LOG_ERROR("cliauto start: urls[%d] is NULL", i);
+                for (int j = 0; j < i; j++) free(cliauto->urls[j]);
+                free(cliauto->urls);
+                cliauto->urls = NULL;
+                free(cliauto->server);
+                cliauto->server = NULL;
+                pthread_mutex_unlock(&cliauto->mutex);
+                return false;
+            }
             cliauto->urls[i] = strdup(urls[i]);
+            if (!cliauto->urls[i]) {
+                LOG_ERROR("cliauto start: strdup urls[%d] failed (errno %d)", i, errno);
+                for (int j = 0; j <= i; j++) free(cliauto->urls[j]);
+                free(cliauto->urls);
+                cliauto->urls = NULL;
+                free(cliauto->server);
+                cliauto->server = NULL;
+                pthread_mutex_unlock(&cliauto->mutex);
+                return false;
+            }
         }
         cliauto->url_cnt = url_cnt;
     }
@@ -174,6 +199,7 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
         ssn_client_set_on_publish(cliauto->client, ssn_client_auto_msg_cb, cliauto);
     }
     if (!cliauto->client) {
+        LOG_ERROR("cliauto start: ssn_client_create failed");
         if (cliauto->urls) {
             for (int i = 0; i < cliauto->url_cnt; i++) {
                 free(cliauto->urls[i]);
@@ -192,6 +218,7 @@ bool ssn_client_auto_start(ssn_client_auto_t *cliauto, const char *server,
     cliauto->state = SSN_CLIENT_AUTO_STATE_CONNECTING;
     
     if (pthread_create(&cliauto->thread, NULL, ssn_client_auto_thread, cliauto) != 0) {
+        LOG_ERROR("cliauto start: pthread_create failed (errno %d)", errno);
         cliauto->running = 0;
         cliauto->state = SSN_CLIENT_AUTO_STATE_STOPPED;
         
@@ -281,21 +308,35 @@ static void *ssn_client_auto_thread(void *arg)
 {
     ssn_client_auto_t *cliauto = (ssn_client_auto_t *)arg;
     struct timespec timeout;
+    bool connected;
 
-    while (cliauto->running) {
-        switch (cliauto->state) {
+    while (true) {
+        /* 状态读写统一在 mutex 下（缺陷背景：原实现线程内无锁读写 state/running，
+         * 与 stop 的锁内写构成数据竞争 UB；stop 后线程仍可能覆盖状态） */
+        pthread_mutex_lock(&cliauto->mutex);
+        if (!cliauto->running) {
+            pthread_mutex_unlock(&cliauto->mutex);
+            break;
+        }
+        ssn_client_auto_state_t state = cliauto->state;
+        pthread_mutex_unlock(&cliauto->mutex);
+
+        switch (state) {
             case SSN_CLIENT_AUTO_STATE_CONNECTING:
                 {
                     /* Set connection timeout */
                     timeout.tv_sec = cliauto->conn_timeout / 1000;
                     timeout.tv_nsec = (cliauto->conn_timeout % 1000) * 1000000;
-                    
+
                     /* Try to connect */
-                    bool connected = ssn_client_connect(cliauto->client, cliauto->server, &timeout);
+                    connected = ssn_client_connect(cliauto->client,
+                                                   cliauto->server, &timeout);
                     if (connected) {
                         /* Connection successful */
+                        pthread_mutex_lock(&cliauto->mutex);
                         cliauto->state = SSN_CLIENT_AUTO_STATE_CONNECTED;
                         cliauto->ping_lost = 0;
+                        pthread_mutex_unlock(&cliauto->mutex);
 
                         /* Subscribe to URLs */
                         if (cliauto->urls && cliauto->url_cnt > 0) {
@@ -315,41 +356,70 @@ static void *ssn_client_auto_thread(void *arg)
                         }
                     } else {
                         /* Connection failed, wait and retry */
+                        LOG_WARN("cliauto: connect to %s failed, retry in %u ms",
+                                 cliauto->server, cliauto->reconn_delay);
                         usleep(cliauto->reconn_delay * 1000);
                     }
                 }
                 break;
-                
+
             case SSN_CLIENT_AUTO_STATE_CONNECTED:
                 {
-                    /* Block in poll for keepalive interval to detect
-                     * disconnection and process incoming messages */
-                    ssn_client_poll(cliauto->client, cliauto->keepalive);
+                    /* 保活 ping（缺陷背景：原实现从不发送 PING_ECHO，半开连接——
+                     * 服务端崩溃/网络中断且无 FIN/RST——永远感知不到，自动重连
+                     * 永不触发；SSN_CLIENT_AUTO_MAX_PING_LOST 无任何引用）。
+                     * 每次 tick：发送 PING_ECHO（服务端原样回显），连续
+                     * SSN_CLIENT_AUTO_MAX_PING_LOST 次无应答判定断开。 */
+                    if (ssn_client_ping(cliauto->client, 50)) {
+                        pthread_mutex_lock(&cliauto->mutex);
+                        cliauto->ping_lost = 0;
+                        pthread_mutex_unlock(&cliauto->mutex);
+                    } else {
+                        pthread_mutex_lock(&cliauto->mutex);
+                        cliauto->ping_lost++;
+                        bool lost = cliauto->ping_lost >= SSN_CLIENT_AUTO_MAX_PING_LOST;
+                        pthread_mutex_unlock(&cliauto->mutex);
+                        if (lost) {
+                            LOG_WARN("cliauto: ping lost %u times, connection dead",
+                                     SSN_CLIENT_AUTO_MAX_PING_LOST);
+                            pthread_mutex_lock(&cliauto->mutex);
+                            cliauto->state = SSN_CLIENT_AUTO_STATE_DISCONNECTED;
+                            pthread_mutex_unlock(&cliauto->mutex);
 
-                    /* Check if connection is still alive */
+                            if (cliauto->onconn) {
+                                cliauto->onconn(cliauto->conn_arg, cliauto, false);
+                            }
+                        }
+                    }
+
+                    /* 同时轮询以处理消息与 EOF 断开（FIN） */
+                    ssn_client_poll(cliauto->client, 10);
                     if (!ssn_client_is_connect(cliauto->client)) {
+                        pthread_mutex_lock(&cliauto->mutex);
                         cliauto->state = SSN_CLIENT_AUTO_STATE_DISCONNECTED;
+                        pthread_mutex_unlock(&cliauto->mutex);
 
-                        /* Call connection callback */
                         if (cliauto->onconn) {
                             cliauto->onconn(cliauto->conn_arg, cliauto, false);
                         }
                     }
                 }
                 break;
-                
+
             case SSN_CLIENT_AUTO_STATE_DISCONNECTED:
                 {
                     /* Wait before reconnecting */
                     usleep(cliauto->reconn_delay * 1000);
+                    pthread_mutex_lock(&cliauto->mutex);
                     cliauto->state = SSN_CLIENT_AUTO_STATE_CONNECTING;
+                    pthread_mutex_unlock(&cliauto->mutex);
                 }
                 break;
-                
+
             case SSN_CLIENT_AUTO_STATE_STOPPED:
                 /* Exit thread */
                 return NULL;
-                
+
             default:
                 /* Idle state, wait for start */
                 pthread_mutex_lock(&cliauto->mutex);
@@ -358,7 +428,7 @@ static void *ssn_client_auto_thread(void *arg)
                 break;
         }
     }
-    
+
     return NULL;
 }
 
@@ -370,24 +440,5 @@ static void ssn_client_auto_msg_cb(ssn_client_t *client, ssn_url_ref_t *url, ssn
     /* Route through auto-client's onmsg if set, otherwise fall through */
     if (cliauto->onmsg) {
         cliauto->onmsg(client, url, data, cliauto->arg);
-    }
-}
-
-/* SSN client connection callback */
-static void ssn_client_auto_conn_cb(ssn_client_t *client, bool connected, void *arg)
-{
-    ssn_client_auto_t *cliauto = (ssn_client_auto_t *)arg;
-    
-    /* Update connection state */
-    if (connected) {
-        cliauto->state = SSN_CLIENT_AUTO_STATE_CONNECTED;
-        cliauto->ping_lost = 0;
-    } else {
-        cliauto->state = SSN_CLIENT_AUTO_STATE_DISCONNECTED;
-    }
-    
-    /* Call user connection callback */
-    if (cliauto->onconn) {
-        cliauto->onconn(cliauto->conn_arg, cliauto, connected);
     }
 }
