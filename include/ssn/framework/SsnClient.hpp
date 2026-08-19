@@ -38,7 +38,7 @@ namespace ssn {
 // 且不得调用 disconnect。回调只允许拷贝数据 / 设置标志 / 通知，并需快速返回。
 // callJson 为单 in-flight 同步调用：同一 client 的并发调用被 call_mutex_
 // 串行化，后到者排队等待；超时返回 false。
-class SsnClient {
+class SSN_FRAMEWORK_API SsnClient {
 public:
     SsnClient();
     ~SsnClient();

@@ -33,6 +33,11 @@ SSN_API ssn_client_t *ssn_client_create();
 /* Close IPC client */
 SSN_API void ssn_client_close(ssn_client_t *client);
 
+/* 引用计数接口（内部使用：node 层 poll 保活等；公开以便跨模块正确调用，
+ * 缺陷背景：未声明导致 node 层隐式声明（UB 风险）） */
+SSN_API void ssn_client_ref(ssn_client_t *client);
+SSN_API void ssn_client_unref(ssn_client_t *client);
+
 /* Connect to server (Synchronous) */
 SSN_API bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
                          const struct timespec *timeout);
@@ -72,6 +77,11 @@ SSN_API void ssn_client_set_on_message(ssn_client_t *client, ssn_client_msg_hand
 /* IPC client set PUBLISH-type handler (for incoming publish messages).
  * This is typically set internally by ssn_client_auto, not by user code. */
 SSN_API void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
+
+/* 保活 ping：发送 PING_ECHO 并登记 pending 等待服务端应答（用于半开连接检测）。
+ * 返回 true 表示请求已发出且应答已收到（连接存活）；false 表示未连接/发送失败/
+ * 超时无应答（连接可能已死）。timeout_ms 为等待应答的窗口。 */
+SSN_API bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms);
 
 #ifdef __cplusplus
 }

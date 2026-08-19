@@ -32,7 +32,7 @@
 
 namespace ssn {
 
-class ServiceManager {
+class SSN_FRAMEWORK_API ServiceManager {
 public:
     // Run 完整生命周期：initialize → start → 等待 SIGINT/SIGTERM → stop → destroy → 返回 0
     template <typename ServiceT>

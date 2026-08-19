@@ -281,10 +281,52 @@ static void test_protocol_bind_connect(void)
     }
 }
 
+/* RPC destroy 职责回归（回归 Issue #19：destroy 回调与子类 free 职责重叠）
+ *
+ * 缺陷背景：base.destroy 可设置但子类 destroy 内部 free(ctx)，若二者都被调用
+ * 则 double free。修复：create 时统一把 base.destroy 设为子类 destroy，
+ * ssn_protocol_destroy 只调用一次 destroy 回调。
+ * 回归：重复创建/销毁不崩溃（无双重释放、无泄漏）。
+ */
 static void test_rpc_integration(void)
 {
-    // 简化集成测试，只测试基本功能
-    printf("[INFO] RPC integration test skipped for now\n");
+    printf("Running RPC destroy responsibility tests...\n");
+
+    ssn_rpc_req_t *req = ssn_rpc_req_create(rpc_reply_handler, NULL);
+    ssn_rpc_rep_t *rep = ssn_rpc_rep_create(rpc_request_handler, NULL);
+    ASSERT(req != NULL, "RPC requester 创建");
+    ASSERT(rep != NULL, "RPC replier 创建");
+
+    /* destroy 职责：base.destroy 已设置为子类 destroy */
+    ssn_protocol_ctx_t *req_ctx = (ssn_protocol_ctx_t *)req;
+    ssn_protocol_ctx_t *rep_ctx = (ssn_protocol_ctx_t *)rep;
+    ASSERT(req_ctx->destroy == ssn_rpc_destroy, "req base.destroy 已设置");
+    ASSERT(rep_ctx->destroy == ssn_rpc_destroy, "rep base.destroy 已设置");
+
+    ssn_protocol_destroy(req_ctx);   /* 只调一次 destroy 回调，无双重释放 */
+    ssn_protocol_destroy(rep_ctx);
+
+    /* 循环创建/销毁：无双重释放、无泄漏 */
+    bool ok = true;
+    for (int i = 0; i < 50; i++) {
+        req = ssn_rpc_req_create(rpc_reply_handler, NULL);
+        rep = ssn_rpc_rep_create(rpc_request_handler, NULL);
+        if (!req || !rep) { ok = false; break; }
+        ssn_protocol_destroy((ssn_protocol_ctx_t *)req);
+        ssn_protocol_destroy((ssn_protocol_ctx_t *)rep);
+    }
+    ASSERT(ok, "destroy 循环 50 次无双重释放");
+
+    /* 协议工厂创建的子类对象同样走 destroy 回调（无 double free） */
+    ok = true;
+    for (int i = 0; i < 20; i++) {
+        ssn_protocol_ctx_t *ctx = ssn_protocol_create(SSN_ROLE_REQ, rpc_reply_handler, NULL);
+        if (!ctx) { ok = false; break; }
+        ssn_protocol_destroy(ctx);
+    }
+    ASSERT(ok, "协议工厂创建/销毁循环 20 次无双重释放");
+
+    printf("[INFO] RPC 完整环回（应答类型匹配）见 test_protocol_integration.c\n");
 }
 
 int main(int argc, char* argv[])

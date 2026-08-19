@@ -9,6 +9,8 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include "ssn_server.h"
 #include "ssn_client.h"
 
@@ -30,12 +32,13 @@ static void echo_handler(ssn_server_t *server, ssn_peer_id_t cid,
 
 /* Server thread: runs event loop until signaled */
 static volatile int g_srv_running = 0;
+static int g_srv_poll_ms = 100;
 
 static void *server_thread(void *arg)
 {
     ssn_server_t *srv = (ssn_server_t *)arg;
     while (g_srv_running) {
-        ssn_server_poll(srv, 100);
+        ssn_server_poll(srv, g_srv_poll_ms);
     }
     return NULL;
 }
@@ -414,6 +417,98 @@ cleanup:
     return 1;
 }
 
+/* ---- Test 9: conn_timeout_ms=0 握手竞态（回归 Issue #15） ----
+ *
+ * 缺陷背景：server_options_t 未设置 conn_timeout_ms 时 handshake_timeout=0，
+ * cli_init 把 hst.alive 置 0 但仍留在 hst 链表。若客户端在 connect（TCP 建立）
+ * 之后、SERVICE_INFO 握手包到达之前停顿（慢启动/负载），定时器首个 tick
+ * （alive=0<=50ms）即置 emit → evtfd 销毁该连接——真实世界的「连接建立但
+ * 握手迟到」竞态，客户端 connect 偶发失败。
+ * 回归：用 transport 层建立裸 TCP 连接（不发握手包），sleep 超过定时器周期后
+ * 再发 SERVICE_INFO 握手——修复前连接已被销毁、握手必然失败；修复后
+ * handshake_timeout 回退默认值，连接存活到握手完成。
+ */
+static int test_zero_handshake_timeout(void)
+{
+    printf("  Test 9: Zero handshake timeout survives delayed handshake... ");
+
+    server_options_t opts = {
+        .send_timeout_ms = 5000,
+        .conn_timeout_ms = 0,          /* 未设置（缺陷触发路径） */
+        .idle_timeout_sec = 60,
+        .ifname = ""
+    };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create)\n"); return 1; }
+    if (!ssn_server_start(srv)) {
+        printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1;
+    }
+    g_srv_running = 1;
+    g_srv_poll_ms = 10;    /* 快速事件循环：及时处理 accept 与 evtfd */
+    pthread_t tid;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(100000);
+
+    /* 裸 TCP 连接（不发握手）：server accept 后 cli 进入 hst 链表且 alive=0 */
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        printf("FAIL (socket)\n");
+        g_srv_running = 0; pthread_join(tid, NULL);
+        ssn_server_destroy(srv);
+        return 1;
+    }
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    /* 剥离 unix:// 前缀（裸 socket 的 sun_path 不含协议前缀） */
+    const char *path = TEST_SERVER_ADDR + strlen("unix://");
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        printf("FAIL (connect)\n");
+        close(fd);
+        g_srv_running = 0; pthread_join(tid, NULL);
+        ssn_server_destroy(srv);
+        return 1;
+    }
+
+    /* 停顿超过定时器周期（100ms > 50ms tick）：修复前 alive=0 的连接在此被销毁 */
+    usleep(200000);
+
+    /* 再发 SERVICE_INFO 握手包（模拟迟到握手；手工拼帧——ssn_create_header
+     * 为库内部符号未导出，测试用原始字节构造头部） */
+    uint8_t hdr[SSN_HEADER_SIZE];
+    memset(hdr, 0, sizeof(hdr));
+    hdr[0] = SSN_MAGIC_BYTE;         /* magic */
+    hdr[1] = SSN_PROTOCOL_VERSION;   /* version */
+    hdr[2] = SSN_MSG_TYPE_SERVICE_INFO; /* msg_type */
+    ssn_set_seqno((ssn_header_t *)hdr, 1);
+    ssize_t n = send(fd, hdr, sizeof(hdr), 0);
+
+    /* 等待服务端应答握手（SERVICE_INFO 应答含 cid） */
+    int got_reply = 0;
+    for (int i = 0; i < 30; i++) {
+        uint8_t buf[512];
+        ssize_t r = recv(fd, buf, sizeof(buf), 0);
+        if (r > 0) {
+            got_reply = 1;
+            break;
+        }
+        usleep(100000);
+    }
+
+    close(fd);
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (!got_reply || n <= 0) {
+        printf("FAIL (handshake killed before SERVICE_INFO processed)\n");
+        return 1;
+    }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -427,7 +522,8 @@ int main(void)
     failed += test_idle_timeout_disconnect_after_handshake();
     failed += test_active_connection_kept();
     failed += test_empty_connection_not_blocking();
+    failed += test_zero_handshake_timeout();
 
-    printf("=== Result: %d/8 passed, %d failed ===\n", 8 - failed, failed);
+    printf("=== Result: %d/9 passed, %d failed ===\n", 9 - failed, failed);
     return failed ? 1 : 0;
 }

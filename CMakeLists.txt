@@ -39,7 +39,7 @@ set(IPC_SOURCES
 # 版本信息
 set(VERSION_MAJOR 2)
 set(VERSION_MINOR 5)
-set(VERSION_PATCH 0)
+set(VERSION_PATCH 1)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 # 创建动态库
@@ -192,6 +192,19 @@ target_include_directories(ssn_framework PUBLIC
 )
 target_link_libraries(ssn_framework ssn_transport pthread)
 
+# 框架库构建期定义导出宏（CXX_VISIBILITY_PRESET hidden 下公开类靠此导出）
+target_compile_definitions(ssn_framework PRIVATE SSN_BUILDING_FRAMEWORK=1)
+
+# 版本化 SONAME 与符号可见性（缺陷背景：原无 VERSION/SOVERSION，升级时新库
+# 直接覆盖旧文件无 ABI 保护；缺 CXX_VISIBILITY_PRESET 使 C++ 符号全量导出——
+# 与 ssn_transport 的治理策略对齐）
+set_target_properties(ssn_framework PROPERTIES
+    VERSION ${VERSION_STRING}
+    SOVERSION ${VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN 1
+)
+
 install(TARGETS ssn_framework
     EXPORT ssnTargets
     LIBRARY DESTINATION lib
@@ -229,6 +242,14 @@ target_link_libraries(example_server ${PROJECT_NAME} pthread)
 
 add_executable(example_client test/test_ssn_client.c)
 target_link_libraries(example_client ${PROJECT_NAME} pthread)
+
+# 自动重连客户端（cliauto）单元测试
+add_executable(test_cliauto test/test_cliauto.c)
+target_link_libraries(test_cliauto ${PROJECT_NAME} pthread)
+
+# 哈希表单元测试（含字符串键 API 回归）
+add_executable(test_hash_table test/test_hash_table.c)
+target_link_libraries(test_hash_table ${PROJECT_NAME} pthread)
 
 # C++ 服务框架测试（批次 2 任务 2：ServiceBase 生命周期）
 add_executable(test_cpp_service_base test/test_cpp_service_base.cpp)

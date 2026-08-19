@@ -1315,7 +1315,10 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
         pendq->callback.res = callback;
         seqno = pendq->seqno = client->seqno++;
         pendq->timeout_ms = timeout_ms;
-        pendq->ftype = type;
+        /* RES 类请求（SUBSCRIBE/UNSUBSCRIBE/PING_ECHO）统一登记为 FTYPE_RES，
+         * 使 ssn_client_handle_response 能按结果回调分发（缺陷背景：原实现
+         * ftype=type，PING_ECHO(0xFF)≠FTYPE_RES(2) 导致 ping 应答永不触发回调） */
+        pendq->ftype = SSN_CLIENT_FTYPE_RES;
         pendq->arg = arg;
         client->seqno_to_index[seqno] = index;
     } else {
@@ -1422,6 +1425,48 @@ bool ssn_client_unsubscribe (ssn_client_t *client, const ssn_url_ref_t *url,
     ipc_mutex_unlock(client->lock);
 
     return (ssn_client_request(client, SSN_MSG_TYPE_UNSUBSCRIBE, url, NULL, NULL, NULL, timeout_ms));
+}
+
+/* 保活 ping 应答回调：arg 指向 volatile bool（由 ssn_client_ping 轮询置位） */
+static void ping_reply_cb(ssn_client_t *client, bool ok, void *arg)
+{
+    (void)client;
+    volatile bool *replied = (volatile bool *)arg;
+    *replied = ok;
+}
+
+/**
+ * @brief 保活 ping（半开连接检测）
+ * 
+ * 发送 PING_ECHO（服务端原样回显同 seqno），并同步轮询等待应答。
+ * 返回 true 表示应答已收到（连接存活）；false 表示未连接/发送失败/超时无应答。
+ * 注意：本函数内部会 poll，调用方应避免在持有 client 锁的上下文调用。
+ * 
+ * @param client 客户端实例指针
+ * @param timeout_ms 等待应答窗口（毫秒）
+ * @return 连接存活返回 true
+ */
+bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms)
+{
+    volatile bool replied = false;
+
+    if (!client || !client->valid || !client->connected) {
+        return false;
+    }
+
+    if (!ssn_client_request(client, SSN_MSG_TYPE_PING_ECHO, NULL, NULL,
+                            ping_reply_cb, (void *)&replied, timeout_ms)) {
+        return false;
+    }
+
+    /* 同步等待应答（cliauto 单线程模型：本函数在其自有线程调用） */
+    uint64_t waited = 0;
+    while (!replied && waited < timeout_ms) {
+        ssn_client_poll(client, 10);
+        waited += 10;
+    }
+
+    return replied;
 }
 
 /**
