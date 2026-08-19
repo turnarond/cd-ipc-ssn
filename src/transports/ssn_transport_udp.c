@@ -62,6 +62,13 @@ static bool udp_transport_connect(ssn_transport_t* transport,
         impl->ipv6_enabled = false;
     }
 
+    /* udp_transport_create 构造时已创建 socket（impl->sock_fd）；connect 重新
+     * 创建前必须先关闭旧的，否则构造 fd 永久泄漏（Issue #10，与 tcp/unix 同源）。 */
+    if (impl->sock_fd >= 0) {
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+    }
+
     impl->sock_fd = socket(family, SOCK_DGRAM, IPPROTO_UDP);
     if (impl->sock_fd < 0) {
         LOG_ERROR("Failed to create UDP socket: %s", strerror(errno));

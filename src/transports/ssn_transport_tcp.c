@@ -54,6 +54,14 @@ static bool tcp_transport_connect(ssn_transport_t* transport,
         impl->ipv6_enabled = false;
     }
 
+    /* tcp_transport_create 构造时已创建 socket（impl->sock_fd）；connect 重新
+     * 创建前必须先关闭旧的，否则构造 fd 永久泄漏（Issue #10：连接失败路径
+     * 实测每轮泄漏 1 个 fd）。 */
+    if (impl->sock_fd >= 0) {
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+    }
+
     impl->sock_fd = socket(family, SOCK_STREAM, IPPROTO_TCP);
     if (impl->sock_fd < 0) {
         LOG_ERROR("Failed to create TCP socket: %s", strerror(errno));
@@ -313,6 +321,12 @@ static ssn_transport_t* tcp_transport_accept(ssn_transport_t* transport,
 
     tcp_transport_impl_t* client_impl =
         (tcp_transport_impl_t*)client_transport->impl_data;
+    /* tcp_transport_create 构造时创建的 socket 在 accept 路径无用（用 accept()
+     * 的 client_fd）——先关闭避免构造 fd 永久泄漏（Issue #10）。 */
+    if (client_impl->sock_fd >= 0) {
+        close(client_impl->sock_fd);
+        client_impl->sock_fd = -1;
+    }
     client_impl->sock_fd = client_fd;
     client_impl->is_server = false;
     client_impl->ipv6_enabled = impl->ipv6_enabled;

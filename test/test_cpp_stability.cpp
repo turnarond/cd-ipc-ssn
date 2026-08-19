@@ -422,20 +422,12 @@ void test_lifecycle_fd_leak() {
     run_cycle();   // 预热：加载期惰性 fd（stdio/locale 等）不在计数对比内
     int before = count_fds();
     CHECK(before > 0);
-    // 已知基线：C 层在「连接过的生命周期」中每轮残留 2 个 socket fd
-    //（ssn_client/ssn_server 连接清理缺陷，属 C 层技术债，不在本批次范围；
-    // 已记录待提 Issue）。断言每轮增长 ≤ 2 且总量 ≤ 20：仍能捕获框架侧
-    // 新增泄漏（任何超过基线的增长都会红），并防止基线恶化
-    int prev = before;
-    bool growth_ok = true;
+    // Issue #10 已修复（transport connect 重建前关闭构造 fd）：C 层 fd 泄漏
+    // 消除——恢复严格断言：10 轮生命周期循环后 fd 不增长
     for (int i = 0; i < 10; ++i) {
         run_cycle();
-        int now = count_fds();
-        if (now - prev > 2) { growth_ok = false; }
-        prev = now;
     }
-    CHECK(growth_ok);
-    CHECK(prev - before <= 20);
+    CHECK(count_fds() <= before);
 }
 
 // —— T9 空/半开连接清理 ——

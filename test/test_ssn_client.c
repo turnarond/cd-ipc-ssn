@@ -444,6 +444,54 @@ static int test_big_message_roundtrip(void)
     return 0;
 }
 
+/* ---- Test 10: connect 失败路径 fd 泄漏（回归：Issue #10） ----
+ *
+ * 缺陷：tcp/unix/udp_transport_create 构造时创建 socket fd，connect 时再次
+ *       socket() 覆盖 impl->sock_fd——构造 fd 永久泄漏（每轮 +1）。
+ * 回归：连接（tcp 失败路径 + udp 重建路径）循环后 /proc/self/fd 计数不增长。
+ */
+
+#include <dirent.h>
+
+static int fd_count(void)
+{
+    struct dirent *e;
+    int n = 0;
+    DIR *d = opendir("/proc/self/fd");
+    if (!d) return -1;
+    while ((e = readdir(d))) { if (e->d_name[0] != '.') n++; }
+    closedir(d);
+    return n;
+}
+
+static int test_connect_fail_fd_leak(void)
+{
+    printf("  Test 10: Connect-fail fd leak... ");
+    struct timespec ts = { 1, 0 };
+    int base = fd_count();
+
+    for (int i = 0; i < 5; i++) {
+        ssn_client_t *cli = ssn_client_create();
+        if (!cli) { printf("FAIL (create)\n"); return 1; }
+        /* 连接不存在的服务端 → connect 失败路径（transport 创建 + 重建） */
+        ssn_client_connect(cli, "tcp://127.0.0.1:18949", &ts);
+        ssn_client_close(cli);
+        /* UDP 路径同源泄漏回归（udp connect 重建 socket 覆盖构造 fd） */
+        ssn_client_t *uc = ssn_client_create();
+        if (!uc) { printf("FAIL (create udp)\n"); return 1; }
+        ssn_client_connect(uc, "udp://127.0.0.1:18949", &ts);
+        ssn_client_close(uc);
+    }
+
+    int after = fd_count();
+    if (after > base) {
+        printf("FAIL (fd grew %d -> %d)\n", base, after);
+        return 1;
+    }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -458,7 +506,8 @@ int main(void)
     failed += test_timer_thread_survives();
     failed += test_set_on_message_subscribe();
     failed += test_big_message_roundtrip();
+    failed += test_connect_fail_fd_leak();
 
-    printf("=== Result: %d/9 passed, %d failed ===\n", 9 - failed, failed);
+    printf("=== Result: %d/10 passed, %d failed ===\n", 10 - failed, failed);
     return failed ? 1 : 0;
 }

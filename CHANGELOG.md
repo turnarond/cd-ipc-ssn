@@ -2,6 +2,15 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.4.3] - 2026-08-19
+
+### Fixed
+- transport 构造 fd 泄漏（Issue #10）：tcp/unix/udp_transport_create 构造时创建
+  socket fd，connect/accept 路径重建时覆盖未关闭——每连接泄漏 1 个 fd，长期运行
+  触发 EMFILE。修复：connect 重建前关闭旧 fd、accept 覆盖前关闭构造 fd
+- 回归：Test 10（tcp 失败 + udp 重建路径 fd 不增长）、T8 恢复严格断言
+  （10 轮生命周期循环 fd 不增长）
+
 ## [2.4.2] - 2026-08-18
 
 ### Fixed
