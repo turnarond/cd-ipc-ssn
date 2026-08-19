@@ -128,7 +128,11 @@ typedef struct ssn_node {
     // Core components
     ssn_client_t *client;                /**< Client instance */
     ssn_server_t *server;                /**< Server instance */
-    
+
+    // 客户端当前连接的对端地址（单连接模型；由持 node->lock 的路径读写，
+    // 用于多 peer 寻址时拒绝「已连 A 却发往 B」的串台）
+    char peer_address[128];
+
     // Synchronization
     ipc_mutex_t *lock;                   /**< Node lock */
     

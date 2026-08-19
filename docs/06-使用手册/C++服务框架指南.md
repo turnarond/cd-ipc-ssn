@@ -1,9 +1,9 @@
 # C++ 服务框架指南
 
-> SSN C++ 服务框架（v2.4.0）是构建于 SSN C API 之上的服务开发框架：提供类型安全的 RPC
+> SSN C++ 服务框架（v2.5.0）是构建于 SSN C API 之上的服务开发框架：提供类型安全的 RPC
 > 方法注册与调用、内置管理端点、发布/订阅与一行式生命周期编排，面向「快速开发 IPC 服务」
 > 的使用场景。目标：**30 秒跑通第一个服务**。本文档内容以真实代码为准，示例代码摘录自
-> `examples/cpp/`（01_echo_service、02_pubsub_chat），可直接复制运行。
+> `examples/cpp/`（01_echo_service、02_pubsub_chat 等 4 个示例），可直接复制运行。
 
 ## 1. 为什么用 C++ 服务框架
 
@@ -229,10 +229,11 @@ void publishLoop() {
 | 1001 | 方法不存在 | 调用了未注册的 URL（含 `/` 兜底路径） |
 | 1002 | 请求体 JSON 解析失败 | 请求体不是合法 JSON |
 | 1003 | handler 执行期间任何异常 | Req 反序列化失败（字段缺失/类型不符），或用户 handler 自身抛出异常 |
-| 1004 | 客户端超时 | 客户端 `callJson`/`Call` 在超时窗口内未收到应答（客户端侧返回 false） |
+| 1004 | 客户端超时（客户端侧分类号） | 不产生错误应答体：超时仅表现为 `callJson`/`Call` 返回 false，应答体中不会出现 code=1004 |
 
 客户端侧表现：`callJson` / `Call` 收到框架错误应答（1001-1003）或超时（1004）均
-返回 `false`，调用方无需区分（需要区分时可自行解析应答体中的 error 字段）。
+返回 `false`，调用方无需区分（需要区分时可自行解析应答体中的 error 字段；
+注意超时不产生应答体，只能靠返回 false 识别）。
 
 ### 3.6 死锁约束（重要）
 
@@ -275,9 +276,10 @@ int main() {
 }
 ```
 
-- `connect(peer_address, timeout_ms = 5000)`：地址格式 `tcp://host:port`；失败返回
-  `false`（最常见原因：服务端未启动）；已连接时重复调用返回 `false`。注意 C 层
-  节点连接的同步超时固定为 3 秒，`timeout_ms` 参数暂留作扩展；
+- `connect(peer_address, timeout_ms = 5000)`：地址格式 `tcp://host:port`；仅创建并
+  启动客户端节点，**不接触服务器**（服务端未启动时 connect 仍返回 `true`），实际
+  连接发生在首次 `callJson` / `subscribe`，其失败以返回 `false` 呈现（内部 C 层
+  节点连接同步超时固定 3 秒）；已连接时重复调用返回 `false`；
 - `disconnect()`：停止驱动线程并销毁节点；未连接时是幂等空操作。
 
 ### 4.2 同步调用：callJson 与 Call<Req, Resp>
@@ -314,8 +316,10 @@ bool subscribed = cli.subscribe("/chat", [&](const std::string& topic,
 if (!subscribed) { /* 订阅失败：服务端未启动等 */ }
 ```
 
-- `subscribe(topic, handler, timeout_ms = 5000)`：订阅是同步握手（默认 5 秒超时），
-  务必检查返回值；`unsubscribe(topic)` 取消订阅；
+- `subscribe(topic, handler, timeout_ms = 5000)`：**异步订阅**——返回 `true` 仅表示
+  SUBSCRIBE 请求已发送，服务端确认在后台进行，订阅生效以收到该主题消息为准
+  （C 层为 fire-and-forget 发送，非同步握手）；`unsubscribe(topic)` 取消订阅；
+  建议订阅后先轮询服务端 `/health` 或等待首条消息作为就绪确认；
 - **回调线程约束**：回调在内部驱动线程执行，期间持有节点锁——回调内**不得**调用
   本客户端的 `callJson` / `subscribe` / `unsubscribe` / `disconnect`（会自锁死锁或
   必然超时），只允许拷贝数据、打印、设置标志，并需快速返回；
@@ -325,8 +329,8 @@ if (!subscribed) { /* 订阅失败：服务端未启动等 */ }
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| 客户端打印「连接失败」 | 服务端未启动，或先退出了 | 先启动服务端，再运行客户端 |
-| 客户端打印「调用失败」 | 调用了未注册的 URL（框架应答 1001） | 检查 URL 与注册的一致 |
+| 客户端 `connect` 返回 false | 参数非法（地址格式错误）、重复连接 | `connect` 不接触服务器，服务端未启动不会在此失败 |
+| `callJson` / `subscribe` 返回 false | 服务端未启动、连接失败、调用超时、或方法未注册（框架应答 1001） | 先启动服务端，再运行客户端；检查 URL 与注册的一致 |
 | 调用超时返回 false | 服务端未应答（网络异常/服务端退出）或同一客户端并发调用排队 | 检查服务端运行状态；并发场景拆分为多个客户端 |
 | `Call` 抛异常 | Resp DTO 与服务端应答不匹配 | 核对两端 DTO 定义 |
 
@@ -343,8 +347,9 @@ int main(int argc, char** argv) {
 `Run<T>` 编排完整生命周期：安装信号处理（SIGINT/SIGTERM）→ `initialize` → `start`
 → 等待停止信号 → `stop` → `destroy` → 返回 0。服务是常驻进程，按 `Ctrl+C` 优雅退出。
 
-注意：**Run 返回时不恢复信号掩码与信号处理器**（终端入口语义）——`Run` 定位为
-`main` 里的最后一步，返回后进程通常立即退出。
+注意：**Run 返回时会恢复调用前的信号掩码与信号处理器**（v2.4.1 起，Issue #5-2）
+——不向调用方泄漏信号状态，并复位停止标志，因此 `Run` 支持在测试/嵌入场景下
+重复调用；定位仍建议作为 `main` 里的最后一步。
 
 ### 5.2 手动模式：initialize / start / stop / destroy
 
@@ -394,6 +399,8 @@ svc.destroy();                                   // 任意状态 → Created
 |------|------|----------|------|
 | `01_echo_service` | echo_server.cpp + echo_client.cpp | 最小服务、JSON 层 API、一行启动、内置端点 | 18880 |
 | `02_pubsub_chat` | pub_server.cpp + sub_client.cpp | 类型安全层（RegisterMethod/Call + DTO）、publish/subscribe | 18881 |
+| `03_robust_client` | robust_client.cpp | 三态错误处理（连接/调用/订阅）、重连退避、RAII | 18882 |
+| `04_concurrent_client` | concurrent_client.cpp | 两层串行化并发客户端（单客户端排队 + 多客户端并行） | 18883 |
 
 每个目录自带 Makefile：`make` 构建、`make run` 一键体验（后台起服务端 → 运行
 客户端 → 关闭服务端）、`make clean` 清理。

@@ -1,0 +1,36 @@
+# SSN 持续集成：构建 + 全量测试 + 示例/find_package 验证
+#
+# 触发：push 到 main 与 feature/*、fix/* 分支；PR 到 main
+# 依赖：Ubuntu 最新 LTS，GCC/CMake 由 setup 安装（仓库要求 CMake ≥ 3.12、GCC ≥ 4.8/C++17）
+
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/*', 'fix/*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: 构建 + 全量测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++
+
+      - name: 配置与构建
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: 全量自动化测试（14 套件）
+        run: bash test/run_tests.sh
+
+      - name: 示例构建 + hello_world 冒烟 + find_package 集成
+        run: bash test/verify_examples.sh

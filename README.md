@@ -1,8 +1,10 @@
 # ssn (cd-ipc-ssn)
 
-**版本: 2.4.3**
+**版本: 2.5.0**
 
 SSN (Scalable Socket Network) is a lightweight inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
+
+> 📖 **在线文档**：<https://turnarond.github.io/cd-ipc-ssn/>（docsify 文档站，含全文搜索；源码见 `docs/`）
 
 ## 目录
 
@@ -26,28 +28,41 @@ cmake .. && make -j$(nproc)
 ### 运行测试
 
 ```bash
-./test_transport                # 传输层测试 (55 tests)
-./test_node_basic               # 节点基础测试 (3 tests)
-./test_node                     # 节点完整测试 (5 tests)
-./test_protocol                 # 协议层测试 (25 tests)
-./test_protocol_integration     # 协议集成测试 (19 tests)
+bash test/run_tests.sh        # 一键：构建 + 全部 14 个自动化套件
+# 或构建后逐个运行：
+./test_transport                # 传输层测试 (67 断言)
+./test_node_basic               # 节点基础测试 (3 用例)
+./test_node                     # 节点完整测试 (6 用例)
+./test_protocol                 # 协议层测试 (25 断言)
+./test_protocol_integration     # 协议集成测试 (19 用例)
 ```
 
 ### 第一个应用
 
 ```c
+#include <stdio.h>
+#include <pthread.h>
 #include "node/ssn_node.h"
 #include "version/ssn_version.h"
 
 static void on_msg(ssn_client_t *cli, ssn_url_ref_t *url,
                    ssn_data_ref_t *data, void *arg) {
+    (void)cli; (void)url; (void)arg;
     printf("Received: %.*s\n", (int)data->length, (char*)data->data);
+}
+
+/* 服务端节点的事件循环必须在独立线程中驱动（poll 处理连接握手/订阅/消息分发） */
+static volatile int g_srv_running = 1;
+static void *srv_poll_thread(void *arg) {
+    ssn_node_t *srv = (ssn_node_t *)arg;
+    while (g_srv_running) ssn_node_poll(srv, 100);
+    return NULL;
 }
 
 int main(void) {
     printf("ssn version: %s\n", ssn_version_get_string());
 
-    // 创建服务端节点
+    // 创建并启动服务端节点
     ssn_node_config_t srv_cfg = {
         .node_type = "server", .node_name = "demo-server",
         .listen_address = "127.0.0.1", .listen_port = 8888,
@@ -55,8 +70,10 @@ int main(void) {
     };
     ssn_node_t *srv = ssn_node_create(&srv_cfg);
     ssn_node_start(srv);
+    pthread_t srv_tid;
+    pthread_create(&srv_tid, NULL, srv_poll_thread, srv);
 
-    // 创建客户端节点并订阅
+    // 创建并启动客户端节点
     ssn_node_config_t cli_cfg = {
         .node_type = "client", .node_name = "demo-client",
         .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_PUBSUB
@@ -64,21 +81,38 @@ int main(void) {
     ssn_node_t *cli = ssn_node_create(&cli_cfg);
     ssn_node_start(cli);
 
+    // 订阅主题
     ssn_url_ref_t topic = { .url = "/demo", .url_len = 5 };
     ssn_node_subscribe(cli, "tcp://127.0.0.1:8888", &topic, on_msg, NULL, 5000);
 
-    // 发布消息
+    // 发布消息（订阅已由 subscribe 同步建立）
     ssn_data_ref_t msg = { .data = "hello", .length = 5 };
     ssn_node_publish(srv, &topic, &msg);
 
-    // 轮询接收
-    ssn_node_poll(cli, 1000);
+    // 轮询接收（客户端节点的事件循环也由 poll 驱动；无事件时每次阻塞至多 100ms）
+    for (int i = 0; i < 10; i++) {
+        ssn_node_poll(cli, 100);
+    }
 
     ssn_node_stop(cli); ssn_node_destroy(cli);
+    g_srv_running = 0; pthread_join(srv_tid, NULL);
     ssn_node_stop(srv); ssn_node_destroy(srv);
     return 0;
 }
 ```
+
+编译运行（产物为 `libssn_transport.so`，位于 `build/`）：
+
+```bash
+gcc -std=c99 -Wall -I src -o demo demo.c -L build -lssn_transport -lpthread \
+    -Wl,-rpath,$PWD/build
+./demo
+```
+
+> 提示：节点（`ssn_node_*`）与客户端/服务端（`ssn_client_*` / `ssn_server_*`）均为
+> **事件循环驱动**——必须周期性调用 `ssn_node_poll` / `ssn_client_poll` /
+> `ssn_server_poll`（或在独立线程中轮询），连接握手、消息收发与回调才会发生。
+> 完整可运行示例见 `examples/`（`bash test/verify_examples.sh` 可构建全部 19 个）。
 
 ### C++ 服务框架（v2.4.0）
 
@@ -213,7 +247,8 @@ udp://127.0.0.1:9999        # UDP
 ### 环境要求
 
 - CMake >= 3.12
-- GCC >= 4.8 或 Clang >= 3.0
+- C 库：GCC >= 4.8 或 Clang >= 3.0（C99）
+- C++ 服务框架（`libssn_framework`）：GCC >= 7 或 Clang >= 6（C++17）
 - POSIX 兼容系统 (Linux)
 
 ### 构建步骤
@@ -223,7 +258,7 @@ mkdir build && cd build
 cmake .. && make -j$(nproc)
 ```
 
-产物: `libssn_transport.so`
+产物: `libssn_transport.so`（C 库）+ `libssn_framework.so`（C++ 服务框架）
 
 ## 测试说明
 
@@ -231,21 +266,29 @@ cmake .. && make -j$(nproc)
 
 | 测试 | 描述 | 用例数 |
 |------|------|--------|
-| `test_transport` | 传输层完整测试（创建、连接、收发、工厂） | 55 |
+| `test_transport` | 传输层完整测试（创建、连接、收发、工厂、IPv6） | 67 |
 | `test_node_basic` | 节点基础生命周期 | 3 |
-| `test_node` | 节点完整功能（创建、启停、PubSub、RPC、统计） | 5 |
+| `test_node` | 节点完整功能（创建、启停、PubSub、RPC、统计） | 6 |
 | `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 25 |
 | `test_protocol_integration` | 协议层集成测试（RPC、PubSub、Msg 全链路） | 19 |
-| `example_server` | 服务端 API 功能测试（创建、启停、RPC 响应） | 4 |
-| `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息） | 5 |
+| `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle 超时） | 8 |
+| `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手） | 12 |
+| `test_cpp_*` | C++ 服务框架 7 套件（生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 485 |
+
+**合计：自动化 14 套件 625 例**，另有 3 个手工套件（需自行启动服务端）与
+19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
+# 一键：构建 + 全部 14 个自动化套件（位置无关）
+bash test/run_tests.sh
+
+# 或构建后逐个运行
 cd build
 ./test_transport && ./test_node_basic && ./test_node \
   && ./test_protocol && ./test_protocol_integration \
-  && ./example_server && ./example_client
+  && ./example_server && ./example_client && ./test_cpp_*
 ```
 
 ## 版本历史
@@ -254,10 +297,19 @@ cd build
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| 2.5.0 | 2026-08-20 | CMake 包配置（find_package）、GitHub Actions CI、docsify 文档网站 |
+| 2.4.4 | 2026-08-19 | 用户旅程/线程安全/传输层/协议层/C++ 框架 P0 修复 |
+| 2.4.3 | 2026-08-19 | transport 构造 fd 泄漏修复（Issue #10） |
+| 2.4.2 | 2026-08-18 | 稳定性加固：回调异常保护、并发互斥、svc 失败可观测、稳定性测试套件 |
+| 2.4.1 | 2026-08-16 | 技术债 12 项集中修复（Issue #5 闭环） |
+| 2.4.0 | 2026-08-16 | C++ 服务框架（libssn_framework）、Issue #4 空连接挂死修复 |
+| 2.3.2 | 2026-08-08 | 使用手册/示例全面修正、定时器线程与分片帧接收修复 |
+| 2.3.1 | 2026-08-06 | 稳定化：node 自锁、IPv6 截断、poll 毫秒换算等修复；需求分析与部署手册补写 |
+| 2.3.0 | 2026-05-07 | driver-sdk 稳定性与完备性升级（状态机、数据管道、诊断收集） |
 | 2.2.0 | 2026-05-06 | client/server API 自动化测试、ssn_cliauto 适配、EAGAIN 修复、文档全面清理 |
 | 2.1.0 | 2026-04-29 | 统一 ssn_ 命名、client/server 重构集成协议层、修复多项 bug、补全测试 |
-| 2.0.0 | 2026-04-21 | 节点发现、QoS 框架、多协议支持 |
-| 1.0.0 | 2026-04-19 | 传输层抽象、节点 Phase 1、通信 API |
+| 2.0.0 | 2026-04-21 | 节点抽象、多协议支持 |
+| 1.0.0 | 2026-04-19 | 传输层抽象、节点抽象 Phase 1、通信 API |
 
 ## 文档链接
 

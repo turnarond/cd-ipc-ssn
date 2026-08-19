@@ -131,6 +131,11 @@ static int unix_transport_send(ssn_transport_t* transport,
 
     ssize_t sent = send(impl->sock_fd, data, len, MSG_NOSIGNAL);
     if (sent < 0) {
+        /* EAGAIN/EWOULDBLOCK 是非阻塞发送的正常「缓冲区满」信号，不是错误：
+         * 调用方（ssn_send_message 循环发送）应让步后重试；不记 send_errors */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;
+        }
         LOG_ERROR("Failed to send data via Unix socket: %s", strerror(errno));
         transport->stats.send_errors++;
         return -1;

@@ -2,6 +2,64 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.0] - 2026-08-20
+
+### Added
+- **CMake 包配置（find_package）**：`install(EXPORT ssnTargets)` 导出
+  `ssn::ssn_transport` / `ssn::ssn_framework` 目标，生成并安装
+  `ssnConfig.cmake` / `ssnConfigVersion.cmake`——CMake 项目可
+  `find_package(ssn REQUIRED)` 后直接 `target_link_libraries(... ssn::ssn_transport)`
+  集成；include 目录改为 BUILD/INSTALL_INTERFACE 分离（安装后以 `<prefix>/include`
+  为根，源码树内仍用 `src/`）
+- **CI 持续集成**：`.github/workflows/ci.yml`——Ubuntu 构建 + 全量 14 套件 +
+  `verify_examples.sh`（19 示例 + hello_world 冒烟 + find_package 集成验证），
+  push 到 main/feature/*/fix/* 与 PR 触发
+- **docsify 文档网站**：`docs/index.html` + `_sidebar.md` 零改写接入现有 39 篇文档
+  （全文搜索、侧边栏导航），`.github/workflows/pages.yml` 自动部署 GitHub Pages；
+  `docs/03-设计`、`06-使用手册`、`07-测试方案`、`09-归档` 补目录索引 README
+- **集成示例**：`examples/cmake_integration/`（C 库 + C++ 框架双消费者，
+  展示安装后 find_package 用法）
+
+### Changed
+- `test/verify_examples.sh` 增加 find_package 集成验证（安装临时前缀 → 消费工程
+  配置/构建/运行，C 与 C++ 双消费者）；`.gitignore` 补 cmake_integration 构建产物
+- DDS 演进路线顺延：阶段 1（DCPS 概念模型）目标 2.6.0、阶段 2 2.7.0、阶段 3 2.8.0
+  （原 2.5.0 起点被本次工程化版本占用）
+
+## [2.4.4] - 2026-08-19
+
+### Fixed
+- **用户旅程**：C 示例/教程事件循环空转周期导致客户端连接必然失败——`ssn_client_connect`
+  握手重试预算对齐 connect 超时（默认 3s，原固定 500ms）；全部 C 示例事件循环改为事件
+  驱动 poll（消除 poll+sleep 空转）；README 第一个应用重写（补服务端 poll/编译命令）
+- **线程安全（回归 Test 12）**：client 超时/应答/释放路径回调移出锁外（回调内再调 API
+  不再自锁死锁）；sub_handlers 增删查加锁；get_pending 改快照拷贝（TOCTOU）；transport
+  读写统一加锁；node_poll 解锁执行回调 + node_comm 锁序修复；server 引用计数延迟释放
+  （回调中 destroy 无 UAF）+ 发送改非阻塞（慢客户端不再拖垮事件循环）
+- **传输层**：TCP6/UDP6 地址解析支持 `[::1]:port` 方括号格式（原 strchr 取首个冒号
+  必失败）；TCP6 listen bind 改用 addr6；非阻塞 connect 补 SO_ERROR 检查（拒连不再
+  误报成功）；tcp/unix/udp send 的 EAGAIN 不再误判错误
+- **线协议**：`ssn_send_message` 长度预校验（防截断写头部）+ 循环发送处理部分写入 +
+  EAGAIN 有界重试
+- **协议层**：RPC 超时实现（pending 槽不再永久占用，触发超时回调）；协议工厂创建完整
+  子类对象（混用不再崩溃）
+- **C++ 框架**：SsnClient connect 数据竞争（并发 connect 不再 std::terminate/节点泄漏）；
+  RegisterMethod 增加 Resp 编译期类型约束
+- **工具脚本**：run_examples.sh 路径补 examples/ 前缀（原全部判「目录不存在」）+ 两脚本
+  转 LF；build_examples.sh 补 4 个 C++ 示例（15→19）；verify_examples.sh 增加
+  hello_world 运行冒烟
+- **strncpy 溢出**：server ifname/srv_name、node node_id/node_type/node_name 改 snprintf
+  （防越界写与非 NUL 终止越界读）
+
+### Changed
+- 文档全仓数字同步：自动化 14 套件 625 例（原 13/14/7 并存）、19 个示例（原 15/17/19
+  并存）、example_client 12 例（原 5/8/9/10 四个值）
+- 白皮书 QoS/节点发现「已实现」→「仅预留能力位/愿景」；3.2/3.3 设计稿标注现状声明；
+  DDS 路线阶段 1 顺延 2.5.0 起（原 2.4.0 已过期）
+- 使用手册/快速上手/C++ 指南教程模板修正：pause()/sleep 替代 poll 的模板改为事件循环、
+  订阅回调 %s→%.*s、subscribe 语义、Run 信号还原、SsnClient connect 语义
+- 架构设计总览/协议层模块化设计补现状声明（设计稿/预留用途标注）
+
 ## [2.4.3] - 2026-08-19
 
 ### Fixed

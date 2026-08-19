@@ -47,6 +47,10 @@ bool SsnClient::connect(const std::string& peer_address, uint64_t timeout_ms) {
     // C 层节点连接（connect_to_peer）同步超时固定为 3 秒，timeout_ms 暂留作扩展
     (void)timeout_ms;
 
+    // 与 disconnect/并发 connect 互斥（缺陷背景：node_/peer_ 原在锁外写，并发
+    // connect 会各自建节点后写覆盖（旧节点泄漏），且连续两次启动驱动线程使
+    // joinable 线程对象被析构 → std::terminate）
+    std::lock_guard<std::mutex> call_lock(call_mutex_);
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
         if (connected_) {
@@ -73,10 +77,10 @@ bool SsnClient::connect(const std::string& peer_address, uint64_t timeout_ms) {
         return false;
     }
 
-    node_ = node;
-    peer_ = peer_address;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        node_ = node;
+        peer_ = peer_address;
         connected_ = true;
     }
     // 启动内部驱动线程（节点事件需 poll 驱动；首个 rpc_call/subscribe 之前
@@ -116,10 +120,15 @@ void SsnClient::disconnect() {
     if (poll_thread_.joinable()) {
         poll_thread_.join();
     }
-    if (node_) {
-        ssn_node_stop(node_);
-        ssn_node_destroy(node_);
+    ssn_node_t* node;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        node = node_;
         node_ = nullptr;
+    }
+    if (node) {
+        ssn_node_stop(node);
+        ssn_node_destroy(node);
     }
 }
 

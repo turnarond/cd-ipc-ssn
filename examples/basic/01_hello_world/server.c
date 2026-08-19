@@ -100,10 +100,11 @@ int main(void)
 
     // Run server for 10 seconds
     LOG_INFO("Server running for 10 seconds...");
+    /* 事件驱动循环：poll 阻塞至多 1 秒，有连接/消息事件立即返回处理，
+     * 避免 poll(100)+sleep(1) 的空转周期（约 1.1s）导致客户端连接握手超时 */
     int elapsed = 0;
     while (elapsed < 10) {
-        ssn_server_poll(server, 100);
-        sleep(1);
+        ssn_server_poll(server, 1000);
         elapsed++;
     }
 

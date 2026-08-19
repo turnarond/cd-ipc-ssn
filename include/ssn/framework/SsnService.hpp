@@ -18,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -61,9 +62,14 @@ public:
     // 抛出，SsnService::handleRpc 捕获后按框架错误码 1003（handler 异常）应答。
     template <typename Req, typename Resp, typename Fn>
     bool RegisterMethod(const std::string& url, Fn&& fn) {
+        // Resp 模板参数参与编译期类型约束：强制 handler 返回值可转换为 Resp，
+        // 避免「返回类型与 DTO 不匹配仍静默编译」破坏类型安全层契约
         return registerJson(url, [fn = std::forward<Fn>(fn)](const nlohmann::json& jreq) -> nlohmann::json {
             Req req = jreq.get<Req>();   // 反序列化失败 → 抛异常 → 框架捕获 → 1003
-            return fn(req);
+            static_assert(std::is_convertible_v<decltype(fn(req)), Resp>,
+                          "RegisterMethod: handler 返回值必须可转换为 Resp");
+            Resp resp = fn(req);         // 显式转换：类型不匹配在编译期报错
+            return resp;
         });
     }
 

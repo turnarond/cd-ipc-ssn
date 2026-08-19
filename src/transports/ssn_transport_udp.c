@@ -176,6 +176,10 @@ static int udp_transport_send(ssn_transport_t* transport,
                          sockaddr_ptr, sockaddr_len);
 
     if (sent < 0) {
+        /* EAGAIN/EWOULDBLOCK 是非阻塞发送的正常「缓冲区满」信号，不是错误 */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;
+        }
         LOG_ERROR("Failed to send UDP packet: %s", strerror(errno));
         transport->stats.send_errors++;
         return -1;

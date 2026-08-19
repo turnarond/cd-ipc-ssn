@@ -17,7 +17,7 @@ echo
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="${SCRIPT_DIR}/../.."
 
-# Build order
+# Build order（15 个 C 示例 + 4 个 C++ 框架示例 = 19 个，与 test/verify_examples.sh 对齐）
 EXAMPLE_DIRS=(
     "examples/basic/01_hello_world"
     "examples/basic/02_rpc_call"
@@ -34,6 +34,10 @@ EXAMPLE_DIRS=(
     "examples/node/02_node_comm"
     "examples/node/03_node_rpc"
     "examples/node/04_node_pubsub"
+    "examples/cpp/01_echo_service"
+    "examples/cpp/02_pubsub_chat"
+    "examples/cpp/03_robust_client"
+    "examples/cpp/04_concurrent_client"
 )
 
 total=${#EXAMPLE_DIRS[@]}

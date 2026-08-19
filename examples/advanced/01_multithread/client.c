@@ -5,6 +5,8 @@
  * make multiple concurrent RPC calls to a server.
  */
 
+#define _XOPEN_SOURCE 500 /* 启用 usleep 等 POSIX 接口（-std=c99 下需显式特性宏） */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,7 +98,7 @@ static void *client_thread(void *arg)
     int timeout = 5; // 5 seconds
     while (timeout > 0) {
         ssn_client_poll(client, 100);
-        sleep(1);
+        usleep(100000);
         timeout--;
     }
 
