@@ -24,7 +24,7 @@ namespace ssn {
 // 失败可观测性（稳定性加固 I4）：svc() 抛出异常被线程捕获后置失败标志，
 // failed() 返回 true（正常 requestShutdown 退出不置位）；activate 会复位
 // 失败标志，failed() 反映最近一次运行的结局
-class ServiceTask : public ServiceBase {
+class SSN_FRAMEWORK_API ServiceTask : public ServiceBase {
 public:
     ~ServiceTask() override;              // 兜底回收线程（requestShutdown + wait）
     bool activate(int num_threads = 1);  // 重复调用或已运行返回 false

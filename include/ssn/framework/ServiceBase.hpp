@@ -13,13 +13,15 @@
 
 #include <string>
 
+#include "ssn_export.h"
+
 namespace ssn {
 
 // 服务生命周期状态：Created → Initialized → Started → Stopped，
 // destroy 可将任意状态归位回 Created 以便重新初始化
 enum class ServiceState { Created, Initialized, Started, Stopped };
 
-class ServiceBase {
+class SSN_FRAMEWORK_API ServiceBase {
 public:
     ServiceBase();
     virtual ~ServiceBase();

@@ -192,6 +192,19 @@ target_include_directories(ssn_framework PUBLIC
 )
 target_link_libraries(ssn_framework ssn_transport pthread)
 
+# 框架库构建期定义导出宏（CXX_VISIBILITY_PRESET hidden 下公开类靠此导出）
+target_compile_definitions(ssn_framework PRIVATE SSN_BUILDING_FRAMEWORK=1)
+
+# 版本化 SONAME 与符号可见性（缺陷背景：原无 VERSION/SOVERSION，升级时新库
+# 直接覆盖旧文件无 ABI 保护；缺 CXX_VISIBILITY_PRESET 使 C++ 符号全量导出——
+# 与 ssn_transport 的治理策略对齐）
+set_target_properties(ssn_framework PROPERTIES
+    VERSION ${VERSION_STRING}
+    SOVERSION ${VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN 1
+)
+
 install(TARGETS ssn_framework
     EXPORT ssnTargets
     LIBRARY DESTINATION lib
