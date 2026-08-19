@@ -85,7 +85,11 @@ int main(void) {
     ssn_url_ref_t topic = { .url = "/demo", .url_len = 5 };
     ssn_node_subscribe(cli, "tcp://127.0.0.1:8888", &topic, on_msg, NULL, 5000);
 
-    // 发布消息（订阅已由 subscribe 同步建立）
+    // 发布前先 poll 服务端：让订阅握手在服务端生效（subscribe 只发出请求，
+    // 服务端需 poll 处理后订阅才建立，否则首条消息会丢失）
+    ssn_node_poll(srv, 100);
+
+    // 发布消息
     ssn_data_ref_t msg = { .data = "hello", .length = 5 };
     ssn_node_publish(srv, &topic, &msg);
 
