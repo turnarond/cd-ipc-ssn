@@ -1,4 +1,0 @@
-/mnt/d/personal/cd-ipc-ssn/examples/cmake_integration/build/CMakeFiles/hello_ssn.dir
-/mnt/d/personal/cd-ipc-ssn/examples/cmake_integration/build/CMakeFiles/hello_framework.dir
-/mnt/d/personal/cd-ipc-ssn/examples/cmake_integration/build/CMakeFiles/edit_cache.dir
-/mnt/d/personal/cd-ipc-ssn/examples/cmake_integration/build/CMakeFiles/rebuild_cache.dir

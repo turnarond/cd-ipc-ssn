@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/hello_framework.dir/main.cpp.o -o hello_framework  -Wl,-rpath,/tmp/ssn-pkg-B3DNDI/lib /tmp/ssn-pkg-B3DNDI/lib/libssn_framework.so /tmp/ssn-pkg-B3DNDI/lib/libssn_transport.so.2.4.4 -lpthread 
