@@ -137,18 +137,19 @@ ssn_node_t *ssn_node_create(const ssn_node_config_t *config)
             return NULL;
         }
     } else {
-        strncpy(node->node_id, config->node_id, sizeof(node->node_id) - 1);
+        /* snprintf 保证 NUL 终止（strncpy 源≥sizeof-1 时不追加 NUL，后续 LOG 越界读） */
+        snprintf(node->node_id, sizeof(node->node_id), "%s", config->node_id);
     }
 
     // Copy other identity information
     if (config->node_type[0]) {
-        strncpy(node->node_type, config->node_type, sizeof(node->node_type) - 1);
+        snprintf(node->node_type, sizeof(node->node_type), "%s", config->node_type);
     } else {
         strcpy(node->node_type, "unknown");
     }
 
     if (config->node_name[0]) {
-        strncpy(node->node_name, config->node_name, sizeof(node->node_name) - 1);
+        snprintf(node->node_name, sizeof(node->node_name), "%s", config->node_name);
     } else {
         strcpy(node->node_name, "node");
     }
@@ -490,24 +491,38 @@ int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms)
         return -1;
     }
 
+    /* 缺陷背景：原实现持 node->lock 调用 ssn_server_poll/ssn_client_poll，二者
+     * 内部触发用户回调（onmsg/RPC handler/应答回调），回调内调用任何 node API
+     * （publish/rpc_call/subscribe 等）都需取同一把非递归锁 → 自锁死锁。
+     * 修复：锁内仅快照 server/client 指针（并对 client 引用计数保活），
+     * 解锁后再调用 poll，回调在锁外执行。 */
+    ssn_server_t *server = NULL;
+    ssn_client_t *client = NULL;
+
     ipc_mutex_lock(node->lock);
-    
-    int result = 0;
-    
-    // Poll server events
-    if (node->server) {
-        result = ssn_server_poll(node->server, timeout_ms);
+    server = node->server;
+    client = node->client;
+    if (client) {
+        ssn_client_ref(client);
     }
-    
-    // Poll client events
-    if (node->client) {
-        int client_result = ssn_client_poll(node->client, timeout_ms);
+    ipc_mutex_unlock(node->lock);
+
+    int result = 0;
+
+    /* Poll server events */
+    if (server) {
+        result = ssn_server_poll(server, (int)timeout_ms);
+    }
+
+    /* Poll client events */
+    if (client) {
+        int client_result = ssn_client_poll(client, timeout_ms);
         if (client_result < 0) {
             result = client_result;
         }
+        ssn_client_unref(client);
     }
-    
-    ipc_mutex_unlock(node->lock);
+
     return result;
 }
 

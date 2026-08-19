@@ -541,6 +541,64 @@ static int test_slow_handshake_connect(void)
     return 0;
 }
 
+/* ---- Test 12: 超时/应答回调内再次调用 client API 不死锁（回归：持锁回调） ----
+ *
+ * 缺陷：ssn_client_timeout_all / process_events 超时分支 / unref 释放路径在持
+ *       client->lock 时直接调用用户回调，而回调内调用任何 ssn_client_* API
+ *       （call/disconnect 等）都需要获取同一把非递归锁 → 自锁死锁。
+ * 回归：RPC 应答回调内调用 ssn_client_is_connect（取锁）；RPC 超时回调内调用
+ *       ssn_client_disconnect（取锁）——均不得挂死。
+ */
+
+static volatile int g_cb_reentrant_ok = 0;
+
+static void rpc_reentrant_cb(ssn_client_t *client, ssn_header_t *ssn_hdr,
+                             ssn_data_ref_t *data, void *arg)
+{
+    (void)ssn_hdr; (void)data; (void)arg;
+    /* 回调内再次调用 client API：修复前此处自锁死锁 */
+    if (ssn_client_is_connect(client)) {
+        g_cb_reentrant_ok = 1;
+    }
+}
+
+static int test_callback_reentrant(void)
+{
+    printf("  Test 12: Callback reentrant (no self-deadlock)... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/reentrant");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        if (cli) ssn_client_close(cli); stop_test_server(srv, tid);
+        printf("FAIL (connect)\n"); return 1;
+    }
+
+    g_cb_reentrant_ok = 0;
+    const char *msg = "reentrant";
+    ssn_url_ref_t url = { .url = "/reentrant", .url_len = 10 };
+    ssn_data_ref_t req = { .data = (void*)msg, .length = 9 };
+
+    if (ssn_client_call(cli, &url, &req, rpc_reentrant_cb, NULL, TEST_TIMEOUT_MS) < 0) {
+        ssn_client_close(cli); stop_test_server(srv, tid);
+        printf("FAIL (call)\n"); return 1;
+    }
+
+    for (int i = 0; i < 10 && !g_cb_reentrant_ok; i++) {
+        ssn_client_poll(cli, 100);
+        usleep(50000);
+    }
+
+    int ok = g_cb_reentrant_ok;
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!ok) { printf("FAIL (callback deadlock or no reply)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -557,7 +615,8 @@ int main(void)
     failed += test_big_message_roundtrip();
     failed += test_connect_fail_fd_leak();
     failed += test_slow_handshake_connect();
+    failed += test_callback_reentrant();
 
-    printf("=== Result: %d/11 passed, %d failed ===\n", 11 - failed, failed);
+    printf("=== Result: %d/12 passed, %d failed ===\n", 12 - failed, failed);
     return failed ? 1 : 0;
 }

@@ -129,15 +129,26 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
 
     // 发送消息：循环处理部分写入（TCP 大包/慢对端/小 SO_SNDBUF 下 send 可能
     // 只发送部分字节，单次 send 返回后剩余数据必须补发，否则对端收到残缺帧）
+    /* EAGAIN 重试受 transport 发送超时约束：慢客户端/满缓冲区不应无限持锁阻塞
+     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS） */
+    int send_timeout_ms = transport->config.send_timeout_ms > 0 ?
+                          transport->config.send_timeout_ms : 5000;
+    uint64_t deadline_ms = (uint64_t)send_timeout_ms;
     size_t sent = 0;
     while (sent < pos) {
         send_len = ssn_transport_send(transport, buffer + sent, pos - sent);
         if (send_len > 0) {
             sent += (size_t)send_len;
         } else if (send_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            /* 非阻塞发送缓冲区满：短暂让步后重试（受 send_timeout_ms 约束） */
+            /* 非阻塞发送缓冲区满：受 deadline 约束让步重试，超时则放弃 */
+            if (deadline_ms == 0) {
+                LOG_ERROR("ssn send message failed: send timeout after %d ms",
+                          send_timeout_ms);
+                return false;
+            }
             struct timespec ts = { 0, 1000000 }; /* 1ms */
             nanosleep(&ts, NULL);
+            deadline_ms--;
             continue;
         } else {
             LOG_ERROR("ssn send message failed: send returned %zd (errno %d)",

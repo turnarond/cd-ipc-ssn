@@ -18,37 +18,45 @@
 
 ssn_protocol_ctx_t *ssn_protocol_create(ssn_role_t role, void *callback, void *arg)
 {
-    ssn_protocol_ctx_t *ctx = (ssn_protocol_ctx_t *)calloc(1, sizeof(ssn_protocol_ctx_t));
-    if (!ctx) {
-        LOG_ERROR("Failed to allocate protocol context");
+    /* 缺陷背景：原实现只分配基类大小，不创建 pending_pool/method_table 等
+     * 子类字段，工厂产物与子类 API（ssn_rpc_call/poll 等）混用必然崩溃。
+     * 修复：按角色创建真正的子类对象（回调适配到子类签名）。 */
+    ssn_protocol_ctx_t *ctx = NULL;
+
+    switch (role) {
+    case SSN_ROLE_REQ: {
+        ssn_rpc_reply_handler_t on_reply = (ssn_rpc_reply_handler_t)callback;
+        ctx = (ssn_protocol_ctx_t *)ssn_rpc_req_create(on_reply, arg);
+        break;
+    }
+    case SSN_ROLE_REP: {
+        ssn_rpc_handler_t on_request = (ssn_rpc_handler_t)callback;
+        ctx = (ssn_protocol_ctx_t *)ssn_rpc_rep_create(on_request, arg);
+        break;
+    }
+    case SSN_ROLE_SEND:
+        ctx = (ssn_protocol_ctx_t *)ssn_msg_send_create();
+        break;
+    case SSN_ROLE_RECV: {
+        ssn_msg_handler_t on_msg = (ssn_msg_handler_t)callback;
+        ctx = (ssn_protocol_ctx_t *)ssn_msg_recv_create(on_msg, arg);
+        break;
+    }
+    case SSN_ROLE_PUB:
+        ctx = (ssn_protocol_ctx_t *)ssn_pubsub_pub_create();
+        break;
+    case SSN_ROLE_SUB: {
+        ssn_pubsub_msg_handler_t on_msg = (ssn_pubsub_msg_handler_t)callback;
+        ctx = (ssn_protocol_ctx_t *)ssn_pubsub_sub_create(on_msg, arg);
+        break;
+    }
+    default:
+        LOG_ERROR("Invalid protocol role: %d", role);
         return NULL;
     }
 
-    ctx->role = role;
-    ctx->user_data = arg;
-
-    switch (role) {
-    case SSN_ROLE_REQ:
-        ctx->type = SSN_PROTOCOL_RPC;
-        break;
-    case SSN_ROLE_REP:
-        ctx->type = SSN_PROTOCOL_RPC;
-        break;
-    case SSN_ROLE_SEND:
-        ctx->type = SSN_PROTOCOL_MSG;
-        break;
-    case SSN_ROLE_RECV:
-        ctx->type = SSN_PROTOCOL_MSG;
-        break;
-    case SSN_ROLE_PUB:
-        ctx->type = SSN_PROTOCOL_PUBSUB;
-        break;
-    case SSN_ROLE_SUB:
-        ctx->type = SSN_PROTOCOL_PUBSUB;
-        break;
-    default:
-        LOG_ERROR("Invalid protocol role: %d", role);
-        free(ctx);
+    if (!ctx) {
+        LOG_ERROR("Failed to create protocol context for role %d", role);
         return NULL;
     }
 
@@ -62,11 +70,26 @@ void ssn_protocol_destroy(ssn_protocol_ctx_t *ctx)
         return;
     }
 
+    /* 子类 destroy 内部已 free(ctx)，基类不再重复 free（销毁职责归子类所有） */
     if (ctx->destroy) {
         ctx->destroy(ctx);
+    } else {
+        /* 无自定义销毁回调（子类创建时置 NULL）：按类型走子类 destroy */
+        switch (ctx->type) {
+        case SSN_PROTOCOL_RPC:
+            ssn_rpc_destroy(ctx);
+            break;
+        case SSN_PROTOCOL_PUBSUB:
+            ssn_pubsub_destroy(ctx);
+            break;
+        case SSN_PROTOCOL_MSG:
+            ssn_msg_destroy(ctx);
+            break;
+        default:
+            free(ctx);
+            break;
+        }
     }
-
-    free(ctx);
 }
 
 ssn_protocol_type_t ssn_protocol_get_type(ssn_protocol_ctx_t *ctx)
