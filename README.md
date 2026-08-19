@@ -4,6 +4,8 @@
 
 SSN (Scalable Socket Network) is a lightweight inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
 
+> 📖 **在线文档**：<https://turnarond.github.io/cd-ipc-ssn/>（docsify 文档站，含全文搜索；源码见 `docs/`）
+
 ## 目录
 
 - [快速开始](#快速开始)

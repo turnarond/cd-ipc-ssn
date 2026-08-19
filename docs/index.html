@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>SSN 文档中心</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SSN（Scalable Socket Network）轻量级 IPC/分布式通信框架文档">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.$docsify = {
+      // 站点根即 docs/ 目录：README.md（文档总索引）为首页，_sidebar.md 为侧边栏
+      name: 'SSN',
+      repo: 'https://github.com/turnarond/cd-ipc-ssn',
+      loadSidebar: true,
+      subMaxLevel: 3,
+      maxLevel: 4,
+      search: 'auto',
+      formatUpdated: '{YYYY}-{MM}-{DD}',
+      autoHeader: true
+    }
+  </script>
+  <!-- docsify 核心 -->
+  <script src="//cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+  <!-- 全文搜索插件 -->
+  <script src="//cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+</body>
+</html>

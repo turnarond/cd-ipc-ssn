@@ -1,5 +1,6 @@
 #!/bin/bash
 # 验证全部 19 个示例目录构建（15 个 C 示例 + 4 个 C++ 框架示例）
+# + find_package(ssn) 集成（cmake_integration 消费示例）
 # 以脚本位置定位仓库根目录（与调用时的 cwd 无关）
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -56,4 +57,23 @@ else
 fi
 
 echo "RESULT: $ok ok, $fail failed (build); smoke: $((smoke_ok)) ok, $((smoke_fail)) failed"
-[ "$fail" -eq 0 ] && [ "$smoke_fail" -eq 0 ]
+
+# find_package(ssn) 集成验证：安装到临时前缀 → 消费工程（cmake_integration）
+# 配置/构建/运行（C 库与 C++ 框架双消费者）。失败视为整体失败。
+pkg_ok=1
+pkg_prefix="$(mktemp -d /tmp/ssn-pkg-XXXXXX)"
+if cmake --install build --prefix "$pkg_prefix" >/dev/null 2>&1 \
+   && (cd examples/cmake_integration \
+       && rm -rf build \
+       && cmake -S . -B build -DCMAKE_PREFIX_PATH="$pkg_prefix" >/dev/null 2>&1 \
+       && cmake --build build >/dev/null 2>&1 \
+       && LD_LIBRARY_PATH="$pkg_prefix/lib" ./build/hello_ssn >/dev/null 2>&1 \
+       && LD_LIBRARY_PATH="$pkg_prefix/lib" ./build/hello_framework >/dev/null 2>&1); then
+    echo "PKG PASS: find_package(ssn) 集成（C + C++ 消费者）"
+else
+    pkg_ok=0
+    echo "PKG FAIL: find_package(ssn) 集成"
+fi
+rm -rf "$pkg_prefix"
+
+[ "$fail" -eq 0 ] && [ "$smoke_fail" -eq 0 ] && [ "$pkg_ok" -eq 1 ]

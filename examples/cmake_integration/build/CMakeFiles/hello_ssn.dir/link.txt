@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/hello_ssn.dir/main.c.o -o hello_ssn  -Wl,-rpath,/tmp/ssn-pkg-B3DNDI/lib /tmp/ssn-pkg-B3DNDI/lib/libssn_transport.so.2.4.4 -lpthread 
