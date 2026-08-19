@@ -98,9 +98,8 @@ int main(void)
     LOG_INFO("Running for 15 seconds...");
     int count = 0;
     while (count < 15) {
-        // Poll for messages
+        // Poll for messages（poll 阻塞至多 1 秒，有消息立即返回处理）
         ssn_client_poll(client, 1000);
-        sleep(1);
         count++;
     }
 

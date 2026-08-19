@@ -702,9 +702,20 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 
     // 重试接收，处理非阻塞套接字的 EAGAIN 错误
     int retries = 0;
-    const int max_retries = 5;
+    /* 重试预算与用户传入的 connect 超时对齐（默认 3s）。缺陷背景：文档化服务端
+     * 事件循环（poll + sleep，见 examples/ 各 server）下握手需 ≥2 个 poll 周期
+     * （accept 一轮 + SERVICE_INFO 应答一轮），固定 5×100ms=500ms 的旧预算会在
+     * 服务端应答前超时，导致用户按示例/教程运行必然连接失败（用户旅程回归）。
+     * 每次重试等待 retry_delay_ms，总预算 = connect_timeout_ms（下限 500ms
+     * 保持旧行为兼容，上限 6s 防止极端值长时间挂起）。 */
     const int retry_delay_ms = 100;
-    
+    int max_retries = config.connect_timeout_ms / retry_delay_ms;
+    if (max_retries < 5) {
+        max_retries = 5;
+    } else if (max_retries > 60) {
+        max_retries = 60;
+    }
+
     while (retries < max_retries) {
         num = ssn_transport_recv(client->transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
         

@@ -4,6 +4,8 @@
  * This example demonstrates how to use publish/subscribe functionality between nodes in the node abstraction layer.
  */
 
+#define _XOPEN_SOURCE 500 /* 启用 usleep 等 POSIX 接口（-std=c99 下需显式特性宏） */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -241,7 +243,6 @@ static bool test_node_pubsub(void)
 
     // Wait for message to be delivered
     sleep(1);
-
     // Publish weather message
     LOG_INFO("Publisher publishing to /weather: Today's weather is sunny");
     ssn_data_ref_t weather_data = {
@@ -266,7 +267,7 @@ static bool test_node_pubsub(void)
         ssn_node_poll(publisher_node, 100);
         ssn_node_poll(subscriber1_node, 100);
         ssn_node_poll(subscriber2_node, 100);
-        sleep(1);
+        usleep(100000);
         timeout--;
     }
 

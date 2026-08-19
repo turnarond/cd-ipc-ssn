@@ -36,18 +36,29 @@ cmake .. && make -j$(nproc)
 ### 第一个应用
 
 ```c
+#include <stdio.h>
+#include <pthread.h>
 #include "node/ssn_node.h"
 #include "version/ssn_version.h"
 
 static void on_msg(ssn_client_t *cli, ssn_url_ref_t *url,
                    ssn_data_ref_t *data, void *arg) {
+    (void)cli; (void)url; (void)arg;
     printf("Received: %.*s\n", (int)data->length, (char*)data->data);
+}
+
+/* 服务端节点的事件循环必须在独立线程中驱动（poll 处理连接握手/订阅/消息分发） */
+static volatile int g_srv_running = 1;
+static void *srv_poll_thread(void *arg) {
+    ssn_node_t *srv = (ssn_node_t *)arg;
+    while (g_srv_running) ssn_node_poll(srv, 100);
+    return NULL;
 }
 
 int main(void) {
     printf("ssn version: %s\n", ssn_version_get_string());
 
-    // 创建服务端节点
+    // 创建并启动服务端节点
     ssn_node_config_t srv_cfg = {
         .node_type = "server", .node_name = "demo-server",
         .listen_address = "127.0.0.1", .listen_port = 8888,
@@ -55,8 +66,10 @@ int main(void) {
     };
     ssn_node_t *srv = ssn_node_create(&srv_cfg);
     ssn_node_start(srv);
+    pthread_t srv_tid;
+    pthread_create(&srv_tid, NULL, srv_poll_thread, srv);
 
-    // 创建客户端节点并订阅
+    // 创建并启动客户端节点
     ssn_node_config_t cli_cfg = {
         .node_type = "client", .node_name = "demo-client",
         .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_PUBSUB
@@ -64,21 +77,38 @@ int main(void) {
     ssn_node_t *cli = ssn_node_create(&cli_cfg);
     ssn_node_start(cli);
 
+    // 订阅主题
     ssn_url_ref_t topic = { .url = "/demo", .url_len = 5 };
     ssn_node_subscribe(cli, "tcp://127.0.0.1:8888", &topic, on_msg, NULL, 5000);
 
-    // 发布消息
+    // 发布消息（订阅已由 subscribe 同步建立）
     ssn_data_ref_t msg = { .data = "hello", .length = 5 };
     ssn_node_publish(srv, &topic, &msg);
 
-    // 轮询接收
-    ssn_node_poll(cli, 1000);
+    // 轮询接收（客户端节点的事件循环也由 poll 驱动；无事件时每次阻塞至多 100ms）
+    for (int i = 0; i < 10; i++) {
+        ssn_node_poll(cli, 100);
+    }
 
     ssn_node_stop(cli); ssn_node_destroy(cli);
+    g_srv_running = 0; pthread_join(srv_tid, NULL);
     ssn_node_stop(srv); ssn_node_destroy(srv);
     return 0;
 }
 ```
+
+编译运行（产物为 `libssn_transport.so`，位于 `build/`）：
+
+```bash
+gcc -std=c99 -Wall -I src -o demo demo.c -L build -lssn_transport -lpthread \
+    -Wl,-rpath,$PWD/build
+./demo
+```
+
+> 提示：节点（`ssn_node_*`）与客户端/服务端（`ssn_client_*` / `ssn_server_*`）均为
+> **事件循环驱动**——必须周期性调用 `ssn_node_poll` / `ssn_client_poll` /
+> `ssn_server_poll`（或在独立线程中轮询），连接握手、消息收发与回调才会发生。
+> 完整可运行示例见 `examples/`（`bash test/verify_examples.sh` 可构建全部 19 个）。
 
 ### C++ 服务框架（v2.4.0）
 

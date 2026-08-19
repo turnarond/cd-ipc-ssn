@@ -101,10 +101,10 @@ int main(void)
 
     // Wait for subscribers to connect
     LOG_INFO("Waiting for subscribers to connect...");
+    /* 事件驱动循环：poll 阻塞至多 1 秒，订阅连接事件立即返回处理 */
     int wait_time = 5;
     while (wait_time > 0) {
-        ssn_server_poll(server, 100);
-        sleep(1);
+        ssn_server_poll(server, 1000);
         wait_time--;
     }
 
@@ -135,8 +135,7 @@ int main(void)
     LOG_INFO("\nWaiting for messages to be delivered...");
     int deliver_time = 5;
     while (deliver_time > 0) {
-        ssn_server_poll(server, 100);
-        sleep(1);
+        ssn_server_poll(server, 1000);
         deliver_time--;
     }
 

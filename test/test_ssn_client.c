@@ -492,6 +492,55 @@ static int test_connect_fail_fd_leak(void)
     return 0;
 }
 
+/* ---- Test 11: 慢握手服务端（回归：connect 重试预算 vs 文档化事件循环周期） ----
+ *
+ * 缺陷：ssn_client_connect 的握手应答 recv 重试预算仅 5×100ms=500ms，而文档化
+ *       服务端事件循环（poll(100)+sleep(1)≈1.1s 周期，见 examples/ 各 server）
+ *       下握手需 ≥2 个 poll 周期（accept 一轮 + SERVICE_INFO 应答一轮）≈2.2s，
+ *       客户端必然在服务端应答前超时失败（用户旅程实测 26 次全失败）。
+ * 回归：慢事件循环服务端（0.5s 周期，握手约 1s）下，connect(timeout=3s) 仍成功。
+ */
+
+static void *slow_server_thread(void *arg)
+{
+    ssn_server_t *srv = (ssn_server_t *)arg;
+    while (g_srv_running) {
+        ssn_server_poll(srv, 100);
+        usleep(600000); /* 模拟文档化事件循环的 sleep：约 0.7s 周期，
+                         * 握手 ≥2 周期 ≈1.4s，远超 connect 500ms 预算 */
+    }
+    return NULL;
+}
+
+static int test_slow_handshake_connect(void)
+{
+    printf("  Test 11: Slow-handshake connect... ");
+
+    ssn_server_t *srv = ssn_server_create(TEST_SERVER_ADDR);
+    if (!srv) { printf("FAIL (server create)\n"); return 1; }
+    if (!ssn_server_start(srv)) {
+        ssn_server_destroy(srv);
+        printf("FAIL (server start)\n"); return 1;
+    }
+    g_srv_running = 1;
+    pthread_t tid;
+    pthread_create(&tid, NULL, slow_server_thread, srv);
+
+    ssn_client_t *cli = ssn_client_create();
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    bool ok = (cli != NULL) && ssn_client_connect(cli, TEST_SERVER_ADDR, &ts);
+
+    if (cli) ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!ok) {
+        printf("FAIL (connect timed out vs slow handshake)\n");
+        return 1;
+    }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -507,7 +556,8 @@ int main(void)
     failed += test_set_on_message_subscribe();
     failed += test_big_message_roundtrip();
     failed += test_connect_fail_fd_leak();
+    failed += test_slow_handshake_connect();
 
-    printf("=== Result: %d/10 passed, %d failed ===\n", 10 - failed, failed);
+    printf("=== Result: %d/11 passed, %d failed ===\n", 11 - failed, failed);
     return failed ? 1 : 0;
 }

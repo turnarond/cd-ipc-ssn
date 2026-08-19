@@ -4,6 +4,8 @@
  * This example demonstrates how nodes can communicate with each other using the node abstraction layer.
  */
 
+#define _XOPEN_SOURCE 500 /* 启用 usleep 等 POSIX 接口（-std=c99 下需显式特性宏） */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -199,10 +201,10 @@ static bool test_node_communication(void)
     LOG_INFO("Waiting for communication to complete...");
     int timeout = 10; // 10 seconds
     while (timeout > 0 && (!g_message_received || !g_reply_received)) {
-        // Poll for events
+        // Poll for events（100ms 让步，避免 1.1s 空转周期拖慢握手/应答）
         ssn_node_poll(node_a, 100);
         ssn_node_poll(node_b, 100);
-        sleep(1);
+        usleep(100000);
         timeout--;
     }
 

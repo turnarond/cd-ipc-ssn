@@ -4,6 +4,8 @@
  * This example demonstrates how to use RPC (Remote Procedure Call) between nodes in the node abstraction layer.
  */
 
+#define _XOPEN_SOURCE 500 /* 启用 usleep 等 POSIX 接口（-std=c99 下需显式特性宏） */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -257,7 +259,7 @@ static bool test_node_rpc(void)
     while (timeout > 0 && !g_rpc_complete) {
         ssn_node_poll(client_node, 100);
         ssn_node_poll(server_node, 100);
-        sleep(1);
+        usleep(100000);
         timeout--;
     }
 
@@ -298,7 +300,7 @@ static bool test_node_rpc(void)
     while (timeout > 0 && !g_rpc_complete) {
         ssn_node_poll(client_node, 100);
         ssn_node_poll(server_node, 100);
-        sleep(1);
+        usleep(100000);
         timeout--;
     }
 
