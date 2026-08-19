@@ -23,7 +23,7 @@ ssn_msg_send_t *ssn_msg_send_create(void)
 
     send->base.role = SSN_ROLE_SEND;
     send->base.type = SSN_PROTOCOL_MSG;
-    send->base.destroy = NULL;
+    send->base.destroy = ssn_msg_destroy;   /* 销毁职责由 destroy 回调承载 */
     send->next_seqno = 1;
 
     LOG_DEBUG("Created message sender context");
@@ -42,7 +42,7 @@ ssn_msg_recv_t *ssn_msg_recv_create(
 
     recv->base.role = SSN_ROLE_RECV;
     recv->base.type = SSN_PROTOCOL_MSG;
-    recv->base.destroy = NULL;
+    recv->base.destroy = ssn_msg_destroy;   /* 销毁职责由 destroy 回调承载 */
     recv->on_message = on_message;
     recv->user_arg = arg;
 
