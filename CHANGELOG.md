@@ -2,6 +2,40 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.4.4] - 2026-08-19
+
+### Fixed
+- **用户旅程**：C 示例/教程事件循环空转周期导致客户端连接必然失败——`ssn_client_connect`
+  握手重试预算对齐 connect 超时（默认 3s，原固定 500ms）；全部 C 示例事件循环改为事件
+  驱动 poll（消除 poll+sleep 空转）；README 第一个应用重写（补服务端 poll/编译命令）
+- **线程安全（回归 Test 12）**：client 超时/应答/释放路径回调移出锁外（回调内再调 API
+  不再自锁死锁）；sub_handlers 增删查加锁；get_pending 改快照拷贝（TOCTOU）；transport
+  读写统一加锁；node_poll 解锁执行回调 + node_comm 锁序修复；server 引用计数延迟释放
+  （回调中 destroy 无 UAF）+ 发送改非阻塞（慢客户端不再拖垮事件循环）
+- **传输层**：TCP6/UDP6 地址解析支持 `[::1]:port` 方括号格式（原 strchr 取首个冒号
+  必失败）；TCP6 listen bind 改用 addr6；非阻塞 connect 补 SO_ERROR 检查（拒连不再
+  误报成功）；tcp/unix/udp send 的 EAGAIN 不再误判错误
+- **线协议**：`ssn_send_message` 长度预校验（防截断写头部）+ 循环发送处理部分写入 +
+  EAGAIN 有界重试
+- **协议层**：RPC 超时实现（pending 槽不再永久占用，触发超时回调）；协议工厂创建完整
+  子类对象（混用不再崩溃）
+- **C++ 框架**：SsnClient connect 数据竞争（并发 connect 不再 std::terminate/节点泄漏）；
+  RegisterMethod 增加 Resp 编译期类型约束
+- **工具脚本**：run_examples.sh 路径补 examples/ 前缀（原全部判「目录不存在」）+ 两脚本
+  转 LF；build_examples.sh 补 4 个 C++ 示例（15→19）；verify_examples.sh 增加
+  hello_world 运行冒烟
+- **strncpy 溢出**：server ifname/srv_name、node node_id/node_type/node_name 改 snprintf
+  （防越界写与非 NUL 终止越界读）
+
+### Changed
+- 文档全仓数字同步：自动化 14 套件 625 例（原 13/14/7 并存）、19 个示例（原 15/17/19
+  并存）、example_client 12 例（原 5/8/9/10 四个值）
+- 白皮书 QoS/节点发现「已实现」→「仅预留能力位/愿景」；3.2/3.3 设计稿标注现状声明；
+  DDS 路线阶段 1 顺延 2.5.0 起（原 2.4.0 已过期）
+- 使用手册/快速上手/C++ 指南教程模板修正：pause()/sleep 替代 poll 的模板改为事件循环、
+  订阅回调 %s→%.*s、subscribe 语义、Run 信号还原、SsnClient connect 语义
+- 架构设计总览/协议层模块化设计补现状声明（设计稿/预留用途标注）
+
 ## [2.4.3] - 2026-08-19
 
 ### Fixed
