@@ -30,7 +30,7 @@ TESTS=(
     test_protocol             # 协议层（25 用例）
     test_protocol_integration # 协议集成（19 用例）
     example_server            # 服务端 API 功能测试（7 用例）
-    example_client            # 客户端 API 功能测试（9 用例）
+    example_client            # 客户端 API 功能测试（10 用例）
 )
 
 # C++ 服务框架套件（v2.4.0，自包含测试，无需外部服务端）

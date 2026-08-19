@@ -476,6 +476,11 @@ static int test_connect_fail_fd_leak(void)
         /* 连接不存在的服务端 → connect 失败路径（transport 创建 + 重建） */
         ssn_client_connect(cli, "tcp://127.0.0.1:18949", &ts);
         ssn_client_close(cli);
+        /* UDP 路径同源泄漏回归（udp connect 重建 socket 覆盖构造 fd） */
+        ssn_client_t *uc = ssn_client_create();
+        if (!uc) { printf("FAIL (create udp)\n"); return 1; }
+        ssn_client_connect(uc, "udp://127.0.0.1:18949", &ts);
+        ssn_client_close(uc);
     }
 
     int after = fd_count();
