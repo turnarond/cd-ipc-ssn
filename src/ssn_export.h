@@ -24,6 +24,14 @@ extern "C" {
 #define SSN_API __attribute__((visibility("default")))
 #endif
 
+/* C++ 服务框架导出宏：libssn_framework 用 CXX_VISIBILITY_PRESET hidden，
+ * 公开类必须显式标记导出（与 ssn_transport 的可见性策略对齐） */
+#ifdef SSN_BUILDING_FRAMEWORK
+#define SSN_FRAMEWORK_API __attribute__((visibility("default")))
+#else
+#define SSN_FRAMEWORK_API __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -42,7 +42,7 @@ namespace ssn {
 // 生命周期约束（Issue #5-4）：stop()/destroy() 后不得调用 publish/unregister
 //（node_ 已销毁；publish 内部对 node_ 空指针有守卫但非原子——与延迟调用
 // 存在 TOCTOU 窗口，属文档约束而非代码保证）。
-class SsnService : public ServiceTask {
+class SSN_FRAMEWORK_API SsnService : public ServiceTask {
 public:
     SsnService();
     ~SsnService() override;
