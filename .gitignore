@@ -26,3 +26,6 @@ examples/*/*/robust_server
 examples/*/*/robust_client
 examples/*/*/concurrent_server
 examples/*/*/concurrent_client
+
+# cmake_integration 消费示例构建产物
+examples/cmake_integration/build/

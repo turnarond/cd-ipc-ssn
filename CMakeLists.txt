@@ -38,8 +38,8 @@ set(IPC_SOURCES
 
 # 版本信息
 set(VERSION_MAJOR 2)
-set(VERSION_MINOR 4)
-set(VERSION_PATCH 4)
+set(VERSION_MINOR 5)
+set(VERSION_PATCH 0)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 # 创建动态库
@@ -59,16 +59,44 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # 定义构建库时的宏
 target_compile_definitions(${PROJECT_NAME} PRIVATE SSN_BUILDING_LIBRARY=1)
 
+# include 目录区分构建期与安装期：源码树内用 src/，安装后消费者以
+# <prefix>/include 为根（相对引用链 node/、transports/、util/、vsi/ 均随安装分发）
 target_include_directories(${PROJECT_NAME} PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
 )
 
 target_link_libraries(${PROJECT_NAME} pthread)
 
+# 导出目标（find_package(ssn) 使用）：ssn::ssn_transport / ssn::ssn_framework
 install(TARGETS ${PROJECT_NAME}
+    EXPORT ssnTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
+)
+
+install(EXPORT ssnTargets
+    FILE ssnTargets.cmake
+    NAMESPACE ssn::
+    DESTINATION lib/cmake/ssn
+)
+
+# 包配置文件：find_package(ssn) 入口
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/ssnConfigVersion.cmake"
+    VERSION ${VERSION_STRING}
+    COMPATIBILITY SameMajorVersion
+)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ssnConfig.cmake"
+"include(CMakeFindDependencyMacro)
+include(\"\${CMAKE_CURRENT_LIST_DIR}/ssnTargets.cmake\")
+")
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/ssnConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/ssnConfigVersion.cmake"
+    DESTINATION lib/cmake/ssn
 )
 
 install(FILES src/ssn_export.h
@@ -158,12 +186,14 @@ add_library(ssn_framework SHARED
 
 target_compile_features(ssn_framework PUBLIC cxx_std_17)
 target_include_directories(ssn_framework PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party>
+    $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(ssn_framework ssn_transport pthread)
 
 install(TARGETS ssn_framework
+    EXPORT ssnTargets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

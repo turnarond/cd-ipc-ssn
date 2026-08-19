@@ -2,6 +2,30 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.0] - 2026-08-20
+
+### Added
+- **CMake 包配置（find_package）**：`install(EXPORT ssnTargets)` 导出
+  `ssn::ssn_transport` / `ssn::ssn_framework` 目标，生成并安装
+  `ssnConfig.cmake` / `ssnConfigVersion.cmake`——CMake 项目可
+  `find_package(ssn REQUIRED)` 后直接 `target_link_libraries(... ssn::ssn_transport)`
+  集成；include 目录改为 BUILD/INSTALL_INTERFACE 分离（安装后以 `<prefix>/include`
+  为根，源码树内仍用 `src/`）
+- **CI 持续集成**：`.github/workflows/ci.yml`——Ubuntu 构建 + 全量 14 套件 +
+  `verify_examples.sh`（19 示例 + hello_world 冒烟 + find_package 集成验证），
+  push 到 main/feature/*/fix/* 与 PR 触发
+- **docsify 文档网站**：`docs/index.html` + `_sidebar.md` 零改写接入现有 39 篇文档
+  （全文搜索、侧边栏导航），`.github/workflows/pages.yml` 自动部署 GitHub Pages；
+  `docs/03-设计`、`06-使用手册`、`07-测试方案`、`09-归档` 补目录索引 README
+- **集成示例**：`examples/cmake_integration/`（C 库 + C++ 框架双消费者，
+  展示安装后 find_package 用法）
+
+### Changed
+- `test/verify_examples.sh` 增加 find_package 集成验证（安装临时前缀 → 消费工程
+  配置/构建/运行，C 与 C++ 双消费者）；`.gitignore` 补 cmake_integration 构建产物
+- DDS 演进路线顺延：阶段 1（DCPS 概念模型）目标 2.6.0、阶段 2 2.7.0、阶段 3 2.8.0
+  （原 2.5.0 起点被本次工程化版本占用）
+
 ## [2.4.4] - 2026-08-19
 
 ### Fixed

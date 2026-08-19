@@ -1,0 +1,44 @@
+# GitHub Pages 部署：docsify 文档站（直接发布 docs/ 目录）
+#
+# 触发：push 到 main（含 tag 推送）
+# 前置：仓库 Settings → Pages → Source 选择 "GitHub Actions"
+# 站点：https://<owner>.github.io/cd-ipc-ssn/
+
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 部署 docsify 文档站
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 docs/ 为站点内容
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
