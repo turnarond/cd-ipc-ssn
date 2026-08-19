@@ -9,7 +9,8 @@
 #define SSN_HASH_TABLE_LOAD_FACTOR 0.75
 
 typedef struct hash_node {
-    uintptr_t key;
+    uintptr_t key;               /* 整数/指针键（字符串键时未用） */
+    char* str_key;               /* 字符串键（表内复制持有；NULL 表示非字符串键） */
     void* value;
     struct hash_node* next;
 } hash_node_t;
@@ -68,6 +69,9 @@ void ssn_hash_table_destroy(ssn_hash_table_t* table)
         hash_node_t* node = table->buckets[i];
         while (node) {
             hash_node_t* next = node->next;
+            if (node->str_key) {
+                free(node->str_key);
+            }
             free(node);
             node = next;
         }
@@ -95,7 +99,10 @@ bool ssn_hash_table_set(ssn_hash_table_t* table, void* key, void* value)
             hash_node_t* node = table->buckets[i];
             while (node) {
                 hash_node_t* next = node->next;
-                uint32_t hash = hash_uint32((uint32_t)node->key);
+                /* 字符串键节点按内容重哈希（key 字段为 0 不可用） */
+                uint32_t hash = node->str_key
+                    ? ssn_hash_string(node->str_key)
+                    : hash_uint32((uint32_t)node->key);
                 size_t index = hash % new_capacity;
                 node->next = new_buckets[index];
                 new_buckets[index] = node;
@@ -197,6 +204,107 @@ bool ssn_hash_table_contains(ssn_hash_table_t* table, const void* key)
     return ssn_hash_table_get(table, key) != NULL;
 }
 
+/* ---- 字符串键 API：按内容哈希与比较，key 由节点复制持有 ---- */
+
+static size_t str_hash_index(const char* key, size_t capacity)
+{
+    return (size_t)(ssn_hash_string(key) % capacity);
+}
+
+bool ssn_hash_table_set_str(ssn_hash_table_t* table, const char* key, void* value)
+{
+    if (!table || !key) {
+        return false;
+    }
+
+    size_t index = str_hash_index(key, table->capacity);
+    hash_node_t* node = table->buckets[index];
+
+    /* 已存在同名键：更新值（key 不变） */
+    while (node) {
+        if (node->str_key && strcmp(node->str_key, key) == 0) {
+            node->value = value;
+            return true;
+        }
+        node = node->next;
+    }
+
+    /* 新增节点：复制 key（表内生命周期独立于调用方 buffer） */
+    hash_node_t* new_node = (hash_node_t*)malloc(sizeof(hash_node_t));
+    if (!new_node) {
+        return false;
+    }
+    new_node->str_key = strdup(key);
+    if (!new_node->str_key) {
+        free(new_node);
+        return false;
+    }
+    new_node->key = 0;
+    new_node->value = value;
+    new_node->next = table->buckets[index];
+    table->buckets[index] = new_node;
+    table->size++;
+
+    return true;
+}
+
+void* ssn_hash_table_get_str(ssn_hash_table_t* table, const char* key)
+{
+    if (!table || !key) {
+        return NULL;
+    }
+
+    size_t index = str_hash_index(key, table->capacity);
+    hash_node_t* node = table->buckets[index];
+    while (node) {
+        if (node->str_key && strcmp(node->str_key, key) == 0) {
+            return node->value;
+        }
+        node = node->next;
+    }
+    return NULL;
+}
+
+bool ssn_hash_table_remove_str(ssn_hash_table_t* table, const char* key)
+{
+    if (!table || !key) {
+        return false;
+    }
+
+    size_t index = str_hash_index(key, table->capacity);
+    hash_node_t* node = table->buckets[index];
+    hash_node_t* prev = NULL;
+
+    while (node) {
+        if (node->str_key && strcmp(node->str_key, key) == 0) {
+            break;
+        }
+        prev = node;
+        node = node->next;
+    }
+
+    if (!node) {
+        return false;
+    }
+
+    if (prev) {
+        prev->next = node->next;
+    } else {
+        table->buckets[index] = node->next;
+    }
+
+    free(node->str_key);
+    free(node);
+    table->size--;
+
+    return true;
+}
+
+bool ssn_hash_table_contains_str(ssn_hash_table_t* table, const char* key)
+{
+    return ssn_hash_table_get_str(table, key) != NULL;
+}
+
 size_t ssn_hash_table_size(const ssn_hash_table_t* table)
 {
     return table ? table->size : 0;
@@ -223,7 +331,10 @@ void ssn_hash_table_foreach(ssn_hash_table_t* table,
     for (size_t i = 0; i < table->capacity; i++) {
         hash_node_t* node = table->buckets[i];
         while (node) {
-            if (!callback((void*)node->key, node->value, user_data)) {
+            /* 字符串键节点回调其内容键（str_key），其余回调原始 key */
+            void* cb_key = node->str_key ? (void*)node->str_key
+                                         : (void*)node->key;
+            if (!callback(cb_key, node->value, user_data)) {
                 return;
             }
             node = node->next;
