@@ -166,11 +166,17 @@ int ssn_rpc_register(ssn_rpc_rep_t *rep, const char *method_name,
         return -1;
     }
 
-    strncpy(entry->method_name, method_name, sizeof(entry->method_name) - 1);
+    snprintf(entry->method_name, sizeof(entry->method_name), "%s", method_name);
     entry->handler = handler;
     entry->arg = arg;
 
-    ssn_hash_table_set(rep->method_table, (void *)method_name, entry);
+    /* 字符串键 API：按内容哈希 + 表内复制 key（缺陷背景：原按指针比较，
+     * 内容相同地址不同的字符串注销静默失败、重复注册旧 entry 泄漏） */
+    if (!ssn_hash_table_set_str(rep->method_table, method_name, entry)) {
+        LOG_ERROR("Failed to register method (hash set): %s", method_name);
+        free(entry);
+        return -1;
+    }
     rep->method_count++;
 
     LOG_DEBUG("Registered RPC method: %s", method_name);
@@ -183,9 +189,9 @@ int ssn_rpc_unregister(ssn_rpc_rep_t *rep, const char *method_name)
         return -1;
     }
 
-    rpc_method_entry_t *entry = (rpc_method_entry_t *)ssn_hash_table_get(rep->method_table, method_name);
+    rpc_method_entry_t *entry = (rpc_method_entry_t *)ssn_hash_table_get_str(rep->method_table, method_name);
     if (entry) {
-        ssn_hash_table_remove(rep->method_table, method_name);
+        ssn_hash_table_remove_str(rep->method_table, method_name);
         free(entry);
         rep->method_count--;
         return 0;

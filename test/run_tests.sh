@@ -29,9 +29,10 @@ TESTS=(
     test_node                 # 节点完整（6 用例）
     test_protocol             # 协议层（25 断言）
     test_protocol_integration # 协议集成（19 用例）
-    example_server            # 服务端 API 功能测试（8 用例）
+    example_server            # 服务端 API 功能测试（9 用例，含握手竞态回归）
     example_client            # 客户端 API 功能测试（12 用例）
     test_cliauto              # 自动重连客户端（19 断言，keepalive/断线检测）
+    test_hash_table           # 哈希表（50 断言，含字符串键回归）
 )
 
 # C++ 服务框架套件（v2.4.0，自包含测试，无需外部服务端）

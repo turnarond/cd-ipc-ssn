@@ -143,9 +143,15 @@ int ssn_pubsub_sub_subscribe(ssn_pubsub_sub_t *ctx, const char *topic)
     }
 
     strncpy(entry->topic, topic, sizeof(entry->topic) - 1);
+    entry->topic[sizeof(entry->topic) - 1] = '\0';
     entry->subscribed = true;
 
-    ssn_hash_table_set(ctx->topic_table, (void *)topic, entry);
+    /* 字符串键 API：内容哈希 + 表内复制 key（缺陷背景：原按指针比较） */
+    if (!ssn_hash_table_set_str(ctx->topic_table, topic, entry)) {
+        LOG_ERROR("Failed to subscribe (hash set): %s", topic);
+        free(entry);
+        return -1;
+    }
     ctx->topic_count++;
 
     uint8_t sendbuf[SSN_MAX_PACKET_SIZE];
@@ -158,7 +164,7 @@ int ssn_pubsub_sub_subscribe(ssn_pubsub_sub_t *ctx, const char *topic)
 
     if (!ssn_send_message(ctx->base.transport, header, &url_ref, NULL)) {
         LOG_ERROR("Failed to send subscribe message");
-        ssn_hash_table_remove(ctx->topic_table, topic);
+        ssn_hash_table_remove_str(ctx->topic_table, topic);
         free(entry);
         ctx->topic_count--;
         return -1;
@@ -174,7 +180,7 @@ int ssn_pubsub_sub_unsubscribe(ssn_pubsub_sub_t *ctx, const char *topic)
         return -1;
     }
 
-    pubsub_sub_entry_t *entry = (pubsub_sub_entry_t *)ssn_hash_table_get(ctx->topic_table, topic);
+    pubsub_sub_entry_t *entry = (pubsub_sub_entry_t *)ssn_hash_table_get_str(ctx->topic_table, topic);
     if (entry) {
         if (ctx->base.transport) {
             uint8_t sendbuf[SSN_MAX_PACKET_SIZE];
@@ -188,7 +194,7 @@ int ssn_pubsub_sub_unsubscribe(ssn_pubsub_sub_t *ctx, const char *topic)
             ssn_send_message(ctx->base.transport, header, &url_ref, NULL);
         }
 
-        ssn_hash_table_remove(ctx->topic_table, topic);
+        ssn_hash_table_remove_str(ctx->topic_table, topic);
         free(entry);
         ctx->topic_count--;
 

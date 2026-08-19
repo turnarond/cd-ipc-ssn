@@ -234,6 +234,10 @@ target_link_libraries(example_client ${PROJECT_NAME} pthread)
 add_executable(test_cliauto test/test_cliauto.c)
 target_link_libraries(test_cliauto ${PROJECT_NAME} pthread)
 
+# 哈希表单元测试（含字符串键 API 回归）
+add_executable(test_hash_table test/test_hash_table.c)
+target_link_libraries(test_hash_table ${PROJECT_NAME} pthread)
+
 # C++ 服务框架测试（批次 2 任务 2：ServiceBase 生命周期）
 add_executable(test_cpp_service_base test/test_cpp_service_base.cpp)
 target_link_libraries(test_cpp_service_base ssn_framework pthread)
