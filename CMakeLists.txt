@@ -230,6 +230,10 @@ target_link_libraries(example_server ${PROJECT_NAME} pthread)
 add_executable(example_client test/test_ssn_client.c)
 target_link_libraries(example_client ${PROJECT_NAME} pthread)
 
+# 自动重连客户端（cliauto）单元测试
+add_executable(test_cliauto test/test_cliauto.c)
+target_link_libraries(test_cliauto ${PROJECT_NAME} pthread)
+
 # C++ 服务框架测试（批次 2 任务 2：ServiceBase 生命周期）
 add_executable(test_cpp_service_base test/test_cpp_service_base.cpp)
 target_link_libraries(test_cpp_service_base ssn_framework pthread)

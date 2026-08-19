@@ -73,6 +73,11 @@ SSN_API void ssn_client_set_on_message(ssn_client_t *client, ssn_client_msg_hand
  * This is typically set internally by ssn_client_auto, not by user code. */
 SSN_API void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
 
+/* 保活 ping：发送 PING_ECHO 并登记 pending 等待服务端应答（用于半开连接检测）。
+ * 返回 true 表示请求已发出且应答已收到（连接存活）；false 表示未连接/发送失败/
+ * 超时无应答（连接可能已死）。timeout_ms 为等待应答的窗口。 */
+SSN_API bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif
