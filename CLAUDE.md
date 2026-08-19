@@ -18,20 +18,20 @@ cmake .. && make -j$(nproc)
 运行测试（构建后位于 `build/`，每个可执行文件独立运行，全部通过后退出码为 0）：
 
 ```bash
-./test_transport            # 传输层（55 用例）
+./test_transport            # 传输层（67 断言）
 ./test_node_basic           # 节点基础（3 用例）
 ./test_node                 # 节点完整（6 用例）
-./test_protocol             # 协议层（25 用例）
+./test_protocol             # 协议层（25 断言）
 ./test_protocol_integration # 协议集成（19 用例）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
-./test_cpp_*                # C++ 框架套件（6 个：service_base / service_task / service_manager / ssn_service / ssn_client / json）
+./test_cpp_*                # C++ 框架套件（7 个：service_base / service_task / service_manager / ssn_service / ssn_client / json / stability）
 ```
 
 注意：
 
 - 测试框架为各测试文件内自定义的 `ASSERT` 宏（C 套件）/ `CHECK` 宏（C++ 套件，统计 `g_cpp_passed`/`g_cpp_failed`），无外部测试框架；无法按用例名过滤，只能整体运行一个测试文件。
 - 高级/手工测试：`./test_comprehensive`、`./test_thread_safety`、`./test_stress`（需要先手工启动服务端）。
-- 一键验证：`bash test/run_tests.sh`（构建 + 13 个自动化套件）、`bash test/verify_examples.sh`（17 个示例构建）。
+- 一键验证：`bash test/run_tests.sh`（构建 + 14 个自动化套件）、`bash test/verify_examples.sh`（19 个示例构建 + hello_world 运行冒烟）。
 
 ## 架构分层
 
@@ -127,7 +127,7 @@ wsl bash -c "cd /mnt/d/personal/cd-ipc-ssn && bash test/run_tests.sh"
   2. `src/version/ssn_version.h` 的 `SSN_VERSION_*` 宏与 `SSN_VERSION_STRING`
   3. `CMakeLists.txt` 的 `VERSION_MAJOR/MINOR/PATCH` 与 `SOVERSION`
   4. `CHANGELOG.md`（按 Added / Changed / Fixed / Removed 分组记录，格式参照现有条目）
-- 发版提交后打 git 标签：`git tag vX.Y.Z` 并推送（仓库现有 tag：v2.3.1、v2.3.2）。
+- 发版提交后打 git 标签：`git tag vX.Y.Z` 并推送（仓库现有 tag：v2.3.1、v2.3.2、v2.4.0~v2.4.4）。
 
 ## 产品级约定（最高优先级）
 

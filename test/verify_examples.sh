@@ -31,5 +31,29 @@ for d in examples/basic/01_hello_world examples/basic/02_rpc_call examples/basic
         echo "FAIL: $d"
     fi
 done
-echo "RESULT: $ok ok, $fail failed"
-[ "$fail" -eq 0 ]
+
+# 运行冒烟：hello_world（用户旅程核心路径——服务端事件循环与客户端握手时序回归）。
+# 后台起 server（脚本在服务端无阻塞处理时即应响应客户端），client 须成功连接并发送消息。
+smoke_ok=0
+smoke_fail=0
+hello_dir="examples/basic/01_hello_world"
+if (cd "$hello_dir" && ./server >/dev/null 2>&1 &) ; then
+    # server 后台启动后等待其就绪（unix socket 文件出现或短等待）
+    sleep 1
+    if (cd "$hello_dir" && timeout 15 ./client 2>&1 | grep -q "Connected to server"); then
+        smoke_ok=1
+        echo "SMOKE PASS: hello_world server+client 往返"
+    else
+        smoke_fail=1
+        echo "SMOKE FAIL: hello_world client 未能连接服务器"
+    fi
+    # 等待 server 自然退出（运行 10 秒）或终止残留进程
+    sleep 11
+    pkill -f "$hello_dir/server" >/dev/null 2>&1 || true
+else
+    smoke_fail=1
+    echo "SMOKE FAIL: hello_world server 启动失败"
+fi
+
+echo "RESULT: $ok ok, $fail failed (build); smoke: $((smoke_ok)) ok, $((smoke_fail)) failed"
+[ "$fail" -eq 0 ] && [ "$smoke_fail" -eq 0 ]

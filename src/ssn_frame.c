@@ -69,6 +69,31 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     ssize_t send_len;
     uint64_t total_length = (uint64_t)SSN_HEADER_SIZE;
 
+    // 校验输入（在写头部之前完成，避免截断写头部导致帧头与实际数据错位）
+    if (url) {
+        /* url_len 写入头部为 uint16_t，超界必须拒绝而非截断 */
+        if (url->url_len > 0xFFFF) {
+            LOG_ERROR("ssn send message failed: url_len %zu exceeds uint16 limit", url->url_len);
+            return false;
+        }
+        if (!url->url && url->url_len > 0) {
+            LOG_ERROR("ssn send message failed: url NULL but url_len > 0");
+            return false;
+        }
+    }
+    if (data) {
+        /* data_len 写入头部为 uint32_t，超界必须拒绝而非截断 */
+        if (data->length > 0xFFFFFFFFULL) {
+            LOG_ERROR("ssn send message failed: data length %llu exceeds uint32 limit",
+                      (unsigned long long)data->length);
+            return false;
+        }
+        if (!data->data && data->length > 0) {
+            LOG_ERROR("ssn send message failed: data NULL but length > 0");
+            return false;
+        }
+    }
+
     // 计算总长度
     if (url) {
         total_length += url->url_len;
@@ -77,7 +102,7 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
 
     if (data) {
         total_length += data->length;
-        ssn_set_data_length(ipc_hdr, data->length);
+        ssn_set_data_length(ipc_hdr, (uint32_t)data->length);
     }
 
     // 检查长度是否有效
@@ -102,14 +127,36 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
         pos += data->length;
     }
 
-    // 发送消息
-    send_len = ssn_transport_send(transport, buffer, pos);
-
-    if (send_len < 0) {
-        LOG_ERROR("ssn send message failed");
-        return false;
+    // 发送消息：循环处理部分写入（TCP 大包/慢对端/小 SO_SNDBUF 下 send 可能
+    // 只发送部分字节，单次 send 返回后剩余数据必须补发，否则对端收到残缺帧）
+    /* EAGAIN 重试受 transport 发送超时约束：慢客户端/满缓冲区不应无限持锁阻塞
+     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS） */
+    int send_timeout_ms = transport->config.send_timeout_ms > 0 ?
+                          transport->config.send_timeout_ms : 5000;
+    uint64_t deadline_ms = (uint64_t)send_timeout_ms;
+    size_t sent = 0;
+    while (sent < pos) {
+        send_len = ssn_transport_send(transport, buffer + sent, pos - sent);
+        if (send_len > 0) {
+            sent += (size_t)send_len;
+        } else if (send_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            /* 非阻塞发送缓冲区满：受 deadline 约束让步重试，超时则放弃 */
+            if (deadline_ms == 0) {
+                LOG_ERROR("ssn send message failed: send timeout after %d ms",
+                          send_timeout_ms);
+                return false;
+            }
+            struct timespec ts = { 0, 1000000 }; /* 1ms */
+            nanosleep(&ts, NULL);
+            deadline_ms--;
+            continue;
+        } else {
+            LOG_ERROR("ssn send message failed: send returned %zd (errno %d)",
+                      send_len, errno);
+            return false;
+        }
     }
-    LOG_DEBUG("ssn send message success, length is %lu", send_len);
+    LOG_DEBUG("ssn send message success, length is %zu", sent);
     return true;
 }
 

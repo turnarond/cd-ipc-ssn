@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "../../ssn_export.h"
+#include "../../ssn_error.h"
 #include "../../util/ssn_log.h"
 #include "../../util/ssn_hash_table.h"
 #include "../../ssn_frame.h"
@@ -277,6 +278,28 @@ int ssn_rpc_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
 {
     if (!ctx || !ctx->transport) {
         return -1;
+    }
+
+    /* RPC 请求端：先清理已过期 pending 槽（缺陷背景：expire_time 只算不用，
+     * 无应答时槽位永久占用，256 槽耗尽后 RPC 永久不可用；超时回调亦不触发） */
+    if (ctx->role == SSN_ROLE_REQ) {
+        ssn_rpc_req_t *req = (ssn_rpc_req_t *)ctx;
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        for (int i = 0; i < RPC_MAX_PENDING; i++) {
+            rpc_pending_entry_t *entry = &req->pending_pool[i];
+            if (!entry->in_use) continue;
+            if (now.tv_sec > entry->expire_time.tv_sec ||
+                (now.tv_sec == entry->expire_time.tv_sec &&
+                 now.tv_nsec >= entry->expire_time.tv_nsec)) {
+                /* 超时：触发回调（status=SSN_ECODE_TIMEOUT，data=NULL）后释放槽位 */
+                if (entry->callback) {
+                    entry->callback(entry->seqno, SSN_ECODE_TIMEOUT,
+                                    NULL, 0, entry->arg);
+                }
+                pending_pool_free(req, entry);
+            }
+        }
     }
 
     uint8_t buf[SSN_MAX_PACKET_SIZE];

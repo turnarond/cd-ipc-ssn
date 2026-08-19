@@ -137,6 +137,19 @@ static bool tcp_transport_connect(ssn_transport_t* transport,
                 return false;
             }
         }
+
+        /* select 写就绪并不保证连接成功——必须查 SO_ERROR 确认拒连/失败，
+         * 否则对端 RST（如服务端未监听）会被误报为连接成功 */
+        int so_error = 0;
+        socklen_t err_len = sizeof(so_error);
+        if (getsockopt(impl->sock_fd, SOL_SOCKET, SO_ERROR,
+                       &so_error, &err_len) < 0 || so_error != 0) {
+            LOG_ERROR("TCP socket connect failed: %s",
+                      strerror(so_error != 0 ? so_error : errno));
+            close(impl->sock_fd);
+            impl->sock_fd = -1;
+            return false;
+        }
     }
 
     impl->is_server = false;
@@ -193,6 +206,11 @@ static int tcp_transport_send(ssn_transport_t* transport,
 
     ssize_t sent = send(impl->sock_fd, data, len, MSG_NOSIGNAL);
     if (sent < 0) {
+        /* EAGAIN/EWOULDBLOCK 是非阻塞发送的正常「缓冲区满」信号，不是错误：
+         * 调用方（ssn_send_message 循环发送）应让步后重试；不记 send_errors */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return -1;
+        }
         LOG_ERROR("Failed to send data via TCP socket: %s", strerror(errno));
         transport->stats.send_errors++;
         return -1;
@@ -249,11 +267,19 @@ static bool tcp_transport_listen(ssn_transport_t* transport, int backlog)
     tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
 
     int family = impl->ipv6_enabled ? AF_INET6 : AF_INET;
+    /* IPv6 分支必须 bind &impl->addr6（IPv4 结构 &impl->addr 配 sockaddr_in6
+     * 长度会读到 family=AF_UNSPEC 导致 bind 失败，TCP6 服务器无法监听） */
+    struct sockaddr* bind_addr;
+    socklen_t bind_len;
+    if (impl->ipv6_enabled) {
+        bind_addr = (struct sockaddr*)&impl->addr6;
+        bind_len = sizeof(impl->addr6);
+    } else {
+        bind_addr = (struct sockaddr*)&impl->addr;
+        bind_len = sizeof(impl->addr);
+    }
 
-    if (bind(impl->sock_fd, (struct sockaddr*)&impl->addr,
-             family == AF_INET6 ?
-             sizeof(struct sockaddr_in6) :
-             sizeof(struct sockaddr_in)) < 0) {
+    if (bind(impl->sock_fd, bind_addr, bind_len) < 0) {
         LOG_ERROR("Failed to bind TCP socket: %s", strerror(errno));
         return false;
     }

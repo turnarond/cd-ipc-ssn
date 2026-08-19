@@ -261,10 +261,11 @@ int main(void)
 
     // Run server for 15 seconds
     LOG_INFO("Server running for 15 seconds...");
+    /* 事件驱动循环：poll 阻塞至多 1 秒，有事件立即返回处理，
+     * 避免 poll(100)+sleep(1) 空转周期导致客户端连接握手超时 */
     int elapsed = 0;
     while (elapsed < 15) {
-        ssn_server_poll(server, 100);
-        sleep(1);
+        ssn_server_poll(server, 1000);
         elapsed++;
     }
 

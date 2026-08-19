@@ -66,16 +66,16 @@ run_example() {
     local example_path=""
     case "$category" in
         "Basic Examples")
-            example_path="${ROOT_DIR}/basic/${example}"
+            example_path="${ROOT_DIR}/examples/basic/${example}"
             ;;
         "Advanced Examples")
-            example_path="${ROOT_DIR}/advanced/${example}"
+            example_path="${ROOT_DIR}/examples/advanced/${example}"
             ;;
         "Protocol Examples")
-            example_path="${ROOT_DIR}/protocols/${example}"
+            example_path="${ROOT_DIR}/examples/protocols/${example}"
             ;;
         "Node Examples")
-            example_path="${ROOT_DIR}/node/${example}"
+            example_path="${ROOT_DIR}/examples/node/${example}"
             ;;
     esac
     

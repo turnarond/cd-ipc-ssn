@@ -74,6 +74,7 @@ typedef struct ssn_server_cmd {
 /* Server */
 struct ssn_server {
     bool valid;
+    int ref_count;   /* 引用计数：poll/API 调用期间保活，destroy 延迟到引用归零 */
     char ifname[IF_NAMESIZE];
     char srv_name[SRV_NAME_LEN];
     ssn_peer_id_t ncid;
@@ -103,6 +104,10 @@ struct ssn_server {
     ssn_pubsub_pub_t *pubsub_pub;
     ssn_msg_recv_t *msg_recv;
 };
+
+/* 前向声明（引用计数机制：destroy 延迟释放） */
+static void ssn_server_free_resources(ssn_server_t *server);
+static void ssn_server_unref(ssn_server_t *server);
 
 /* Input argument */
 struct input_arg {
@@ -378,7 +383,8 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
         server->handshake_timeout = opts->conn_timeout_ms;
         server->keepalive_timeout = opts->idle_timeout_sec;
         if(opts->ifname[0]) {
-            strncpy(server->ifname, opts->ifname, strlen(opts->ifname));
+            /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
+            snprintf(server->ifname, sizeof(server->ifname), "%s", opts->ifname);
         }
     } else {
         server->send_timeout = IPC_DEF_SEND_TIMEOUT;
@@ -386,7 +392,9 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
         server->keepalive_timeout = IPC_SERVER_KEEPALIVE_TIMEOUT;
     }
 
-    strncpy(server->srv_name, name, strlen(name));
+    /* 用 snprintf 保证 NUL 终止（srv_name 为 SRV_NAME_LEN 字节，strncpy 以
+     * strlen 为 n 不追加 NUL，后续 strstr 越界读取） */
+    snprintf(server->srv_name, sizeof(server->srv_name), "%s", name);
     server->recvbuf      = (uint8_t *)server->sendbuf + SSN_MAX_PACKET_SIZE;
 
     /* 创建协议层实例 */
@@ -409,6 +417,7 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
     }
 
     server->valid        = true;
+    server->ref_count    = 1;   /* 创建者持有的引用 */
 
     ipc_mutex_lock(g_ssn_server_lock);
 
@@ -492,8 +501,12 @@ bool ssn_server_start(ssn_server_t *server)
     }
 
     // 创建transport配置
+    /* non_blocking=true：发送为非阻塞，ssn_send_message 内部按 send_timeout_ms
+     * 有界重试 EAGAIN。缺陷背景：原为阻塞发送且持 server->lock 调用，单个慢
+     * 客户端（socket 缓冲满）可阻塞整个事件循环并令定时器线程（idle/握手超时）
+     * 失效——非阻塞 + 有界重试消除该 DoS。 */
     ssn_transport_config_t config = {
-        .non_blocking = false,
+        .non_blocking = true,
         .send_timeout_ms = server->send_timeout,
         .recv_timeout_ms = 1000,
         .connect_timeout_ms = server->handshake_timeout,
@@ -589,6 +602,88 @@ int ssn_server_address(ssn_server_t *server, struct sockaddr *addr, socklen_t *n
 }
 
 /**
+ * @brief 增加服务器引用计数（与 client 对称：poll/API 调用期间保活）
+ */
+static void ssn_server_ref(ssn_server_t *server)
+{
+    if (!server) return;
+    ipc_mutex_lock(server->lock);
+    server->ref_count++;
+    ipc_mutex_unlock(server->lock);
+}
+
+/**
+ * @brief 减少服务器引用计数，归零且 invalid 时真正释放
+ */
+static void ssn_server_unref(ssn_server_t *server)
+{
+    if (!server) return;
+
+    bool should_free = false;
+    ipc_mutex_lock(server->lock);
+    if (server->ref_count > 0) {
+        server->ref_count--;
+        if (server->ref_count == 0 && !server->valid) {
+            should_free = true;
+        }
+    }
+    ipc_mutex_unlock(server->lock);
+
+    if (should_free) {
+        ssn_server_free_resources(server);
+    }
+}
+
+/**
+ * @brief 真正释放服务器资源（引用归零且 invalid 后调用）
+ */
+static void ssn_server_free_resources(ssn_server_t *server)
+{
+    int i;
+    ssn_server_cli_t *cli, *cli_temp;
+    ssn_server_cmd_t *cmd, *cmd_temp;
+
+    if (!server) return;
+
+    if (server->transport) {
+        ssn_transport_destroy(server->transport);
+        server->transport = NULL;
+    }
+
+    ipc_event_pair_destroy(server->evtfd);
+    free(server->sendbuf);
+
+    for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
+        LIST_FOREACH_SAFE(cli, cli_temp, server->clis[i]) {
+            ssn_server_cli_destroy(server, cli);
+        }
+    }
+
+    for (i = 0; i < IPC_CMD_HASH_SIZE; i++) {
+        LIST_FOREACH_SAFE(cmd, cmd_temp, server->cmds[i]) {
+            DELETE_FROM_LIST(cmd, server->cmds[i]);
+            free(cmd);
+        }
+    }
+
+    LIST_FOREACH_SAFE(cmd, cmd_temp, server->prefix_h) {
+        DELETE_FROM_LIST(cmd, server->prefix_h);
+        free(cmd);
+    }
+
+    if (server->def_cmd) {
+        free(server->def_cmd);
+    }
+
+    ipc_mutex_destroy(server->lock);
+
+    unlink(server->srv_name);
+
+    free(server);
+    LOG_DEBUG("ssn server free success.");
+}
+
+/**
  * @brief 关闭IPC服务器
  * 
  * @param server 服务器实例指针
@@ -630,43 +725,11 @@ void ssn_server_destroy(ssn_server_t *server)
         server->rpc_rep = NULL;
     }
 
-    if (server->transport) {
-        ssn_transport_destroy(server->transport);
-        server->transport = NULL;
-    }
-
-    ipc_event_pair_destroy(server->evtfd);
-    free(server->sendbuf);
-
-    for (i = 0; i < IPC_CLI_HASH_SIZE; i++) {
-        LIST_FOREACH_SAFE(cli, cli_temp, server->clis[i]) {
-            ssn_server_cli_destroy(server, cli);
-        }
-    }
-
-    for (i = 0; i < IPC_CMD_HASH_SIZE; i++) {
-        LIST_FOREACH_SAFE(cmd, cmd_temp, server->cmds[i]) {
-            DELETE_FROM_LIST(cmd, server->cmds[i]);
-            free(cmd);
-        }
-    }
-
-    LIST_FOREACH_SAFE(cmd, cmd_temp, server->prefix_h) {
-        DELETE_FROM_LIST(cmd, server->prefix_h);
-        free(cmd);
-    }
-
-    if (server->def_cmd) {
-        free(server->def_cmd);
-    }
-
     ipc_mutex_unlock(server->lock);
-    ipc_mutex_destroy(server->lock);
 
-    unlink(server->srv_name);
-
-    free(server);
-    LOG_DEBUG("ssn server destory success.");
+    /* 引用计数归零且 invalid 时才真正释放（延迟释放：回调中调用 destroy 时
+     * 正在 poll 的路径仍持有引用，可安全继续使用到 poll 结束） */
+    ssn_server_unref(server);
 }
 
 /**
@@ -1698,6 +1761,12 @@ int ssn_server_poll(ssn_server_t *server, int timeout_ms)
         .tv_nsec = (timeout_ms % 1000) * 1000000LL
     };
 
+    if (!server) return -1;
+
+    /* 引用计数保活：回调中调用 ssn_server_destroy 时，本 poll 仍持有引用，
+     * server 延迟到 poll 结束才真正释放（避免回调后访问已 free 对象） */
+    ssn_server_ref(server);
+
     sigemptyset(&empty_mask);
     FD_ZERO(&fds);
     int max_fd = ssn_server_fds(server, &fds);
@@ -1708,8 +1777,10 @@ int ssn_server_poll(ssn_server_t *server, int timeout_ms)
     } while (cnt < 0 && errno == EINTR);
     if (cnt > 0) {
         ssn_server_input_fds(server, &fds);
+        ssn_server_unref(server);
         return 0;
     }
+    ssn_server_unref(server);
     return cnt;
 }
 

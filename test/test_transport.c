@@ -419,6 +419,74 @@ static void test_udp_client_server(void)
     }
 }
 
+static void test_address_parse_ipv6(void)
+{
+    ssn_address_t addr;
+    bool result;
+
+    /* tcp6://[::1]:8080 格式：host 在方括号内，端口在 ]: 之后 */
+    result = ssn_address_parse("tcp6://[::1]:8080", &addr);
+    ASSERT(result == true, "Parse TCP6 address [::1]:8080");
+    if (result) {
+        ASSERT(addr.type == SSN_TRANSPORT_TCP6, "TCP6 address type is TCP6");
+        char buf[256];
+        ASSERT(ssn_address_to_string(&addr, buf, sizeof(buf)),
+               "TCP6 address to string");
+        ASSERT(strstr(buf, "tcp6://[::1]:8080") != NULL,
+               "TCP6 address string round-trip");
+    }
+
+    result = ssn_address_parse("tcp6://[fe80::1]:9090", &addr);
+    ASSERT(result == true, "Parse TCP6 address [fe80::1]:9090");
+
+    result = ssn_address_parse("udp6://[::1]:9090", &addr);
+    ASSERT(result == true, "Parse UDP6 address [::1]:9090");
+    if (result) {
+        ASSERT(addr.type == SSN_TRANSPORT_UDP6, "UDP6 address type is UDP6");
+    }
+
+    /* 非方括号 IPv6（无 [ ] 包裹）应拒绝，避免 host 解析歧义 */
+    result = ssn_address_parse("tcp6://::1:8080", &addr);
+    ASSERT(result == false, "TCP6 address without brackets rejected");
+}
+
+/* TCP6 服务器 listen 回归：修复前 bind 传 &impl->addr（IPv4 结构）配
+ * sockaddr_in6 长度，IPv6 服务器无法监听（Issue：TCP6 bind 错误 sockaddr） */
+static void test_tcp6_listen(void)
+{
+    ssn_transport_config_t config = {
+        .type = SSN_TRANSPORT_TCP6,
+        .non_blocking = false,
+        .send_timeout_ms = 5000,
+        .recv_timeout_ms = 5000,
+        .connect_timeout_ms = 5000,
+        .enable_keepalive = false,
+        .keepalive_idle_sec = 60,
+        .keepalive_interval_sec = 10,
+        .keepalive_count = 3,
+        .enable_nagle = false,
+        .send_buffer_size = TEST_BUFFER_SIZE,
+        .recv_buffer_size = TEST_BUFFER_SIZE,
+        .reuse_address = true
+    };
+
+    ssn_address_t addr;
+    bool parsed = ssn_address_parse("tcp6://[::1]:19121", &addr);
+    ASSERT(parsed, "Parse TCP6 listen address");
+    if (!parsed) return;
+
+    ssn_transport_t* server = ssn_transport_create(SSN_TRANSPORT_TCP6, &config);
+    ASSERT(server != NULL, "Create TCP6 server transport");
+    if (!server) return;
+
+    bool result = ssn_transport_bind(server, &addr);
+    ASSERT(result, "TCP6 server bind [::1]");
+    result = ssn_transport_listen(server, 5);
+    ASSERT(result, "TCP6 server listen [::1]");
+
+    ssn_transport_destroy(server);
+}
+
 static void test_transport_factory(void)
 {
     // 测试传输类型转换
@@ -455,6 +523,7 @@ int main(int argc, char* argv[])
     test_address_parse_unix();
     test_address_parse_tcp();
     test_address_parse_udp();
+    test_address_parse_ipv6();
     test_address_to_string();
     test_transport_type_string();
 
@@ -462,6 +531,9 @@ int main(int argc, char* argv[])
     test_unix_transport_create_destroy();
     test_tcp_transport_create_destroy();
     test_udp_transport_create_destroy();
+
+    printf("\nRunning TCP6 tests...\n");
+    test_tcp6_listen();
 
     printf("\nRunning Unix socket tests...\n");
     test_unix_server_listen();

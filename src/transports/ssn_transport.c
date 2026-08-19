@@ -147,22 +147,28 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
     } else if (strcmp(protocol, "tcp6") == 0) {
         addr->type = SSN_TRANSPORT_TCP6;
 
-        char* colon = strchr(rest, ':');
-        if (!colon) {
-            LOG_ERROR("Invalid TCP6 address format: missing port");
+        /* IPv6 地址格式：tcp6://[::1]:8080——host 位于方括号内，
+         * 端口在 "]:" 之后（strchr 取第一个冒号会截断 IPv6 地址，故用方括号解析） */
+        if (*rest != '[') {
+            LOG_ERROR("Invalid TCP6 address format: IPv6 host must be in brackets, e.g. tcp6://[::1]:8080");
+            return false;
+        }
+        const char* close_bracket = strchr(rest + 1, ']');
+        if (!close_bracket || close_bracket[1] != ':') {
+            LOG_ERROR("Invalid TCP6 address format: missing ']:' separator");
             return false;
         }
 
-        size_t host_len = colon - rest;
-        if (host_len >= sizeof(host)) {
-            LOG_ERROR("Host name too long");
+        size_t host_len = (size_t)(close_bracket - (rest + 1));
+        if (host_len == 0 || host_len >= sizeof(host)) {
+            LOG_ERROR("Invalid TCP6 host length");
             return false;
         }
 
-        strncpy(host, rest, host_len);
+        memcpy(host, rest + 1, host_len);
         host[host_len] = '\0';
 
-        port = atoi(colon + 1);
+        port = atoi(close_bracket + 2);
         if (port <= 0 || port > 65535) {
             LOG_ERROR("Invalid TCP6 port: %d", port);
             return false;
@@ -187,22 +193,27 @@ bool ssn_address_parse(const char* address_str, ssn_address_t* addr)
     } else if (strcmp(protocol, "udp6") == 0) {
         addr->type = SSN_TRANSPORT_UDP6;
 
-        char* colon = strchr(rest, ':');
-        if (!colon) {
-            LOG_ERROR("Invalid UDP6 address format: missing port");
+        /* IPv6 地址格式：udp6://[::1]:8080（同 tcp6 的方括号解析） */
+        if (*rest != '[') {
+            LOG_ERROR("Invalid UDP6 address format: IPv6 host must be in brackets, e.g. udp6://[::1]:8080");
+            return false;
+        }
+        const char* close_bracket = strchr(rest + 1, ']');
+        if (!close_bracket || close_bracket[1] != ':') {
+            LOG_ERROR("Invalid UDP6 address format: missing ']:' separator");
             return false;
         }
 
-        size_t host_len = colon - rest;
-        if (host_len >= sizeof(host)) {
-            LOG_ERROR("Host name too long");
+        size_t host_len = (size_t)(close_bracket - (rest + 1));
+        if (host_len == 0 || host_len >= sizeof(host)) {
+            LOG_ERROR("Invalid UDP6 host length");
             return false;
         }
 
-        strncpy(host, rest, host_len);
+        memcpy(host, rest + 1, host_len);
         host[host_len] = '\0';
 
-        port = atoi(colon + 1);
+        port = atoi(close_bracket + 2);
         if (port <= 0 || port > 65535) {
             LOG_ERROR("Invalid UDP6 port: %d", port);
             return false;
