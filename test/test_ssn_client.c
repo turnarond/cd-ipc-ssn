@@ -446,9 +446,9 @@ static int test_big_message_roundtrip(void)
 
 /* ---- Test 10: connect 失败路径 fd 泄漏（回归：Issue #10） ----
  *
- * 缺陷：tcp/unix_transport_create 构造时创建 socket fd，connect 时再次 socket()
- *       覆盖 impl->sock_fd——构造 fd 永久泄漏（每轮 +1）。
- * 回归：连接失败循环后 /proc/self/fd 计数不增长。
+ * 缺陷：tcp/unix/udp_transport_create 构造时创建 socket fd，connect 时再次
+ *       socket() 覆盖 impl->sock_fd——构造 fd 永久泄漏（每轮 +1）。
+ * 回归：连接（tcp 失败路径 + udp 重建路径）循环后 /proc/self/fd 计数不增长。
  */
 
 #include <dirent.h>
