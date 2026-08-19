@@ -380,7 +380,12 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
 
     if (opts) {
         server->send_timeout = opts->send_timeout_ms;
-        server->handshake_timeout = opts->conn_timeout_ms;
+        /* conn_timeout_ms<=0（未设置/显式 0）时回退默认握手超时：原实现把 0 直接
+         * 赋给 handshake_timeout，cli_init 的 hst.alive=0 使定时器首个 tick 即销毁
+         * 握手中的连接（竞态窗口，客户端偶发连接失败，Issue #15） */
+        server->handshake_timeout = (opts->conn_timeout_ms > 0)
+                                    ? opts->conn_timeout_ms
+                                    : IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = opts->idle_timeout_sec;
         if(opts->ifname[0]) {
             /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
@@ -1756,10 +1761,16 @@ int ssn_server_poll(ssn_server_t *server, int timeout_ms)
 {
     fd_set fds;
     sigset_t empty_mask;
-    struct timespec timeout = {
-        .tv_sec  = timeout_ms / 1000,
-        .tv_nsec = (timeout_ms % 1000) * 1000000LL
-    };
+    /* 负数超时按「无限等待」处理（缺陷背景：原实现对 -1 计算非法 timespec——
+     * -1/1000=0、(-1%1000)=-1 → tv_nsec=-1e6，pselect 恒 EINVAL，poll(-1) 无法
+     * 实现永久阻塞语义） */
+    struct timespec timeout_buf;
+    struct timespec *timeout_ptr = NULL;
+    if (timeout_ms >= 0) {
+        timeout_buf.tv_sec  = timeout_ms / 1000;
+        timeout_buf.tv_nsec = (timeout_ms % 1000) * 1000000LL;
+        timeout_ptr = &timeout_buf;
+    }
 
     if (!server) return -1;
 
@@ -1773,7 +1784,7 @@ int ssn_server_poll(ssn_server_t *server, int timeout_ms)
     // 阻塞空信号集，可以传递并中断所有信号
     int cnt;
     do {
-        cnt = pselect(max_fd + 1, &fds, NULL, NULL, &timeout, &empty_mask);
+        cnt = pselect(max_fd + 1, &fds, NULL, NULL, timeout_ptr, &empty_mask);
     } while (cnt < 0 && errno == EINTR);
     if (cnt > 0) {
         ssn_server_input_fds(server, &fds);
