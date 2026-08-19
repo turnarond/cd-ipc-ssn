@@ -38,7 +38,10 @@ ssn_protocol_ctx_t *ssn_protocol_create(ssn_role_t role, void *callback, void *a
         ctx = (ssn_protocol_ctx_t *)ssn_msg_send_create();
         break;
     case SSN_ROLE_RECV: {
-        ssn_msg_handler_t on_msg = (ssn_msg_handler_t)callback;
+        /* msg_recv_create 期望 (const void*, size_t, void*) 回调（缺陷背景：
+         * 原强转 ssn_msg_handler_t（带 queue 参数）签名不匹配产生警告） */
+        void (*on_msg)(const void *data, size_t data_len, void *arg) =
+            (void (*)(const void *, size_t, void *))callback;
         ctx = (ssn_protocol_ctx_t *)ssn_msg_recv_create(on_msg, arg);
         break;
     }
