@@ -2,6 +2,33 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.1] - 2026-08-20
+
+### Fixed
+- **cliauto 保活（Issue #14）**：keepalive ping 实现（原从不发送 PING_ECHO，半开连接
+  无法感知，自动重连永不触发）——新增 `ssn_client_ping` API，CONNECTED 分支按周期
+  ping，连续 `SSN_CLIENT_AUTO_MAX_PING_LOST` 次无应答判定断开；状态机 state/running
+  读写全部在 mutex 下（消除数据竞争 UB）；错误路径补 LOG；删除死代码
+- **server 握手竞态（Issue #15）**：`conn_timeout_ms<=0` 回退默认握手超时（原 alive=0
+  使定时器首个 tick 销毁迟到的握手连接——「连接建立但握手迟到」真实竞态）；
+  `ssn_server_poll` 负数超时按无限等待处理（原 -1 计算非法 timespec → pselect 恒 EINVAL）
+- **哈希表字符串键（Issue #16）**：新增 `ssn_hash_table_*_str` API（内容哈希 + 表内
+  复制 key），修复按指针比较导致的内容相同地址不同字符串注销静默失败、栈 buffer key
+  悬挂、重复注册旧值泄漏；rpc_register/pubsub subscribe 改用字符串键 API；
+  公开函数补 SSN_API 导出标记
+- **ssn_framework 版本化（Issue #17）**：VERSION/SOVERSION + CXX_VISIBILITY_PRESET
+  hidden（升级不再覆盖旧文件）；新增 SSN_FRAMEWORK_API 导出宏（5 个公开类标记导出）
+- **server 命名与死代码（Issue #18）**：内部函数 `ipc_server_handle_*` 更名
+  `ssn_server_handle_*`（ipc_ 前缀仅限 VSI）；新增 `ssn_server_options_t` 别名
+  （兼容非破坏）；删除空壳死代码；`ssn_client_ref/unref` 补头文件声明（消除隐式声明）
+- **协议层（Issue #19）**：RPC 应答复用 `SSN_MSG_TYPE_RPC_REQUEST`（原私有宏 0x10
+  与主路径两套体系不一致）；REQ 分支校验应答类型；seqno 分配跳过在途序号（回绕保护）；
+  base.destroy 统一为子类 destroy（消除 double free 隐患）
+
+### Changed
+- 测试体系扩至 **16 套件**（新增 test_cliauto 19 断言、test_hash_table 50 断言；
+  example_server 9 用例），run_tests.sh 同步
+
 ## [2.5.0] - 2026-08-20
 
 ### Added
