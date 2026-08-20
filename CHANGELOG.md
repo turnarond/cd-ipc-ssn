@@ -2,6 +2,16 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.2] - 2026-08-20
+
+### Fixed
+- **空闲连接误判断开（Issue #22，P0 回归）**：`ssn_client_process_events` 局部变量
+  `pkt_e` 未初始化——socket 无数据（`did_recv=false`）时读取未初始化栈值（UB），垃圾值
+  可能为 true → 误判「连接丢失」→ 断开。v2.5.1 保活改造后 cliauto 每次 tick 都 poll，
+  空闲连接稳定触发「建立后 ~50ms 误断 → 循环重连」（edge-framework 场景复现）。修复：
+  `pkt_e` 初始化为 false；回归测试：`test_cliauto` Test 5（空闲 5 轮循环无断开）、
+  `test_ssn_client` Test 13（空闲 poll 保持连接）
+
 ## [2.5.1] - 2026-08-20
 
 ### Fixed
