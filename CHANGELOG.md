@@ -11,6 +11,14 @@ All notable changes to the ssn (cd-ipc-ssn) IPC framework.
   空闲连接稳定触发「建立后 ~50ms 误断 → 循环重连」（edge-framework 场景复现）。修复：
   `pkt_e` 初始化为 false；回归测试：`test_cliauto` Test 5（空闲 5 轮循环无断开）、
   `test_ssn_client` Test 13（空闲 poll 保持连接）
+- **transport 发布/销毁竞态 UAF（P0）**：`ssn_client_poll` 无锁销毁 transport 与
+  `ssn_client_connect` 无锁赋值竞争——poll 线程检测旧连接丢失时销毁
+  `client->transport`，可能销毁 connect 刚创建/正在使用的新 transport（UAF）。
+  稳定性套件 T6（服务端重启重连）在负载下偶发：glibc fd_set 越界 abort /
+  tcache 堆损坏（ASAN 定位 `unix_transport_connect` 读已释放 transport）。修复：
+  connect 全程使用局部 transport、握手成功后一次性锁内发布；poll 销毁持锁；
+  `ssn_client_call_ex` sendmsg 移回锁内（消除无锁读 transport 窗口）；回归测试：
+  `test_ssn_client` Test 14（服务端反复启停 + 并发 poll/connect 30 轮）
 
 ## [2.5.1] - 2026-08-20
 
