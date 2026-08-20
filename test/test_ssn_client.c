@@ -599,6 +599,111 @@ static int test_callback_reentrant(void)
     return 0;
 }
 
+/* ---- Test 13: 空闲连接 poll 不误判断开（回归 Issue #22） ----
+ *
+ * 缺陷：ssn_client_process_events 的局部变量 pkt_e 未初始化——当 socket 无数据
+ * （did_recv=false）时 pkt_e 读取未初始化内存（UB），垃圾值可能为 true → 误判
+ * 「连接丢失」→ 断开。cliauto CONNECTED 分支（v2.5.1 保活改造后）每次 tick 都
+ * 调 ssn_client_poll，连接空闲时即触发，导致连接建立后 ~50ms 误断并循环重连。
+ * 回归：连接建立后保持完全空闲（无消息/无 ping），反复 poll 空闲 socket 200ms，
+ *       is_connect 必须始终为 true（不误断）。
+ */
+static int test_idle_connect_stays_alive(void)
+{
+    printf("  Test 13: Idle connect stays alive across polls... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/idle");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        if (cli) ssn_client_close(cli); stop_test_server(srv, tid);
+        printf("FAIL (connect)\n"); return 1;
+    }
+
+    /* 连接后保持空闲：不发消息、不 ping，反复 poll 空闲 socket。
+     * 修复前 pkt_e 未初始化导致 poll 偶发误判断开（is_connect 变 false）。 */
+    int disconnected = 0;
+    for (int i = 0; i < 20; i++) {
+        ssn_client_poll(cli, 10);
+        if (!ssn_client_is_connect(cli)) {
+            disconnected = 1;
+            break;
+        }
+        usleep(10000);
+    }
+
+    int ok = !disconnected;
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!ok) { printf("FAIL (idle connect falsely disconnected)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
+/* ---- Test 14: 并发 poll + connect 竞争（transport UAF 回归） ----
+ *
+ * 缺陷：ssn_client_poll 检测到连接丢失后【无锁】销毁 client->transport 并置 NULL，
+ *       而 ssn_client_connect 在重建时【无锁】赋值新 transport——两线程并发时，
+ *       poll 线程可能销毁 connect 线程刚创建/正在使用的 transport（UAF），
+ *       ssn_transport_get_fd 随后读到已释放内存的垃圾 fd（≥FD_SETSIZE 或负数）
+ *       → glibc fd_set 越界 abort（"bit out of range 0 - FD_SETSIZE"）。
+ *       复现环境：稳定性套件 T6（服务端重启重连）在负载下偶发触发。
+ * 回归：服务端反复启停 + 客户端并发 poll（事件循环）/connect（重连）多轮，
+ *       进程不得崩溃（fd_set 越界 abort / 段错误）。
+ */
+static volatile int g_race_running = 0;
+
+static void *race_poll_thread(void *arg)
+{
+    ssn_client_t *cli = (ssn_client_t *)arg;
+    while (g_race_running) {
+        ssn_client_poll(cli, 10);   /* 事件循环：检测断开后销毁 transport */
+    }
+    return NULL;
+}
+
+static int test_concurrent_poll_reconnect(void)
+{
+    printf("  Test 14: Concurrent poll + reconnect (transport UAF)... ");
+    const int ROUNDS = 30;
+    for (int r = 0; r < ROUNDS; r++) {
+        pthread_t tid;
+        ssn_server_t *srv = start_test_server(&tid, "/race");
+        if (!srv) { printf("FAIL (server round %d)\n", r); return 1; }
+
+        ssn_client_t *cli = ssn_client_create();
+        struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+        if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+            if (cli) ssn_client_close(cli);
+            stop_test_server(srv, tid);
+            printf("FAIL (connect round %d)\n", r);
+            return 1;
+        }
+
+        /* 并发：poll 线程持续事件循环；主线程销毁服务端并立即重连。
+         * 服务端销毁后 poll 线程检测断开并销毁 transport，同时主线程
+         * connect 重建 transport——修复前二者无锁竞争触发 UAF。 */
+        g_race_running = 1;
+        pthread_t pt;
+        pthread_create(&pt, NULL, race_poll_thread, cli);
+
+        stop_test_server(srv, tid);   /* 服务端销毁 → 客户端连接断开 */
+        for (int i = 0; i < 5; i++) {
+            struct timespec ts2 = { .tv_sec = 1, .tv_nsec = 0 };
+            ssn_client_connect(cli, TEST_SERVER_ADDR, &ts2);   /* 重建（失败亦可） */
+            usleep(2000);
+        }
+
+        g_race_running = 0;
+        pthread_join(pt, NULL);
+        ssn_client_close(cli);
+    }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -616,7 +721,9 @@ int main(void)
     failed += test_connect_fail_fd_leak();
     failed += test_slow_handshake_connect();
     failed += test_callback_reentrant();
+    failed += test_idle_connect_stays_alive();
+    failed += test_concurrent_poll_reconnect();
 
-    printf("=== Result: %d/12 passed, %d failed ===\n", 12 - failed, failed);
+    printf("=== Result: %d/14 passed, %d failed ===\n", 14 - failed, failed);
     return failed ? 1 : 0;
 }

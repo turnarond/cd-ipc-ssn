@@ -531,20 +531,22 @@ void ssn_client_close(ssn_client_t *client)
  * @brief 客户端发送数据包
  * 
  * @param client 客户端实例指针
+ * @param transport 传输层实例（connect 握手期间传入局部 transport，
+ *                  其余路径为 client->transport）
  * @param len 数据包长度
  * @return 发送成功返回true，失败返回false
  */
-static bool ssn_client_send(ssn_client_t *client, size_t len)
+static bool ssn_client_send(ssn_client_t *client, ssn_transport_t *transport, size_t len)
 {
     uint8_t *buffer = (uint8_t *)client->sendbuf;
     ssize_t num, total = 0;
 
     do {
-        num = ssn_transport_send(client->transport, &buffer[total], len - total);
+        num = ssn_transport_send(transport, &buffer[total], len - total);
         if (num > 0) {
             total += num;
         } else {
-            ssn_transport_disconnect(client->transport);
+            ssn_transport_disconnect(transport);
             break;
         }
     } while (total < len);
@@ -723,24 +725,31 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 
     // 根据地址类型设置配置和创建transport
     config.type = addr.type;
-    client->transport = ssn_transport_create(addr.type, &config);
-    if (!client->transport) {
+    /* 缺陷背景：原实现创建后立即锁内赋值 client->transport，随后锁外使用——
+     * poll 线程检测到旧连接丢失时销毁 client->transport，可能销毁 connect 刚
+     * 发布/正在使用的新 transport（UAF，稳定性套件 T6 负载下偶发；ASAN 定位
+     * unix_transport_connect 读已释放 transport）。修复：connect 全程使用局部
+     * transport（不发布到 client->transport），握手成功后一次性锁内发布。 */
+    ssn_transport_t *new_transport = ssn_transport_create(addr.type, &config);
+    if (!new_transport) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "create transport failed");
         ssn_client_unref(client);
         return (false);
     }
 
     // 连接到服务器
-    if (!ssn_transport_connect(client->transport, &addr, config.connect_timeout_ms)) {
+    if (!ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms)) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "connect to '%s' failed", ipc_path);
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
 
     ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_SERVICE_INFO, 0, 0);
 
-    if (!ssn_client_send(client, sizeof(ssn_header_t))) {
+    if (!ssn_client_send(client, new_transport, sizeof(ssn_header_t))) {
         ssn_handle_error(SSN_ECODE_NET_WRITE, __FILE__, __LINE__, __func__, "send failed");
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
@@ -762,7 +771,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     }
 
     while (retries < max_retries) {
-        num = ssn_transport_recv(client->transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
+        num = ssn_transport_recv(new_transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
         
         if (num > 0) {
             arg.client     = client;
@@ -780,12 +789,14 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
             // 连接被关闭
             LOG_ERROR("recv failed, connection closed by peer");
             ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed, connection closed by peer");
+            ssn_transport_destroy(new_transport);
             ssn_client_unref(client);
             return (false);
         } else if (num < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
             // 发生了真正的错误
             LOG_ERROR("recv failed, errno %d: %s", errno, strerror(errno));
             ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed");
+            ssn_transport_destroy(new_transport);
             ssn_client_unref(client);
             return (false);
         }
@@ -798,14 +809,26 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     if (retries >= max_retries || !arg.packet_cnt) {
         LOG_ERROR("recv failed after %d retries", max_retries);
         ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed after multiple retries");
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
 
+    /* 握手成功：锁内发布新 transport 并置 connected（与 poll 线程 fds/
+     * process_events 锁内读 client->transport 互斥）。缺陷背景：发布前
+     * connected 保持 false，poll 线程不会使用/销毁它；发布后 poll 线程
+     * 才能看到完整就绪的 transport，杜绝「销毁未就绪 transport」的 UAF。 */
+    ipc_mutex_lock(client->lock);
+    if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
+    }
+    client->transport = new_transport;
     client->connected = true;
     ipc_memory_barrier();
+    ipc_mutex_unlock(client->lock);
 
-    /* 绑定协议层实例到传输层 */
+    /* 绑定协议层实例到传输层（transport 已发布，可直接引用） */
     ssn_rpc_connect((ssn_protocol_ctx_t *)client->rpc_req, client->transport);
     ssn_pubsub_sub_connect(client->pubsub_sub, client->transport);
     ssn_msg_send_connect(client->msg_send, client->transport);
@@ -1119,7 +1142,10 @@ out:
  */
 static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 {
-    bool pkt_e;
+    /* pkt_e 必须初始化（缺陷背景：未初始化 UB——socket 无数据（did_recv=false）
+     * 时 pkt_e 读栈垃圾值，可能为 true 导致误判「连接丢失」断开，触发 cliauto
+     * 连接建立后 ~50ms 循环重连（Issue #22）） */
+    bool pkt_e = false;
     ssize_t num;
     ssn_header_t *ipc_hdr;
     ssn_pending_request_t *pendq;
@@ -1526,18 +1552,20 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
 
     ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_RPC_REQUEST, 0, seqno);
 
-    ipc_mutex_unlock(client->lock);
-
+    /* 缺陷背景：原实现在此先解锁再 sendmsg——sendmsg 内部无锁读
+     * client->transport，与 poll 线程销毁 transport（连接丢失）竞争 UAF。
+     * 修复：sendmsg 在锁内执行（与 ssn_client_request/message 一致）。 */
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
         LOG_ERROR("ssn client call failed: send msg failed.");
         if (pendq) {
-            ipc_mutex_lock(client->lock);
             free_pending_index(client, pendq->index);
-            ipc_mutex_unlock(client->lock);
         }
+        ipc_mutex_unlock(client->lock);
         ssn_client_unref(client);
         return -1;
     }
+
+    ipc_mutex_unlock(client->lock);
 
     LOG_DEBUG("ssn client call success.");
 
@@ -1683,10 +1711,18 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
             /* Connection lost but keep client valid so auto-client can reconnect */
             client->connected = false;
             ipc_memory_barrier();
+            /* 缺陷背景：原实现无锁销毁 transport，与 ssn_client_connect 重建时
+             * 无锁赋值 transport 竞争——poll 线程销毁的可能是 connect 线程刚
+             * 创建/正在使用的 transport（UAF），后续 get_fd 读到垃圾 fd 触发
+             * glibc fd_set 越界 abort（稳定性套件 T6 在负载下偶发复现）。
+             * 修复：销毁/替换统一持 client->lock（与 connect/fds/process_events
+             * 的锁内读 transport 互斥）。 */
+            ipc_mutex_lock(client->lock);
             if (client->transport) {
                 ssn_transport_destroy(client->transport);
                 client->transport = NULL;
             }
+            ipc_mutex_unlock(client->lock);
             LOG_ERROR("ssn client poll: connection of client %d lost", client->cid);
         }
         cnt = 0;
