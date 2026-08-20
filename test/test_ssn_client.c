@@ -599,6 +599,49 @@ static int test_callback_reentrant(void)
     return 0;
 }
 
+/* ---- Test 13: 空闲连接 poll 不误判断开（回归 Issue #22） ----
+ *
+ * 缺陷：ssn_client_process_events 的局部变量 pkt_e 未初始化——当 socket 无数据
+ * （did_recv=false）时 pkt_e 读取未初始化内存（UB），垃圾值可能为 true → 误判
+ * 「连接丢失」→ 断开。cliauto CONNECTED 分支（v2.5.1 保活改造后）每次 tick 都
+ * 调 ssn_client_poll，连接空闲时即触发，导致连接建立后 ~50ms 误断并循环重连。
+ * 回归：连接建立后保持完全空闲（无消息/无 ping），反复 poll 空闲 socket 200ms，
+ *       is_connect 必须始终为 true（不误断）。
+ */
+static int test_idle_connect_stays_alive(void)
+{
+    printf("  Test 13: Idle connect stays alive across polls... ");
+    pthread_t tid; ssn_server_t *srv = start_test_server(&tid, "/idle");
+    if (!srv) { printf("FAIL (server)\n"); return 1; }
+
+    ssn_client_t *cli = ssn_client_create();
+    struct timespec ts = { .tv_sec = 3, .tv_nsec = 0 };
+    if (!cli || !ssn_client_connect(cli, TEST_SERVER_ADDR, &ts)) {
+        if (cli) ssn_client_close(cli); stop_test_server(srv, tid);
+        printf("FAIL (connect)\n"); return 1;
+    }
+
+    /* 连接后保持空闲：不发消息、不 ping，反复 poll 空闲 socket。
+     * 修复前 pkt_e 未初始化导致 poll 偶发误判断开（is_connect 变 false）。 */
+    int disconnected = 0;
+    for (int i = 0; i < 20; i++) {
+        ssn_client_poll(cli, 10);
+        if (!ssn_client_is_connect(cli)) {
+            disconnected = 1;
+            break;
+        }
+        usleep(10000);
+    }
+
+    int ok = !disconnected;
+    ssn_client_close(cli);
+    stop_test_server(srv, tid);
+
+    if (!ok) { printf("FAIL (idle connect falsely disconnected)\n"); return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -616,7 +659,8 @@ int main(void)
     failed += test_connect_fail_fd_leak();
     failed += test_slow_handshake_connect();
     failed += test_callback_reentrant();
+    failed += test_idle_connect_stays_alive();
 
-    printf("=== Result: %d/12 passed, %d failed ===\n", 12 - failed, failed);
+    printf("=== Result: %d/13 passed, %d failed ===\n", 13 - failed, failed);
     return failed ? 1 : 0;
 }

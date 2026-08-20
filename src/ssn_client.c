@@ -1119,7 +1119,10 @@ out:
  */
 static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 {
-    bool pkt_e;
+    /* pkt_e 必须初始化（缺陷背景：未初始化 UB——socket 无数据（did_recv=false）
+     * 时 pkt_e 读栈垃圾值，可能为 true 导致误判「连接丢失」断开，触发 cliauto
+     * 连接建立后 ~50ms 循环重连（Issue #22）） */
+    bool pkt_e = false;
     ssize_t num;
     ssn_header_t *ipc_hdr;
     ssn_pending_request_t *pendq;

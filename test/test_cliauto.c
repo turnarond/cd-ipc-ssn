@@ -221,6 +221,54 @@ static void test_ping_api(void)
     ssn_server_destroy(srv);
 }
 
+/* ---- Test 5: cliauto 空闲连接不误判断开（回归 Issue #22） ----
+ *
+ * 缺陷：ssn_client_process_events 的局部变量 pkt_e 未初始化——socket 无数据
+ * （did_recv=false）时读取未初始化栈值（UB），垃圾值可能为 true → 误判连接丢失
+ * → 断开。v2.5.1 cliauto CONNECTED 分支每次 tick 都 poll，空闲连接触发
+ * 「建立后 ~50ms 误断 → 循环重连」（复现程序 -O2 下约 10% 概率）。
+ * 回归：cliauto 连上后空闲运行，多次连接循环，期间不得出现断开回调。
+ */
+static void test_idle_connect_no_false_disconnect(void)
+{
+    printf("Test 5: cliauto 空闲连接不误判断开（Issue #22）...\n");
+    pthread_t tid;
+    ssn_server_t *srv = start_test_server(&tid);
+    CHECK(srv != NULL, "启动测试服务端");
+
+    /* 多次连接循环（提高未初始化 UB 触发概率，修复前 -O2 下可捕捉） */
+    bool ok = true;
+    for (int round = 0; round < 5 && ok; round++) {
+        ssn_client_auto_t *cliauto = ssn_client_auto_create();
+        CHECK(cliauto != NULL, "创建 cliauto");
+
+        ssn_client_auto_setup(cliauto, conn_cb, NULL);
+        g_connect_events = 0;
+        g_disconnect_events = 0;
+        bool started = ssn_client_auto_start(cliauto, TEST_SERVER_ADDR, NULL, 0,
+                                             1000 /* keepalive ms */, 1000 /* conn_timeout */,
+                                             1000 /* reconn_delay：与 Issue 环境一致 */);
+        CHECK(started, "start 成功");
+
+        /* 等待连接建立后空闲运行 2 秒（无业务流量，仅 ping 应答） */
+        usleep(300000);
+        int disc = 0;
+        for (int i = 0; i < 20; i++) {
+            usleep(100000);
+            disc = __atomic_load_n(&g_disconnect_events, __ATOMIC_SEQ_CST);
+            if (disc > 0) break;
+        }
+        if (disc > 0) {
+            ok = false;
+        }
+        ssn_client_auto_stop(cliauto);
+        ssn_client_auto_delete(cliauto);
+    }
+    CHECK(ok, "5 轮空闲连接均无断开事件（不误判断开）");
+
+    stop_test_server(srv, tid);
+}
+
 int main(void)
 {
     printf("=== Client Auto (cliauto) Tests ===\n\n");
@@ -228,6 +276,7 @@ int main(void)
     test_start_stop_validation();
     test_disconnect_detection();
     test_ping_api();
+    test_idle_connect_no_false_disconnect();
     printf("\n=== Result: %d passed, %d failed ===\n",
            g_tests_passed, g_tests_failed);
     return g_tests_failed > 0 ? 1 : 0;
