@@ -2,6 +2,35 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.4] - 2026-08-21
+
+### Fixed
+- **`ssn_client_set_on_publish` 死接线（P1-3）**：`ssn_client_handle_publish` 无匹配
+  订阅时仅兜底 onmsg、从不读 onsub——cliauto 内部 `set_on_publish(ssn_client_auto_msg_cb)`
+  永不触发，订阅消息丢失。修复：无匹配时优先调用 onsub（PUBLISH 语义），再兜底 onmsg
+
+### Cleanup（工程化评审批次 B）
+- **死代码批量删除（P1-11，均有 grep 零引用依据）**：`ssn_set_url`、`ssn_address_copy/equal`、
+  `SSN_ERR_*` 枚举（ssn_error_t 更名残留）、factory `register/cleanup/is_type_supported/
+  get_supported_types`、`ssn_node_run`、`ssn_server_peer_address`、hash_table
+  `contains/capacity/is_empty/foreach/hash_int/hash_pointer` + allocator typedef、
+  vsi `ipc_socket_shutdown/set_send_timeout/bind_to_interface`、未用变量
+  （ssn_client_connect 的 errcode/ret/on/off/opt/suc、ssn_server_start 的 en）——共 370 行
+- **重构（DRY）**：抽取 `ssn_client_collect_and_call_pending`（消灭三份「锁内收集
+  pending + 锁外回调」拷贝，含三份 struct timeout_item 定义）；抽取
+  `node_ensure_connected`（消灭 send_to_peer/subscribe/rpc_call 三份「未连接则
+  connect + 更新 peer_address」拷贝）
+- **常量收敛（P1-12）**：`IPC_*` 应用层常量改名 `SSN_*`（TIMER_PERIOD/SERVER_BACKLOG/
+  DEF_SEND_TIMEOUT/SERVER_DEF_HANDSHAKE_TIMEOUT/SERVER_KEEPALIVE_TIMEOUT），
+  消除与 ssn_ 命名体系并存；删除 transport 死宏（MAX_BUFFER_SIZE/DEFAULT_TIMEOUT_MS/
+  DEFAULT_BACKLOG）
+- 注释/命名/拼写清理：文件头 `ipc_*`→`ssn_*`、`IPC client/server`→`SSN`、
+  `sendmsg faield`/`Registeation` 拼写、过时 TODO（deal recv msg / init recv buffer /
+  搬迁残留）、connect 默认超时注释（3 秒非 5 秒）
+
+### Changed
+- 测试：16 套件 715 例保持全绿；verify_exports 通过（151 符号、25 关键 API）
+
 ## [2.5.3] - 2026-08-21
 
 ### Fixed
