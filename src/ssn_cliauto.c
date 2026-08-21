@@ -370,7 +370,7 @@ static void *ssn_client_auto_thread(void *arg)
                      * 永不触发；SSN_CLIENT_AUTO_MAX_PING_LOST 无任何引用）。
                      * 每次 tick：发送 PING_ECHO（服务端原样回显），连续
                      * SSN_CLIENT_AUTO_MAX_PING_LOST 次无应答判定断开。 */
-                    if (ssn_client_ping(cliauto->client, 50)) {
+                    if (ssn_client_ping(cliauto->client, cliauto->keepalive)) {
                         pthread_mutex_lock(&cliauto->mutex);
                         cliauto->ping_lost = 0;
                         pthread_mutex_unlock(&cliauto->mutex);
@@ -402,6 +402,16 @@ static void *ssn_client_auto_thread(void *arg)
                         if (cliauto->onconn) {
                             cliauto->onconn(cliauto->conn_arg, cliauto, false);
                         }
+                    }
+
+                    /* 缺陷背景：原实现无 keepalive 睡眠——CONNECTED 分支以
+                     * ping(50ms)+poll(10ms) 忙等循环（约 60ms/圈），keepalive
+                     * 参数被静默忽略（与头文件/文档「keepalive 为 ping 间隔」
+                     * 不符，且空闲连接持续空转占用 CPU）。修复：每 tick 结束后
+                     * 按 keepalive 睡眠（ping 间隔）；ping 超时窗口也取 keepalive
+                     * 而非硬编码 50ms（见上方 ssn_client_ping 调用）。 */
+                    if (cliauto->keepalive > 0) {
+                        usleep((useconds_t)cliauto->keepalive * 1000);
                     }
                 }
                 break;

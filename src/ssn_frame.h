@@ -191,13 +191,17 @@ bool SSN_API ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
 bool SSN_API ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
 
 /**
- * @brief IPC流输入处理
+ * @brief IPC流输入处理（粘包重组）
  * @param recv 流接收上下文
  * @param buf 输入缓冲区
  * @param buf_len 缓冲区长度
  * @param callback 数据包处理回调函数
  * @param arg 回调参数
  * @return 处理成功返回true，失败返回false
+ * 
+ * 回调语义：返回 true 继续处理后续包；返回 false 表示「请求停止处理」
+ * （调用方主动中止，如连接已关闭）——stream_feed 视为正常结束并返回 true，
+ * 不是错误。返回 false 仅表示流层错误（缓冲区溢出/头部无效/数据被截断）。
  */
 bool SSN_API ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
                        ssn_packet_handler_t callback, void *arg);
