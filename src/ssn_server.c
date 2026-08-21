@@ -46,6 +46,10 @@ typedef struct ssn_server_hst {
     struct ssn_server_hst *next;
     struct ssn_server_hst *prev;
     int alive;
+    bool linked;   /* 是否在 server->hst_h 链表中（缺陷背景：alive==0 同时表示
+                    * 「定时器到期未消费」与「已摘除」二义，cli_destroy 无法据此
+                    * 判断链表归属 → 到期与 FIN 并发时跳过摘除即 free → 残留节点
+                    * 被 event_input 遍历 → UAF。显式 linked 标志消除二义） */
 } ssn_server_hst_t;
 
 /* Client node */
@@ -239,6 +243,7 @@ static void ssn_server_cli_init(ssn_server_t *server, ssn_server_cli_t *cli)
     INSERT_TO_HEADER(cli, server->clis[hash]);
 
     cli->hst.alive = server->handshake_timeout;
+    cli->hst.linked = true;   /* 入 hst 链表（与 INSERT_TO_HEADER 同步维护） */
     INSERT_TO_HEADER(&cli->hst, server->hst_h);
     LOG_DEBUG("ssn server cli init success");
 }
@@ -258,8 +263,12 @@ static void ssn_server_cli_destroy(ssn_server_t *server, ssn_server_cli_t *cli)
 
     DELETE_FROM_LIST(cli, server->clis[hash]);
 
-    if (cli->hst.alive) {
-        cli->hst.alive = 0;
+    /* 缺陷背景：原用 cli->hst.alive 判断是否摘除——alive==0 二义（到期未消费
+     * vs 已摘除），定时器到期与对端 FIN 并发时（FIN 先触发 destroy、alive==0）
+     * 跳过摘除即 free，残留 hst 节点随后被 event_input 遍历 → UAF。改用显式
+     * linked 标志判断链表归属，摘除后置 false。 */
+    if (cli->hst.linked) {
+        cli->hst.linked = false;
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
 
@@ -1349,8 +1358,9 @@ static bool ssn_server_handle_service_info(ssn_server_t *server, ssn_server_cli_
      * idle 禁用（keepalive_timeout <= 0）时保持原语义：清零并移出链表 */
     if (server->keepalive_timeout > 0) {
         cli->hst.alive = server->keepalive_timeout * 1000;
-    } else if (cli->hst.alive) {
+    } else if (cli->hst.linked) {
         cli->hst.alive = 0;
+        cli->hst.linked = false;
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
     
@@ -1641,6 +1651,7 @@ static void ssn_server_handle_event_input(ssn_server_t *server, const fd_set *rf
 
         LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
             if (hst->alive == 0) {
+                hst->linked = false;   /* 先摘除再销毁（与 cli_destroy 的 linked 判断同步） */
                 DELETE_FROM_LIST(hst, server->hst_h);
 
                 cli = (ssn_server_cli_t *)((char *)hst - offsetof(ssn_server_cli_t, hst));

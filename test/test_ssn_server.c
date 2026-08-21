@@ -509,6 +509,76 @@ static int test_zero_handshake_timeout(void)
     return 0;
 }
 
+/* ---- Test 10: 握手超时到期与对端 FIN 并发（hst 链表 UAF 回归） ----
+ *
+ * 缺陷背景：ssn_server_cli_destroy 用 cli->hst.alive 判断是否从 hst 链表摘除，
+ * 而 alive==0 同时表示「定时器已到期但事件未消费」与「已摘除」二义。竞态：
+ * 定时器（独立线程，不依赖 poll）将 alive 置 0 并 signal evtfd → 对端 FIN
+ * 触发 recv 0 → destroy 因 alive==0 跳过摘除 → free(cli) → 之后
+ * handle_event_input 对已释放节点 DELETE_FROM_LIST + 读 cli->transport → UAF。
+ * 回归：主线程手动控制 poll 时机——先让定时器归零 signal（不消费），再 FIN，
+ * 最后单次 poll 同时看到 FIN+evtfd 两事件（clis 先处理 → UAF 确定性触发）。
+ * 修复前 ASAN 报 heap-use-after-free，修复后全绿。
+ */
+static int test_handshake_timeout_fin_race(void)
+{
+    printf("  Test 10: Handshake-timeout + FIN race (hst UAF)... ");
+
+    const int ROUNDS = 20;
+    for (int r = 0; r < ROUNDS; r++) {
+        server_options_t opts = {
+            .send_timeout_ms = 5000,
+            .conn_timeout_ms = 60,       /* 短握手超时：~50ms 内 alive 归零并 signal evtfd */
+            .idle_timeout_sec = 60,
+            .ifname = ""
+        };
+        ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+        if (!srv) { printf("FAIL (create round %d)\n", r); return 1; }
+        if (!ssn_server_start(srv)) {
+            printf("FAIL (start round %d)\n", r); ssn_server_destroy(srv); return 1;
+        }
+        /* 不启动 poll 线程：定时器线程独立运行，主线程手动控制 poll 时机 */
+
+        /* 裸 TCP 连接（不发握手包）：cli 进入 hst 链表，alive=60ms 倒计时 */
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            printf("FAIL (socket round %d)\n", r);
+            ssn_server_destroy(srv);
+            return 1;
+        }
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        const char *path = TEST_SERVER_ADDR + strlen("unix://");
+        strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            printf("FAIL (connect round %d)\n", r);
+            close(fd);
+            ssn_server_destroy(srv);
+            return 1;
+        }
+
+        /* 步骤 1：不 poll，等定时器 tick（50ms）把 alive 减到 0 并 signal evtfd */
+        usleep(80000);
+
+        /* 步骤 2：对端 FIN（此时 evtfd 已 signal 但未被消费） */
+        close(fd);
+
+        /* 步骤 3：单次 poll——pselect 同时返回 cli fd（FIN）与 evtfd →
+         * clis 先处理（recv 0 → destroy，alive==0 跳过 hst 摘除 → free），
+         * 随后 handle_event_input 遍历残留 hst 节点 → UAF */
+        ssn_server_poll(srv, 0);
+
+        /* 再 poll 一轮让事件循环收敛 */
+        usleep(100000);
+        ssn_server_poll(srv, 0);
+
+        ssn_server_destroy(srv);
+    }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -523,7 +593,8 @@ int main(void)
     failed += test_active_connection_kept();
     failed += test_empty_connection_not_blocking();
     failed += test_zero_handshake_timeout();
+    failed += test_handshake_timeout_fin_race();
 
-    printf("=== Result: %d/9 passed, %d failed ===\n", 9 - failed, failed);
+    printf("=== Result: %d/10 passed, %d failed ===\n", 10 - failed, failed);
     return failed ? 1 : 0;
 }
