@@ -201,7 +201,7 @@ SSN_API uint32_t ssn_node_get_capabilities(ssn_node_t *node);
  * @param node Node instance
  * @return Client instance, or NULL if not available
  */
-ssn_client_t *ssn_node_get_client(ssn_node_t *node);
+SSN_API ssn_client_t *ssn_node_get_client(ssn_node_t *node);
 
 /**
  * @brief Get server handle from node
@@ -211,7 +211,7 @@ ssn_client_t *ssn_node_get_client(ssn_node_t *node);
  * @param node Node instance
  * @return Server instance, or NULL if not available
  */
-ssn_server_t *ssn_node_get_server(ssn_node_t *node);
+SSN_API ssn_server_t *ssn_node_get_server(ssn_node_t *node);
 
 /**
  * @brief Send message to a peer

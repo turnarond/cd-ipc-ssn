@@ -1,6 +1,6 @@
 # ssn (cd-ipc-ssn)
 
-**版本: 2.5.2**
+**版本: 2.5.3**
 
 SSN (Scalable Socket Network) is a lightweight inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
 
@@ -273,19 +273,21 @@ cmake .. && make -j$(nproc)
 | `test_transport` | 传输层完整测试（创建、连接、收发、工厂、IPv6） | 67 |
 | `test_node_basic` | 节点基础生命周期 | 3 |
 | `test_node` | 节点完整功能（创建、启停、PubSub、RPC、统计） | 6 |
-| `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 25 |
+| `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 31 |
 | `test_protocol_integration` | 协议层集成测试（RPC、PubSub、Msg 全链路） | 19 |
-| `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle 超时） | 8 |
-| `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手） | 12 |
+| `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle/握手超时、hst UAF 回归） | 10 |
+| `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手、并发 poll+connect） | 14 |
+| `test_cliauto` | 自动重连客户端（keepalive/断线检测/空闲不误断） | 31 |
+| `test_hash_table` | 哈希表（含字符串键回归） | 50 |
 | `test_cpp_*` | C++ 服务框架 7 套件（生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 485 |
 
-**合计：自动化 14 套件 625 例**，另有 3 个手工套件（需自行启动服务端）与
+**合计：自动化 16 套件 715 例**，另有 3 个手工套件（需自行启动服务端）与
 19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
-# 一键：构建 + 全部 14 个自动化套件（位置无关）
+# 一键：构建 + 全部 16 个自动化套件（位置无关）
 bash test/run_tests.sh
 
 # 或构建后逐个运行
@@ -301,6 +303,7 @@ cd build
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| 2.5.3 | 2026-08-21 | 工程化评审批次 A：hst 链表 UAF / 锁内忙等 / 无锁登记 / 导出缺失 / ping 栈 UAF 等 P0+P1 修复 |
 | 2.5.2 | 2026-08-20 | 空闲连接误判断开修复（Issue #22：pkt_e 未初始化 UB） |
 | 2.5.1 | 2026-08-20 | 遗留技术债修复（Issue #14-19：cliauto 保活/握手竞态/哈希表字符串键/框架版本化/命名清理/协议层） |
 | 2.5.0 | 2026-08-20 | CMake 包配置（find_package）、GitHub Actions CI、docsify 文档网站 |

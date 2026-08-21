@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include "ssn_frame.h"
 #include "util/ssn_log.h"
 #include <errno.h>
@@ -130,26 +131,50 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     // 发送消息：循环处理部分写入（TCP 大包/慢对端/小 SO_SNDBUF 下 send 可能
     // 只发送部分字节，单次 send 返回后剩余数据必须补发，否则对端收到残缺帧）
     /* EAGAIN 重试受 transport 发送超时约束：慢客户端/满缓冲区不应无限持锁阻塞
-     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS） */
+     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS）。
+     * 缺陷背景：原实现遇 EAGAIN 用 nanosleep(1ms) 盲重试（最多 send_timeout_ms
+     * 次），不检测 socket 可写性——慢对端填满 SO_SNDBUF 后，服务端唯一事件循环
+     * 持锁空转最多 5s，期间所有 recv/握手/超时停滞。修复：改用 poll(POLLOUT)
+     * 等待可写（一次等待，受剩余超时预算约束），可写后立即重试 send。 */
     int send_timeout_ms = transport->config.send_timeout_ms > 0 ?
                           transport->config.send_timeout_ms : 5000;
     uint64_t deadline_ms = (uint64_t)send_timeout_ms;
+    int sock_fd = ssn_transport_get_fd(transport);
     size_t sent = 0;
     while (sent < pos) {
         send_len = ssn_transport_send(transport, buffer + sent, pos - sent);
         if (send_len > 0) {
             sent += (size_t)send_len;
         } else if (send_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            /* 非阻塞发送缓冲区满：受 deadline 约束让步重试，超时则放弃 */
-            if (deadline_ms == 0) {
+            /* 非阻塞发送缓冲区满：poll(POLLOUT) 等待可写（受 deadline 约束），
+             * 可写后重试；超时则放弃。比盲 nanosleep 高效且不空转持锁。 */
+            if (deadline_ms == 0 || sock_fd < 0) {
                 LOG_ERROR("ssn send message failed: send timeout after %d ms",
                           send_timeout_ms);
                 return false;
             }
-            struct timespec ts = { 0, 1000000 }; /* 1ms */
-            nanosleep(&ts, NULL);
-            deadline_ms--;
-            continue;
+            struct pollfd pfd;
+            pfd.fd = sock_fd;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+            int wait_ms = (int)(deadline_ms < 100 ? deadline_ms : 100);
+            int pr = poll(&pfd, 1, wait_ms);
+            if (pr < 0 && errno != EINTR) {
+                LOG_ERROR("ssn send message failed: poll error %s", strerror(errno));
+                return false;
+            }
+            /* 消耗等待预算：poll 超时（pr==0）全额扣除；就绪/中断按等待量扣除
+             * （保守取 wait_ms，保证总阻塞不超过 send_timeout_ms） */
+            if (deadline_ms <= (uint64_t)wait_ms) {
+                deadline_ms = 0;
+            } else {
+                deadline_ms -= (uint64_t)wait_ms;
+            }
+            if (pr > 0 && (pfd.revents & (POLLOUT | POLLERR | POLLHUP))) {
+                /* 可写（含对端关闭/错误）：再试一次 send；若 POLLERR/POLLHUP
+                 * 则下一次 send 会返回错误并走失败分支 */
+                continue;
+            }
         } else {
             LOG_ERROR("ssn send message failed: send returned %zd (errno %d)",
                       send_len, errno);
@@ -160,7 +185,11 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     return true;
 }
 
-ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
+/* 定义处显式 default 可见性（缺陷背景：-O3 + -fvisibility=hidden 下 GCC 对
+ * 部分「声明带 default 但被库内调用」的函数在 IPA 路径丢弃可见性，符号残留
+ * GLOBAL HIDDEN → 外部链接失败（P1-1）。声明处 SSN_API 对多数函数生效，此处
+ * 为 create_header/packet_input 补定义处属性兜底） */
+__attribute__((visibility("default"))) ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
 {
     if (!outb) return NULL;
 
@@ -224,7 +253,7 @@ bool ssn_get_data(const ssn_header_t *ipc_hdr, ssn_data_ref_t *data)
     return true;
 }
 
-ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
+__attribute__((visibility("default"))) ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
 {
     if (!buf || buf_len == 0) return NULL;
     size_t total_len;

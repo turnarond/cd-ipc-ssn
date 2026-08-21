@@ -52,7 +52,7 @@ static struct {
  * @param error 错误码
  * @return 错误消息字符串
  */
-const char* ssn_ecode_message(ssn_ecode_t error) {
+__attribute__((visibility("default"))) const char* ssn_ecode_message(ssn_ecode_t error) {
     for (int i = 0; error_messages[i].message != NULL; i++) {
         if (error_messages[i].error == error) {
             return error_messages[i].message;

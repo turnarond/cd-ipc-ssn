@@ -2,6 +2,56 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.3] - 2026-08-21
+
+### Fixed
+- **服务端 hst 链表 UAF（P0，确定性堆破坏）**：`ssn_server_cli_destroy` 用
+  `cli->hst.alive` 判断是否从 hst 链表摘除，而 alive==0 同时表示「定时器到期未消费」
+  与「已摘除」二义——定时器将 alive 置 0 并 signal evtfd 后、evtfd 被消费前，对端
+  FIN 触发 recv 0 → destroy 因 alive==0 跳过摘除即 free(cli)，残留 hst 节点随后被
+  `ssn_server_handle_event_input` 遍历（DELETE_FROM_LIST + 读 cli->transport）→ UAF。
+  修复：hst 增加显式 `linked` 标志（入链置 true、摘除置 false），三处摘除路径统一
+  以 linked 判断链表归属；回归测试：`test_ssn_server` Test 10（手动控制 poll 时序，
+  修复前 ASAN 稳定报 heap-use-after-free）
+- **锁内 EAGAIN 忙等（P0，慢对端冻结服务端 5s/DoS）**：`ssn_send_message` 非阻塞
+  send 遇 EAGAIN 时 `nanosleep(1ms)` 盲重试最多 send_timeout_ms（默认 5000ms），
+  不检测 socket 可写性；调用方持锁（server_response/do_publish/client_call），慢对端
+  填满 SO_SNDBUF 后事件循环持锁空转最多 5s。修复：改 `poll(POLLOUT)` 等待可写
+  （受剩余超时预算约束），可写后立即重试
+- **`ssn_client_request` 无锁 pending 登记 + ref 泄漏（P0）**：subscribe/unsubscribe/
+  ping 的 `alloc_pending_index`+`seqno++`+`seqno_to_index` 登记在加锁前执行，与定时器
+  线程、并发请求竞态（槽位重复/seqno 重复 → 应答串线）；pending 池满时 return false
+  未 unref（引用泄漏）。修复：登记整体移入锁内（与 call_ex 对齐），失败路径补 unref
+- **公开 API 导出缺失（P1）**：`-fvisibility=hidden` 下 ssn_frame.h/ssn_error.h/
+  ssn_node.h 部分函数未标 SSN_API 不导出（外部 find_package 消费者链接失败）；
+  且 -O3 下声明处 default 可见性可能被 IPA 丢弃（符号残留 GLOBAL HIDDEN）。修复：
+  补 SSN_API + `used`+`noinline` 属性 + 关键函数定义处兜底；新增
+  `test/verify_exports.sh`（nm -D 断言 25 个关键 API 导出）并接入 CI
+- **`ssn_client_ping` 栈 use-after-return（P1）**：回调 arg 指向栈上 volatile bool，
+  超时返回后 pending 残留，迟到应答/超时回调写已失效栈帧。修复：等待结束后主动
+  撤销 pending 登记
+- **RPC 方法并发移除 UAF（P1）**：`ssn_server_handle_rpc_request` 解锁后读取
+  `cmd->arg`，跨线程 remove_method 时读已释放内存。修复：锁内拷贝 callback 与 arg
+- **`ssn_server_run` 无引用计数守卫（P1）**：跨线程 destroy 后 run 循环仍访问
+  server（UAF）且未 start 时无限空转。修复：循环持引用计数 + valid 守卫 +
+  max_fd<0 退出（对齐 poll 的 ref 模式）
+- **`ssn_client_send_timeout` 忽略 connect 结果（P1）**：重建 transport 时 connect
+  失败仍发布 fd=-1 的新 transport（假连接状态卡死）。修复：失败保留旧 transport
+- **并发 `ssn_client_close` 双重删除全局链表（P1）**：valid 检查/置位与链表删除
+  分属不同锁，双线程 close 时第二个 DELETE 命中已摘除节点 → 链表头丢失。修复：
+  valid 检查/置位移入 client->lock
+- **`free_pending_index` 不清 seqno 映射（P1）**：槽位释放后 seqno_to_index 残留，
+  seqno 回绕/迟到应答错配。修复：释放时同步清映射（校验槽位 seqno）
+- **NULL 解引用（P1/P2）**：`ssn_client_fds(NULL)` 先解引用 evtfd、
+  `ssn_client_subscribe` 未连接时日志参数解引用 NULL url——判空前置
+- **删除 `src/core/ssn_global.h` 死头文件（P0）**：与 `src/ssn_global.h` 同名同
+  保护宏、内含冲突常量与遗留 API，任何 TU 误包含会静默吞掉真实头文件声明
+
+### Changed
+- 测试数字同步：自动化 16 套件 715 例（C 230 + C++ 485，实测）；README/部署手册/
+  工程规范/测试架构/CLAUDE.md 全量核对；CI 注释 14→16 套件
+- 测试体系：`test_ssn_server` 新增 Test 10（hst UAF 回归），10 用例
+
 ## [2.5.2] - 2026-08-20
 
 ### Fixed
