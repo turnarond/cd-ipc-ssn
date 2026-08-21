@@ -683,9 +683,6 @@ static bool ssn_client_conn_input(ssn_header_t *ipc_hdr, void *varg)
 bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
                         const struct timespec *timeout)
 {
-    int errcode, ret, on = 1, off = 0;
-    bool suc = false;
-    char *opt;
     fd_set fds;
     size_t len = 0;
     ssize_t num;

@@ -75,7 +75,6 @@ SSN_API int ssn_server_peer_list(ssn_server_t *server, ssn_peer_id_t ids[], int 
 
 /* Get address (must be called after `ssn_server_start`) */
 SSN_API int ssn_server_address(ssn_server_t *server, struct sockaddr *addr, socklen_t *namelen);
-SSN_API int ssn_server_peer_address(ssn_server_t *server, ssn_peer_id_t id, struct sockaddr *addr, socklen_t *namelen);
 
 /* Publish Management */
 SSN_API bool ssn_server_is_subscribed(ssn_server_t *server, const ssn_url_ref_t *url);

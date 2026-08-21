@@ -527,22 +527,6 @@ int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms)
 }
 
 /**
- * @brief Run node event loop
- */
-void ssn_node_run(ssn_node_t *node)
-{
-    if (!node) {
-        return;
-    }
-
-    while (true) {
-        if (ssn_node_poll(node, 100) < 0) {
-            break;
-        }
-    }
-}
-
-/**
  * @brief Get node statistics
  */
 bool ssn_node_get_stats(ssn_node_t *node, int *active_connections, uint64_t *total_messages)

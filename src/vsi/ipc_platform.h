@@ -86,9 +86,6 @@ typedef int ipc_socket_t;
 
 ipc_socket_t ipc_socket_create(int family, int type, int protocol, bool nonblocking);
 void         ipc_socket_close(ipc_socket_t sock);
-void         ipc_socket_shutdown(ipc_socket_t sock);
-void         ipc_socket_set_send_timeout(ipc_socket_t sock, int timeout_ms);
-bool         ipc_socket_bind_to_interface(ipc_socket_t sock, const char *ifname);
 
 /* ==================== Event Pair ==================== */
 typedef struct ipc_event_pair ipc_event_pair_t;

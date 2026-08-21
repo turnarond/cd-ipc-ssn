@@ -475,8 +475,6 @@ ssn_server_t *ssn_server_create(const char *server_info)
  */
 bool ssn_server_start(ssn_server_t *server)
 {
-    int en = 1;
-
     if (!server || !server->valid) {
         ssn_handle_error(SSN_ECODE_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid server handle");
         return  (false);
@@ -1029,66 +1027,6 @@ void ssn_server_remove_method (ssn_server_t *server, const ssn_url_ref_t *url)
     }
 
     LOG_DEBUG("ssn server remove method %.*s success.", (int)url->url_len, url->url);
-}
-
-/**
- * @brief 获取远程客户端地址
- * 
- * @param server 服务器实例指针
- * @param id 客户端ID
- * @param addr 地址结构体
- * @param namelen 地址长度
- * @return 获取成功返回true，失败返回false
- */
-int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sockaddr *addr, socklen_t *namelen)
-{
-    ssn_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        LOG_ERROR("ssn server peer address: invalid server handle.");
-        return  (false);
-    }
-
-    ipc_mutex_lock(server->lock);
-
-    cli = ssn_server_cli_find(server, id);
-    if (!cli || !cli->transport) {
-        ipc_mutex_unlock(server->lock);
-        if (!cli) {
-            LOG_ERROR("ssn server peer address: client not found for id %d.", id);
-        } else {
-            LOG_ERROR("ssn server peer address: invalid client handle %d.", cli->id);
-        }
-        return  (false);
-    }
-
-    // 使用transport的get_address方法获取地址
-    ssn_address_t ssn_addr;
-    if (!ssn_transport_get_address(cli->transport, &ssn_addr)) {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: get_address failed");
-        return  (false);
-    }
-
-    // 复制地址到输出参数
-    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
-        memcpy(addr, &ssn_addr.addr.unix_addr, sizeof(struct sockaddr_un));
-        *namelen = sizeof(struct sockaddr_un);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP || ssn_addr.type == SSN_TRANSPORT_UDP) {
-        memcpy(addr, &ssn_addr.addr.inet_addr, sizeof(struct sockaddr_in));
-        *namelen = sizeof(struct sockaddr_in);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP6 || ssn_addr.type == SSN_TRANSPORT_UDP6) {
-        memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
-        *namelen = sizeof(struct sockaddr_in6);
-    } else {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: unsupported address type");
-        return  (false);
-    }
-
-    ipc_mutex_unlock(server->lock);
-
-    return  (true);
 }
 
 /**

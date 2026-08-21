@@ -35,22 +35,6 @@ typedef enum {
     SSN_TRANSPORT_DTLS
 } ssn_transport_type_t;
 
-typedef enum {
-    SSN_ERR_SUCCESS = 0,
-    SSN_ERR_INVALID_ARGS,
-    SSN_ERR_OUT_OF_MEMORY,
-    SSN_ERR_NET_CONNECT,
-    SSN_ERR_NET_READ,
-    SSN_ERR_NET_WRITE,
-    SSN_ERR_TIMEOUT,
-    SSN_ERR_NOT_FOUND,
-    SSN_ERR_ALREADY_EXISTS,
-    SSN_ERR_PERMISSION_DENIED,
-    SSN_ERR_PROTOCOL_ERROR,
-    SSN_ERR_TRANSPORT_ERROR,
-    SSN_ERR_INTERNAL_ERROR
-} ssn_error_t;
-
 typedef struct {
     ssn_transport_type_t type;
     union {
@@ -139,8 +123,6 @@ SSN_API bool ssn_address_parse(const char* address_str, ssn_address_t* addr);
 SSN_API bool ssn_address_to_string(const ssn_address_t* addr,
                             char* buffer,
                             size_t size);
-SSN_API bool ssn_address_copy(const ssn_address_t* src, ssn_address_t* dst);
-SSN_API bool ssn_address_equal(const ssn_address_t* addr1, const ssn_address_t* addr2);
 
 SSN_API ssn_transport_t* ssn_transport_create(ssn_transport_type_t type,
                                        const ssn_transport_config_t* config);

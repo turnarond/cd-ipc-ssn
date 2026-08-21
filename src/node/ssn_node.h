@@ -340,13 +340,6 @@ SSN_API void ssn_node_set_client_message_handler(ssn_node_t *node,
 SSN_API int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms);
 
 /**
- * @brief Run node event loop
- * 
- * @param node Node instance
- */
-SSN_API void ssn_node_run(ssn_node_t *node);
-
-/**
  * @brief Get node statistics
  * 
  * @param node Node instance
