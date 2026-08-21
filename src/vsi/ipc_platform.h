@@ -41,11 +41,11 @@ extern "C" {
 #endif
 
 /* Server timer period (ms) */
-#define IPC_TIMER_PERIOD                    50
-#define IPC_SERVER_BACKLOG                  32
-#define IPC_DEF_SEND_TIMEOUT                100     // ms
-#define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
-#define IPC_SERVER_KEEPALIVE_TIMEOUT        10      // seconds
+#define SSN_TIMER_PERIOD                    50
+#define SSN_SERVER_BACKLOG                  32
+#define SSN_DEF_SEND_TIMEOUT                100     // ms
+#define SSN_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
+#define SSN_SERVER_KEEPALIVE_TIMEOUT        10      // seconds
 
 #if defined(IPC_PLATFORM_SYLIXOS) || defined(IPC_PLATFORM_LINUX)
     #define IPC_INHERIT_NODELAY 1
@@ -86,9 +86,6 @@ typedef int ipc_socket_t;
 
 ipc_socket_t ipc_socket_create(int family, int type, int protocol, bool nonblocking);
 void         ipc_socket_close(ipc_socket_t sock);
-void         ipc_socket_shutdown(ipc_socket_t sock);
-void         ipc_socket_set_send_timeout(ipc_socket_t sock, int timeout_ms);
-bool         ipc_socket_bind_to_interface(ipc_socket_t sock, const char *ifname);
 
 /* ==================== Event Pair ==================== */
 typedef struct ipc_event_pair ipc_event_pair_t;

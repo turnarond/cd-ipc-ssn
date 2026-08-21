@@ -1,5 +1,5 @@
 /*
- * ipc_node_comm.c - Node communication interfaces implementation
+ * ssn_node_comm.c - Node communication interfaces implementation
  *
  * This file implements the communication interfaces for the node abstraction layer,
  * including message sending, publish/subscribe, and RPC functionality.
@@ -64,6 +64,35 @@ static bool connect_to_peer(ssn_node_t *node, const char *peer_address,
 }
 
 /**
+ * @brief 确保 node 客户端已连接到 peer（DRY：send_to_peer/subscribe/rpc_call 共用）
+ * 
+ * 调用方须已通过 connect_to_peer 完成锁内快照与 ref 保活（本函数在锁外执行，
+ * 避免 node->lock→client->lock 死锁）。未连接时阻塞 connect（最长 3s），成功后
+ * 锁内更新 node->peer_address；连接失败返回 false（调用方负责 unref）。
+ * 
+ * @param node Node instance
+ * @param client 已 ref 保活的客户端
+ * @param peer_address Peer address
+ * @param func_name 调用方函数名（日志）
+ * @return true 已连接，false 连接失败
+ */
+static bool node_ensure_connected(ssn_node_t *node, ssn_client_t *client,
+                                  const char *peer_address, const char *func_name)
+{
+    if (!ssn_client_is_connect(client)) {
+        struct timespec timeout = { .tv_sec = 3, .tv_nsec = 0 };
+        if (!ssn_client_connect(client, peer_address, &timeout)) {
+            LOG_ERROR("%s: failed to connect to %s", func_name, peer_address);
+            return false;
+        }
+        ipc_mutex_lock(node->lock);
+        snprintf(node->peer_address, sizeof(node->peer_address), "%s", peer_address);
+        ipc_mutex_unlock(node->lock);
+    }
+    return true;
+}
+
+/**
  * @brief 获取 node 客户端当前连接地址（调用方须已持有 node->lock）
  */
 static const char *peer_address_of(ssn_node_t *node)
@@ -94,16 +123,9 @@ bool ssn_node_send_to_peer(ssn_node_t *node, const char *peer_address,
     }
     ipc_mutex_unlock(node->lock);
 
-    if (!ssn_client_is_connect(client)) {
-        struct timespec timeout = { .tv_sec = 3, .tv_nsec = 0 };
-        if (!ssn_client_connect(client, peer_address, &timeout)) {
-            LOG_ERROR("ssn_node_send_to_peer: failed to connect to %s", peer_address);
-            ssn_client_unref(client);
-            return false;
-        }
-        ipc_mutex_lock(node->lock);
-        snprintf(node->peer_address, sizeof(node->peer_address), "%s", peer_address);
-        ipc_mutex_unlock(node->lock);
+    if (!node_ensure_connected(node, client, peer_address, "ssn_node_send_to_peer")) {
+        ssn_client_unref(client);
+        return false;
     }
 
     /* Send message */
@@ -179,16 +201,9 @@ bool ssn_node_subscribe(ssn_node_t *node, const char *peer_address,
     }
     ipc_mutex_unlock(node->lock);
 
-    if (!ssn_client_is_connect(client)) {
-        struct timespec timeout = { .tv_sec = 3, .tv_nsec = 0 };
-        if (!ssn_client_connect(client, peer_address, &timeout)) {
-            LOG_ERROR("ssn_node_subscribe: failed to connect to %s", peer_address);
-            ssn_client_unref(client);
-            return false;
-        }
-        ipc_mutex_lock(node->lock);
-        snprintf(node->peer_address, sizeof(node->peer_address), "%s", peer_address);
-        ipc_mutex_unlock(node->lock);
+    if (!node_ensure_connected(node, client, peer_address, "ssn_node_subscribe")) {
+        ssn_client_unref(client);
+        return false;
     }
 
     /* Subscribe to topic with per-URL handler */
@@ -264,16 +279,9 @@ int ssn_node_rpc_call(ssn_node_t *node, const char *peer_address,
     }
     ipc_mutex_unlock(node->lock);
 
-    if (!ssn_client_is_connect(client)) {
-        struct timespec timeout = { .tv_sec = 3, .tv_nsec = 0 };
-        if (!ssn_client_connect(client, peer_address, &timeout)) {
-            LOG_ERROR("ssn_node_rpc_call: failed to connect to %s", peer_address);
-            ssn_client_unref(client);
-            return -1;
-        }
-        ipc_mutex_lock(node->lock);
-        snprintf(node->peer_address, sizeof(node->peer_address), "%s", peer_address);
-        ipc_mutex_unlock(node->lock);
+    if (!node_ensure_connected(node, client, peer_address, "ssn_node_rpc_call")) {
+        ssn_client_unref(client);
+        return -1;
     }
 
     /* Make RPC call */

@@ -1,5 +1,5 @@
 /*
- * ipc_node.c - Node abstraction layer implementation
+ * ssn_node.c - Node abstraction layer implementation
  *
  * This file implements the node abstraction layer, providing a unified interface
  * for both client and server capabilities.
@@ -524,22 +524,6 @@ int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms)
     }
 
     return result;
-}
-
-/**
- * @brief Run node event loop
- */
-void ssn_node_run(ssn_node_t *node)
-{
-    if (!node) {
-        return;
-    }
-
-    while (true) {
-        if (ssn_node_poll(node, 100) < 0) {
-            break;
-        }
-    }
 }
 
 /**

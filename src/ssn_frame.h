@@ -1,6 +1,6 @@
 /**
  * @file ssn_frame.h
- * @brief IPC协议定义和相关函数
+ * @brief SSN 协议定义和相关函数
  */
 
 #ifndef SSN_FRAME_H
@@ -22,7 +22,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup IPC_Protocol IPC协议定义
+ * @defgroup SSN_Protocol SSN协议定义
  * @{
  */
 

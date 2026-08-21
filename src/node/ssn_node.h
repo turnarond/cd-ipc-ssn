@@ -1,5 +1,5 @@
 /*
- * ipc_node.h - Node abstraction layer for cd-ipc-ssn
+ * ssn_node.h - Node abstraction layer for cd-ipc-ssn
  *
  * This file defines the core data structures and interfaces for the node abstraction layer,
  * which provides a unified interface for both client and server capabilities.
@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup IPC_Node Node Abstraction
+ * @defgroup SSN_Node Node Abstraction
  * @{*/
 
 /**
@@ -338,13 +338,6 @@ SSN_API void ssn_node_set_client_message_handler(ssn_node_t *node,
  * @return 0 on success, -1 on failure
  */
 SSN_API int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms);
-
-/**
- * @brief Run node event loop
- * 
- * @param node Node instance
- */
-SSN_API void ssn_node_run(ssn_node_t *node);
 
 /**
  * @brief Get node statistics

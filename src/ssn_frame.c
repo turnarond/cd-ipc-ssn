@@ -211,22 +211,6 @@ void ssn_stream_init(ssn_stream_ctx_t *recv)
     recv->total_len = 0;
 }
 
-bool ssn_set_url(ssn_header_t *ipc_hdr, const ssn_url_ref_t *url)
-{
-    if (!ipc_hdr || !url) return false;
-    if (ipc_hdr->magic != SSN_MAGIC_BYTE || ipc_hdr->version != SSN_PROTOCOL_VERSION) 
-        return false;
-    if (ntohl(ipc_hdr->data_len) != 0) return false; // data already set
-
-    if (url->url_len > SSN_MAX_PAYLOAD_SIZE) return false;
-
-    ssn_set_url_length(ipc_hdr, (uint16_t)url->url_len);
-    if (url->url_len > 0) {
-        memcpy((char*)(ipc_hdr + 1), url->url, url->url_len);
-    }
-    return true;
-}
-
 bool ssn_get_url(const ssn_header_t *ipc_hdr, ssn_url_ref_t *url)
 {
     if (!ipc_hdr || !url) return false;

@@ -1,5 +1,5 @@
 /*
- * IPC server
+ * SSN server
  */
 #include <errno.h>
 #include <stddef.h>
@@ -136,7 +136,7 @@ void *ssn_server_timer_handle(void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_TIMER_PERIOD);
+        ipc_thread_msleep(SSN_TIMER_PERIOD);
 
         /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
         if (__atomic_load_n(&g_ssn_server_timer_exit, __ATOMIC_ACQUIRE)) {
@@ -161,11 +161,11 @@ void *ssn_server_timer_handle(void *arg)
             ipc_mutex_lock(server->lock);
 
             LIST_FOREACH(hst, server->hst_h) {
-                if (hst->alive <= IPC_TIMER_PERIOD) {
+                if (hst->alive <= SSN_TIMER_PERIOD) {
                     hst->alive = 0;
                     emit = true;
                 } else {
-                    hst->alive -= IPC_TIMER_PERIOD;
+                    hst->alive -= SSN_TIMER_PERIOD;
                 }
             }
 
@@ -323,7 +323,7 @@ static bool ssn_server_cli_sendmsg(ssn_server_cli_t *cli, ssn_header_t *ipc_hdr,
         if (cli->transport) {
             ssn_transport_disconnect(cli->transport);
         }
-        LOG_ERROR("ssn server sendmsg faield, cli %d", cli->id);
+        LOG_ERROR("ssn server sendmsg failed, cli %d", cli->id);
     }
     return ret;
 }
@@ -394,16 +394,16 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
          * 握手中的连接（竞态窗口，客户端偶发连接失败，Issue #15） */
         server->handshake_timeout = (opts->conn_timeout_ms > 0)
                                     ? opts->conn_timeout_ms
-                                    : IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
+                                    : SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = opts->idle_timeout_sec;
         if(opts->ifname[0]) {
             /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
             snprintf(server->ifname, sizeof(server->ifname), "%s", opts->ifname);
         }
     } else {
-        server->send_timeout = IPC_DEF_SEND_TIMEOUT;
-        server->handshake_timeout = IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
-        server->keepalive_timeout = IPC_SERVER_KEEPALIVE_TIMEOUT;
+        server->send_timeout = SSN_DEF_SEND_TIMEOUT;
+        server->handshake_timeout = SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
+        server->keepalive_timeout = SSN_SERVER_KEEPALIVE_TIMEOUT;
     }
 
     /* 用 snprintf 保证 NUL 终止（srv_name 为 SRV_NAME_LEN 字节，strncpy 以
@@ -475,8 +475,6 @@ ssn_server_t *ssn_server_create(const char *server_info)
  */
 bool ssn_server_start(ssn_server_t *server)
 {
-    int en = 1;
-
     if (!server || !server->valid) {
         ssn_handle_error(SSN_ECODE_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid server handle");
         return  (false);
@@ -549,7 +547,7 @@ bool ssn_server_start(ssn_server_t *server)
     }
 
     // 开始监听
-    if (!ssn_transport_listen(server->transport, IPC_SERVER_BACKLOG)) {
+    if (!ssn_transport_listen(server->transport, SSN_SERVER_BACKLOG)) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "listen failed");
         goto error;
     }
@@ -1029,66 +1027,6 @@ void ssn_server_remove_method (ssn_server_t *server, const ssn_url_ref_t *url)
     }
 
     LOG_DEBUG("ssn server remove method %.*s success.", (int)url->url_len, url->url);
-}
-
-/**
- * @brief 获取远程客户端地址
- * 
- * @param server 服务器实例指针
- * @param id 客户端ID
- * @param addr 地址结构体
- * @param namelen 地址长度
- * @return 获取成功返回true，失败返回false
- */
-int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sockaddr *addr, socklen_t *namelen)
-{
-    ssn_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        LOG_ERROR("ssn server peer address: invalid server handle.");
-        return  (false);
-    }
-
-    ipc_mutex_lock(server->lock);
-
-    cli = ssn_server_cli_find(server, id);
-    if (!cli || !cli->transport) {
-        ipc_mutex_unlock(server->lock);
-        if (!cli) {
-            LOG_ERROR("ssn server peer address: client not found for id %d.", id);
-        } else {
-            LOG_ERROR("ssn server peer address: invalid client handle %d.", cli->id);
-        }
-        return  (false);
-    }
-
-    // 使用transport的get_address方法获取地址
-    ssn_address_t ssn_addr;
-    if (!ssn_transport_get_address(cli->transport, &ssn_addr)) {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: get_address failed");
-        return  (false);
-    }
-
-    // 复制地址到输出参数
-    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
-        memcpy(addr, &ssn_addr.addr.unix_addr, sizeof(struct sockaddr_un));
-        *namelen = sizeof(struct sockaddr_un);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP || ssn_addr.type == SSN_TRANSPORT_UDP) {
-        memcpy(addr, &ssn_addr.addr.inet_addr, sizeof(struct sockaddr_in));
-        *namelen = sizeof(struct sockaddr_in);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP6 || ssn_addr.type == SSN_TRANSPORT_UDP6) {
-        memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
-        *namelen = sizeof(struct sockaddr_in6);
-    } else {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: unsupported address type");
-        return  (false);
-    }
-
-    ipc_mutex_unlock(server->lock);
-
-    return  (true);
 }
 
 /**
@@ -1627,7 +1565,6 @@ static void ssn_server_handle_new_connection(ssn_server_t *server, const fd_set 
             if (cli) {
                 cli->transport = client_transport;
                 cli->active = false;
-                /* TODO: deal with init recv buffer. */
                 ssn_stream_init(&cli->recv);
 
                 ipc_mutex_lock(server->lock);
@@ -1693,7 +1630,7 @@ static void ssn_server_input_fds (ssn_server_t *server, const fd_set *rfds)
 }
 
 /*
- * IPC server poll 
+ * SSN server poll
  */
 int ssn_server_poll(ssn_server_t *server, int timeout_ms)
 {
