@@ -382,6 +382,14 @@ static void free_pending_index(ssn_client_t *client, uint16_t index)
     }
 
     // 注意：此函数假设调用者已经持有 client->lock 锁
+    /* 缺陷背景：原实现只清位图，seqno_to_index 映射残留——seqno 回绕或迟到
+     * 应答时旧 seqno 错配到复用同 index 的新请求（应答串台）。修复：释放时
+     * 同步清映射，并校验槽位 seqno 与映射一致才清（防误清新请求）。 */
+    uint16_t slot_seqno = client->pending_pool[index].seqno;
+    if (client->seqno_to_index[slot_seqno] == index) {
+        client->seqno_to_index[slot_seqno] = 0xFFFF;
+    }
+
     int w = index / 32;
     int b = index % 32;
     client->pending_bitmap[w] &= ~(1U << b);
@@ -1312,13 +1320,14 @@ static int alloc_pending_index (ssn_client_t *client)
  * @param callback 回调函数
  * @param arg 回调参数
  * @param timeout_ms 超时时间
+ * @param[out] out_seqno 可选：登记成功的请求 seqno（用于调用方主动撤销）
  * @return 发送成功返回true，失败返回false
  */
-static bool ssn_client_request (ssn_client_t *client, uint8_t type, 
-                                const ssn_url_ref_t *url, const ssn_data_ref_t *data,
-                                ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+static bool ssn_client_request_ex (ssn_client_t *client, uint8_t type, 
+                                   const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                                   ssn_client_result_handler_t callback, void *arg,
+                                   uint64_t timeout_ms, uint16_t *out_seqno)
 {
-    size_t len;
     uint16_t seqno;
     ssn_header_t *ipc_hdr;
     ssn_pending_request_t *pendq;
@@ -1331,10 +1340,19 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
     // 增加引用计数
     ssn_client_ref(client);
 
+    /* 缺陷背景：原实现在加锁前执行 alloc_pending_index + seqno++ +
+     * seqno_to_index 登记——与定时器线程（锁内改 pendq->timeout_ms）、并发
+     * subscribe/call 竞态：槽位重复分配、seqno 重复 → 应答串线/误回调；
+     * pending 池满时 return false 未 unref → 引用计数泄漏。修复：登记整体
+     * 移入锁内（与 ssn_client_call_ex 对齐），失败路径补 unref。 */
+    ipc_mutex_lock(client->lock);
+
     if (callback) {
         int index = alloc_pending_index(client);
         if (index < 0) {
+            ipc_mutex_unlock(client->lock);
             LOG_ERROR("ssn client request: prepare pendq failed.");
+            ssn_client_unref(client);
             return (false);
         }
         pendq = &client->pending_pool[index];
@@ -1352,33 +1370,35 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
         seqno = ssn_client_prepare_seqno(client);
     }
 
-    ipc_mutex_lock(client->lock);
-
     ipc_hdr = ssn_create_header(client->sendbuf, type, 0, seqno);
 
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
         LOG_ERROR("ssn client request: sendmsg failed.");
-        goto error;
+        if (pendq) {
+            free_pending_index(client, pendq->index);   /* 已在锁内 */
+        }
+        ipc_mutex_unlock(client->lock);
+        ssn_client_unref(client);
+        return (false);
     }
 
     ipc_mutex_unlock(client->lock);
+
+    if (out_seqno) {
+        *out_seqno = seqno;
+    }
 
     LOG_DEBUG("ssn client request success.");
     ssn_client_unref(client);
     return (true);
+}
 
-error:
-    ipc_mutex_unlock(client->lock);
-
-    if (pendq) {
-        // 重新加锁保护 free_pending_index 操作
-        ipc_mutex_lock(client->lock);
-        free_pending_index(client, pendq->index);
-        ipc_mutex_unlock(client->lock);
-    }
-
-    ssn_client_unref(client);
-    return (false);
+/* 无 seqno 输出的薄封装（subscribe/unsubscribe 等无需主动撤销的路径） */
+static bool ssn_client_request (ssn_client_t *client, uint8_t type, 
+                                const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                                ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    return ssn_client_request_ex(client, type, url, data, callback, arg, timeout_ms, NULL);
 }
 
 /**
@@ -1480,8 +1500,15 @@ bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms)
         return false;
     }
 
-    if (!ssn_client_request(client, SSN_MSG_TYPE_PING_ECHO, NULL, NULL,
-                            ping_reply_cb, (void *)&replied, timeout_ms)) {
+    /* 缺陷背景：原实现把栈上 replied 的地址作为回调 arg 登记 pending，等待窗口
+     * 结束后 pending 仍留在位图（仅定时器置超时、下次 poll 才触发回调并释放），
+     * 迟到应答/超时回调会向已返回函数的栈帧写入 → 栈污染（UB）。修复：等待结束
+     * 时主动撤销 pending 登记，杜绝回调再访问栈地址。 */
+    uint16_t ping_seqno = 0;
+    bool registered = ssn_client_request_ex(client, SSN_MSG_TYPE_PING_ECHO, NULL, NULL,
+                                            ping_reply_cb, (void *)&replied, timeout_ms,
+                                            &ping_seqno);
+    if (!registered) {
         return false;
     }
 
@@ -1490,6 +1517,19 @@ bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms)
     while (!replied && waited < timeout_ms) {
         ssn_client_poll(client, 10);
         waited += 10;
+    }
+
+    if (!replied) {
+        /* 超时无应答：主动撤销 pending 登记（锁内清位图与 seqno 映射），
+         * 之后迟到的应答/超时回调因查不到 seqno 被丢弃，不再触碰栈上 replied */
+        ipc_mutex_lock(client->lock);
+        if (client->seqno_to_index[ping_seqno] != 0xFFFF) {
+            uint16_t idx = client->seqno_to_index[ping_seqno];
+            if (is_bit_set(client->pending_bitmap, idx)) {
+                free_pending_index(client, idx);
+            }
+        }
+        ipc_mutex_unlock(client->lock);
     }
 
     return replied;
