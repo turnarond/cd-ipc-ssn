@@ -117,8 +117,9 @@ typedef struct ssn_node {
     char node_name[64];                  /**< Node name */
     
     // State
+    bool valid;                          /**< 有效标志：create 置 true，destroy 置 false（防重复 destroy UAF） */
     ssn_node_state_t state;              /**< Node state */
-    int ref_count;                       /**< Reference count */
+    int ref_count;                       /**< Reference count（当前仅 create 置 1，无递增点——延迟销毁为预留） */
     time_t start_time;                   /**< Start time */
     time_t last_activity;                /**< Last activity time */
     
@@ -172,6 +173,10 @@ SSN_API bool ssn_node_stop(ssn_node_t *node);
 
 /**
  * @brief Destroy the node
+ * 
+ * 注意：只能调用一次。重复 destroy 同一指针是调用方违约（UB，指针已悬垂）。
+ * 与 ssn_node_create/start/stop 的并发调用需调用方串行化（无内部引用计数；
+ * ref_count 为预留字段，当前无递增点）。
  * 
  * @param node Node instance
  */
