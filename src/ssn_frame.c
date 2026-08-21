@@ -185,7 +185,11 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     return true;
 }
 
-ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
+/* 定义处显式 default 可见性（缺陷背景：-O3 + -fvisibility=hidden 下 GCC 对
+ * 部分「声明带 default 但被库内调用」的函数在 IPA 路径丢弃可见性，符号残留
+ * GLOBAL HIDDEN → 外部链接失败（P1-1）。声明处 SSN_API 对多数函数生效，此处
+ * 为 create_header/packet_input 补定义处属性兜底） */
+__attribute__((visibility("default"))) ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
 {
     if (!outb) return NULL;
 
@@ -249,7 +253,7 @@ bool ssn_get_data(const ssn_header_t *ipc_hdr, ssn_data_ref_t *data)
     return true;
 }
 
-ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
+__attribute__((visibility("default"))) ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
 {
     if (!buf || buf_len == 0) return NULL;
     size_t total_len;

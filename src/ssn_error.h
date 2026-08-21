@@ -7,6 +7,7 @@
 #define SSN_ERROR_H
 
 #include <stdint.h>
+#include "ssn_export.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -89,28 +90,28 @@ typedef uint32_t ssn_ecode_t;
  * @param error 错误码
  * @return 错误消息字符串
  */
-const char* ssn_ecode_message(ssn_ecode_t error);
+const char* SSN_API ssn_ecode_message(ssn_ecode_t error);
 
 /**
  * @brief 获取错误类别
  * @param error 错误码
  * @return 错误类别
  */
-uint8_t ssn_ecode_category(ssn_ecode_t error);
+uint8_t SSN_API ssn_ecode_category(ssn_ecode_t error);
 
 /**
  * @brief 获取错误子类别
  * @param error 错误码
  * @return 错误子类别
  */
-uint8_t ssn_ecode_subcategory(ssn_ecode_t error);
+uint8_t SSN_API ssn_ecode_subcategory(ssn_ecode_t error);
 
 /**
  * @brief 获取具体错误码
  * @param error 错误码
  * @return 具体错误码
  */
-uint16_t ssn_ecode_code(ssn_ecode_t error);
+uint16_t SSN_API ssn_ecode_code(ssn_ecode_t error);
 
 /**
  * @brief 处理错误并记录日志
@@ -121,7 +122,7 @@ uint16_t ssn_ecode_code(ssn_ecode_t error);
  * @param format 日志格式
  * @param ... 可变参数
  */
-void ssn_handle_error(ssn_ecode_t error, const char *file, int line, const char *func, const char *format, ...);
+void SSN_API ssn_handle_error(ssn_ecode_t error, const char *file, int line, const char *func, const char *format, ...);
 
 #ifdef __cplusplus
 }

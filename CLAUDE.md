@@ -24,7 +24,7 @@ cmake .. && make -j$(nproc)
 ./test_protocol             # 协议层（31 断言）
 ./test_protocol_integration # 协议集成（19 用例）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
-./test_cliauto && ./test_hash_table    # 自动重连/哈希表（19+50 断言）
+./test_cliauto && ./test_hash_table    # 自动重连/哈希表（31+50 断言）
 ./test_cpp_*                # C++ 框架套件（7 个：service_base / service_task / service_manager / ssn_service / ssn_client / json / stability）
 ```
 

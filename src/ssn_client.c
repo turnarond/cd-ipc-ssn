@@ -517,14 +517,26 @@ error:
  */
 void ssn_client_close(ssn_client_t *client)
 {
-    if (!client || !client->valid) {
+    if (!client) {
         return;
     }
 
+    /* 缺陷背景：原实现 valid 检查/置位与 DELETE_FROM_LIST 分属不同锁，两线程
+     * 同时 close 同一 client 时双双通过 valid 检查 → 第二个 DELETE 命中已摘除
+     * 节点（next==prev==NULL）→ 全局链表头被置 NULL，其余 client 泄漏且定时器
+     * 停止处理超时；ref_count 双 decrement 亦可能提前触发释放。
+     * 修复：valid 的检查与置位在 client->lock 内原子完成（单次进入），
+     * 全局链表删除仍持 g_ssn_client_lock。 */
+    ipc_mutex_lock(client->lock);
+    if (!client->valid) {
+        ipc_mutex_unlock(client->lock);
+        return;
+    }
     /* Set client to invalid state, so that no new operations can be performed.
      * This is necessary to ensure that the client is not used after closing.
      */
     client->valid = false;
+    ipc_mutex_unlock(client->lock);
 
     ipc_mutex_lock(g_ssn_client_lock);
     DELETE_FROM_LIST(client, g_ssn_client_list);
@@ -932,9 +944,18 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
         if (new_transport) {
             ssn_address_t addr;
             if (ssn_transport_get_address(client->transport, &addr)) {
-                ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms);
-                ssn_transport_destroy(client->transport);
-                client->transport = new_transport;
+                /* 缺陷背景：原实现忽略 connect 返回值，失败仍销毁旧 transport 并
+                 * 发布新 transport（fd=-1）——connected 保持 true 形成「假连接」：
+                 * 后续 send 全失败、poll 等不到 EOF 状态卡死，且新连接未握手，
+                 * 服务端 5s 超时后将其销毁（双向状态不一致）。修复：connect 失败
+                 * 保留旧 transport（发送超时设置仍生效于下次真正重建），仅成功才替换。 */
+                if (ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms)) {
+                    ssn_transport_destroy(client->transport);
+                    client->transport = new_transport;
+                } else {
+                    LOG_WARN("ssn client send timeout: reconnect failed, keep old transport");
+                    ssn_transport_destroy(new_transport);
+                }
             } else {
                 ssn_transport_destroy(new_transport);
             }
@@ -959,12 +980,15 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
 int ssn_client_fds(ssn_client_t *client, fd_set *rfds)
 {
     int max_fd;
-    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
 
+    /* 缺陷背景：原实现先取 evt_fd 再判空——ssn_client_fds(NULL) 必崩。
+     * 修复：NULL/valid 检查前置。 */
     if (!client || !client->valid) {
         LOG_ERROR("ssn client fds failed: invalid client handle.");
         return (-1);
     }
+
+    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
 
     if (!client->connected) {
         FD_SET(evt_fd, rfds);
@@ -1416,13 +1440,17 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
 {
     ssn_sub_handler_t *h;
 
+    /* 缺陷背景：原实现先判 client 再在日志参数中解引用 url（未判空）——
+     * 未连接时传 url=NULL 会在 LOG_ERROR 的 %.*s 参数求值处空指针崩溃。
+     * 修复：url 判空前置。 */
+    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
+        LOG_ERROR("ssn client subscribe failed: invalid url.");
+        return (false);
+    }
     if (!client || !client->valid || !client->connected) {
         LOG_ERROR("ssn client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
         return (false);
     }
-    if (!url || !url->url || !url->url_len || url->url[0] != '/') {
-        LOG_ERROR("ssn client subscribe failed: invalid url.");
-        return (false);
     }
 
     /* Register per-URL handler（加锁保护：与 poll 线程的 handle_publish 遍历互斥） */

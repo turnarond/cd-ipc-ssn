@@ -1388,9 +1388,14 @@ static bool ssn_server_handle_rpc_request(ssn_server_t *server, ssn_server_cli_t
     if (url->url_len && url->url[0] == '/') {
         cmd = ssn_server_cmd_match(server, url);
         if (cmd) {
+            /* 缺陷背景：原实现解锁后才读 cmd->arg——另一线程并发
+             * ssn_server_remove_method/add_method 会锁外 free(cmd)，
+             * 回调读已释放的 arg → UAF。修复：锁内把 callback 与 arg
+             * 都拷入局部变量，解锁后仅用局部值。 */
             callback = cmd->onrpc;
+            void *cmd_arg = cmd->arg;
             ipc_mutex_unlock(server->lock);
-            callback(server, cli->id, ipc_hdr, (ssn_url_ref_t *)url, (ssn_data_ref_t *)data, cmd->arg);
+            callback(server, cli->id, ipc_hdr, (ssn_url_ref_t *)url, (ssn_data_ref_t *)data, cmd_arg);
         } else {
             send_hdr = ssn_create_header(server->sendbuf, ipc_hdr->msg_type, SSN_ECODE_NOT_FOUND, seqno);
             ssn_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
@@ -1733,10 +1738,23 @@ void ssn_server_run(ssn_server_t *server)
     fd_set fds;
     sigset_t empty_mask;
 
-    while (true) {
+    if (!server) {
+        return;
+    }
+
+    /* 缺陷背景：原实现裸用 server 且无退出条件——另一线程 ssn_server_destroy
+     * 后 run 循环仍访问已释放的 server（UAF），且未 start 时 ssn_server_fds
+     * 返回 -1 也不退出（永久空转）。修复：与 poll 对齐，循环持引用计数，
+     * destroy 后（valid=false 且引用归零）run 退出。 */
+    ssn_server_ref(server);
+
+    while (server->valid) {
         sigemptyset(&empty_mask);
         FD_ZERO(&fds);
         int max_fd = ssn_server_fds(server, &fds);
+        if (max_fd < 0) {
+            break;   /* 未 start / transport 不可用：不再空转 */
+        }
         // 阻塞空信号集，可以传递并中断所有信号
         int cnt;
         do {
@@ -1744,9 +1762,10 @@ void ssn_server_run(ssn_server_t *server)
         } while (cnt < 0 && errno == EINTR);
         if (cnt > 0) {
             ssn_server_input_fds(server, &fds);
-            continue;
         }
     }
+
+    ssn_server_unref(server);
 }
 
 /*

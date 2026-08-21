@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #endif
 #include "transports/ssn_transport.h"
+#include "ssn_export.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -165,13 +166,13 @@ typedef bool (*ssn_packet_handler_t)(ssn_header_t *ssn_hdr, void *arg);
  * @param seqno 序列号
  * @return IPC头部指针
  */
-ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
+ssn_header_t *SSN_API ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
 
 /**
  * @brief 初始化IPC流接收上下文
  * @param recv 流接收上下文
  */
-void ssn_stream_init(ssn_stream_ctx_t *recv);
+void SSN_API ssn_stream_init(ssn_stream_ctx_t *recv);
 
 /**
  * @brief 获取IPC URL
@@ -179,7 +180,7 @@ void ssn_stream_init(ssn_stream_ctx_t *recv);
  * @param url URL引用
  * @return 获取成功返回true，失败返回false
  */
-bool ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
+bool SSN_API ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
 
 /**
  * @brief 获取IPC数据
@@ -187,7 +188,7 @@ bool ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
  * @param data 数据引用
  * @return 获取成功返回true，失败返回false
  */
-bool ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
+bool SSN_API ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
 
 /**
  * @brief IPC流输入处理
@@ -198,7 +199,7 @@ bool ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
  * @param arg 回调参数
  * @return 处理成功返回true，失败返回false
  */
-bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
+bool SSN_API ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
                        ssn_packet_handler_t callback, void *arg);
 
 /**
@@ -207,7 +208,7 @@ bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
  * @param buf_len 缓冲区长度
  * @return 处理成功返回IPC头部指针，失败返回NULL
  */
-ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
+ssn_header_t *SSN_API ssn_packet_input(void *buf, size_t buf_len);
 
 /**
  * @brief 发送消息
@@ -217,7 +218,7 @@ ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
  * @param data 数据引用
  * @return 发送成功返回true，失败返回false
  */
-bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ssn_hdr, 
+bool SSN_API ssn_send_message(ssn_transport_t *transport, ssn_header_t *ssn_hdr, 
     const ssn_url_ref_t *url, const ssn_data_ref_t *data);
 
 /** @} */

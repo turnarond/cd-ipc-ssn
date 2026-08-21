@@ -29,8 +29,11 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j$(nproc)
 
-      - name: 全量自动化测试（14 套件）
+      - name: 全量自动化测试（16 套件）
         run: bash test/run_tests.sh
+
+      - name: 公开 API 导出符号校验
+        run: bash test/verify_exports.sh
 
       - name: 示例构建 + hello_world 冒烟 + find_package 集成
         run: bash test/verify_examples.sh
