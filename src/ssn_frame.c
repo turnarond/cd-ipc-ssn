@@ -300,7 +300,8 @@ bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len, ssn_pack
             // 有完整的数据包
             ssn_header_t *header = (ssn_header_t *)recv->buffer;
             if (!callback(header, arg)) {
-                // 回调请求停止
+                /* 回调请求停止（如连接已关闭）：重置缓冲并正常返回 true——
+                 * 停止不是错误（见 ssn_frame.h 的回调语义说明） */
                 recv->cur_len = 0;
                 recv->total_len = 0;
                 return true;

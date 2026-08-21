@@ -2,6 +2,18 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.5] - 2026-08-21
+
+### Fixed
+- **cliauto keepalive 参数被忽略（功能评审遗留 P1）**：CONNECTED 分支原以
+  ping(50ms)+poll(10ms) 忙等循环（约 60ms/圈），`keepalive` 从未使用（与头文件/
+  文档「keepalive 为 ping 间隔」不符，空闲连接持续空转 CPU）。修复：每 tick 结束
+  按 keepalive 睡眠；ping 超时窗口从硬编码 50ms 改为 keepalive
+- **`ssn_stream_feed` 回调语义文档澄清（功能评审遗留 P1）**：头文件 @return 未说明
+  「回调返回 false = 请求停止处理（正常结束）」——实现把停止当成功返回 true 是
+  合理行为，但文档误导（停止≠错误，流层错误才返回 false）。修复：头文件补回调
+  语义说明，实现注释明确；调用方行为不受影响
+
 ## [2.5.4] - 2026-08-21
 
 ### Fixed
