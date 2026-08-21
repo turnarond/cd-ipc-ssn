@@ -716,7 +716,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     ssn_client_timeout_all(client);
 
     if (timeout == NULL) {
-        struct timespec default_timeout = {3, 0}; // 默认超时5秒
+        struct timespec default_timeout = {3, 0}; // 默认超时 3 秒（注释修正：原误写 5 秒，与 recv 超时混淆）
         timeout = &default_timeout;
     }
     // 创建transport配置
