@@ -1048,6 +1048,15 @@ static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hd
         return true;
     }
 
+    /* Fallback：先 onsub（ssn_client_set_on_publish 设置的发布回调——缺陷背景：
+     * 原实现从未读取 onsub，cliauto 内部 set_on_publish(ssn_client_auto_msg_cb)
+     * 永不触发，订阅消息丢失；接线后与 set_on_message 语义区分：onsub 面向
+     * PUBLISH 消息，onmsg 面向未处理消息兜底） */
+    if (client->onsub) {
+        client->onsub(client, &url, &data, client->sub_arg);
+        return true;
+    }
+
     /* Fallback: call the error/unhandled-message callback */
     if (client->onmsg) {
         client->onmsg(client, &url, &data, client->msg_arg);
