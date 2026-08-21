@@ -50,7 +50,7 @@ SSN_API bool ssn_client_disconnect(ssn_client_t *client);
 SSN_API bool ssn_client_is_connect(ssn_client_t *client);
 
 /* SSN client send timeout
- * `timeout` NULL means use IPC_DEF_SEND_TIMEOUT */
+ * `timeout` NULL means use SSN_DEF_SEND_TIMEOUT */
 SSN_API bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms);
 
 SSN_API int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms);

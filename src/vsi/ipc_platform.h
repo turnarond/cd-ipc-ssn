@@ -41,11 +41,11 @@ extern "C" {
 #endif
 
 /* Server timer period (ms) */
-#define IPC_TIMER_PERIOD                    50
-#define IPC_SERVER_BACKLOG                  32
-#define IPC_DEF_SEND_TIMEOUT                100     // ms
-#define IPC_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
-#define IPC_SERVER_KEEPALIVE_TIMEOUT        10      // seconds
+#define SSN_TIMER_PERIOD                    50
+#define SSN_SERVER_BACKLOG                  32
+#define SSN_DEF_SEND_TIMEOUT                100     // ms
+#define SSN_SERVER_DEF_HANDSHAKE_TIMEOUT    5000    // ms
+#define SSN_SERVER_KEEPALIVE_TIMEOUT        10      // seconds
 
 #if defined(IPC_PLATFORM_SYLIXOS) || defined(IPC_PLATFORM_LINUX)
     #define IPC_INHERIT_NODELAY 1

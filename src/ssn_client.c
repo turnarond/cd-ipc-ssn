@@ -174,7 +174,7 @@ void *ssn_client_timer_handle(void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_TIMER_PERIOD);
+        ipc_thread_msleep(SSN_TIMER_PERIOD);
 
         /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
         if (__atomic_load_n(&g_ssn_client_timer_exit, __ATOMIC_ACQUIRE)) {
@@ -196,8 +196,8 @@ void *ssn_client_timer_handle(void *arg)
             for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
                 if (is_bit_set(client->pending_bitmap, i)) {
                     pendq = &client->pending_pool[i];
-                    if (pendq->timeout_ms > IPC_TIMER_PERIOD) {
-                        pendq->timeout_ms -= IPC_TIMER_PERIOD;
+                    if (pendq->timeout_ms > SSN_TIMER_PERIOD) {
+                        pendq->timeout_ms -= SSN_TIMER_PERIOD;
                     } else {
                         pendq->timeout_ms = 0;
                         emit = true;
@@ -424,7 +424,7 @@ ssn_client_t *ssn_client_create(void)
     client->onmsg        = NULL;
     client->msg_arg      = NULL;
     client->sub_handlers = NULL;
-    client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+    client->send_timeout = SSN_DEF_SEND_TIMEOUT;
     client->valid        = true;
     client->ref_count    = 1;  // 初始化引用计数为1
 
@@ -914,7 +914,7 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
     if (timeout_ms > 0) {
         client->send_timeout  = timeout_ms;
     } else {
-        client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+        client->send_timeout = SSN_DEF_SEND_TIMEOUT;
     }
 
     /* 加锁保护 transport 重建：与 poll 线程的 process_events/fds 读 transport

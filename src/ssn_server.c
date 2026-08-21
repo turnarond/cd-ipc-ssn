@@ -136,7 +136,7 @@ void *ssn_server_timer_handle(void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_TIMER_PERIOD);
+        ipc_thread_msleep(SSN_TIMER_PERIOD);
 
         /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
         if (__atomic_load_n(&g_ssn_server_timer_exit, __ATOMIC_ACQUIRE)) {
@@ -161,11 +161,11 @@ void *ssn_server_timer_handle(void *arg)
             ipc_mutex_lock(server->lock);
 
             LIST_FOREACH(hst, server->hst_h) {
-                if (hst->alive <= IPC_TIMER_PERIOD) {
+                if (hst->alive <= SSN_TIMER_PERIOD) {
                     hst->alive = 0;
                     emit = true;
                 } else {
-                    hst->alive -= IPC_TIMER_PERIOD;
+                    hst->alive -= SSN_TIMER_PERIOD;
                 }
             }
 
@@ -394,16 +394,16 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
          * 握手中的连接（竞态窗口，客户端偶发连接失败，Issue #15） */
         server->handshake_timeout = (opts->conn_timeout_ms > 0)
                                     ? opts->conn_timeout_ms
-                                    : IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
+                                    : SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = opts->idle_timeout_sec;
         if(opts->ifname[0]) {
             /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
             snprintf(server->ifname, sizeof(server->ifname), "%s", opts->ifname);
         }
     } else {
-        server->send_timeout = IPC_DEF_SEND_TIMEOUT;
-        server->handshake_timeout = IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
-        server->keepalive_timeout = IPC_SERVER_KEEPALIVE_TIMEOUT;
+        server->send_timeout = SSN_DEF_SEND_TIMEOUT;
+        server->handshake_timeout = SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
+        server->keepalive_timeout = SSN_SERVER_KEEPALIVE_TIMEOUT;
     }
 
     /* 用 snprintf 保证 NUL 终止（srv_name 为 SRV_NAME_LEN 字节，strncpy 以
@@ -547,7 +547,7 @@ bool ssn_server_start(ssn_server_t *server)
     }
 
     // 开始监听
-    if (!ssn_transport_listen(server->transport, IPC_SERVER_BACKLOG)) {
+    if (!ssn_transport_listen(server->transport, SSN_SERVER_BACKLOG)) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "listen failed");
         goto error;
     }
