@@ -2,6 +2,20 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.6] - 2026-08-22
+
+### Fixed
+- **node destroy 生命周期加固（功能评审 P1-15）**：`ssn_node_destroy` 原无 valid
+  标志且 ref_count 无递增点（延迟销毁分支死代码）——destroy ACTIVE 节点时内部调
+  `ssn_node_stop`（重新加锁）依赖锁序正确，头文件未明确「destroy 只能调用一次」
+  （重复调用即悬垂 UB）。修复：`ssn_node_t` 加 valid 标志（create 置 true、
+  destroy 置 false，防未 free 重入路径）；头文件明确单次约束与 ref_count 预留
+  说明；`test_node` 新增 Test 7（ACTIVE 节点 destroy 幂等生命周期，ASAN 0 错误）
+
+### Docs
+- `SsnService.hpp` builtinVersion 注释版本号去硬编码（引用 SSN_VERSION_STRING，
+  避免每次发版同步）
+
 ## [2.5.5] - 2026-08-21
 
 ### Fixed

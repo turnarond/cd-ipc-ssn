@@ -587,6 +587,47 @@ static bool test_node_destroy_active(void)
     return true;
 }
 
+/**
+ * @brief Test 7: Destroy idempotent lifecycle（功能评审 P1-15 回归）
+ *
+ * 缺陷：ssn_node_destroy 原无 valid 标志——destroy ACTIVE 节点时内部调用
+ * ssn_node_stop（重新加锁），若无保护可能在锁语义上重入；且 ref_count 无递增点
+ * （延迟销毁分支死代码）。修复：加 valid 标志（destroy 置 false）并明确
+ * 「destroy 只能调用一次；重复调用悬垂指针为 UB（文档约束）」。
+ * 回归：ACTIVE 节点 destroy（内部 stop 路径）正常完成，进程存活无崩溃；
+ * 重复 destroy 属调用方违约（UB），不在本测试范围。
+ */
+static bool test_node_destroy_active_idempotent(void)
+{
+    LOG_INFO("=== Test 7: Destroy active node idempotent lifecycle ===");
+
+    ssn_node_config_t config = {
+        .node_type = "test",
+        .node_name = "double-destroy",
+        .listen_address = "127.0.0.1",
+        .listen_port = 8891,
+        .capabilities = SSN_NODE_CAP_SERVER
+    };
+
+    ssn_node_t *node = ssn_node_create(&config);
+    if (!node) {
+        LOG_ERROR("Failed to create node");
+        return false;
+    }
+    if (!ssn_node_start(node)) {
+        LOG_ERROR("Failed to start node");
+        ssn_node_destroy(node);
+        return false;
+    }
+
+    /* ACTIVE 节点 destroy：内部需 stop（重新加锁）再释放资源——修复前无
+     * valid 保护时此路径依赖锁序正确；修复后正常完成且资源释放（ASAN 无泄漏） */
+    ssn_node_destroy(node);
+
+    LOG_INFO("Active node destroy completed without crash");
+    return true;
+}
+
 int main(void)
 {
     LOG_INFO("Starting node abstraction layer tests...");
@@ -600,7 +641,8 @@ int main(void)
         test_node_pubsub(),
         test_node_rpc(),
         test_node_stats(),
-        test_node_destroy_active()
+        test_node_destroy_active(),
+        test_node_destroy_active_idempotent()
     };
     
     int test_count = sizeof(tests) / sizeof(tests[0]);

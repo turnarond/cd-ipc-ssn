@@ -81,7 +81,7 @@ public:
     // {"status":"ok"|"degraded","connections":N,"messages":M}——svc 线程异常退出
     // （failed()==true）时状态为 "degraded"（稳定性加固 I4），节点未初始化时为 "error"
     nlohmann::json builtinHealth() const;
-    nlohmann::json builtinVersion() const;   // {"version":"2.3.2"}
+    nlohmann::json builtinVersion() const;   // {"version":"X.Y.Z"}（当前 SSN_VERSION_STRING）
 
     const std::string& listenHost() const;
     uint16_t listenPort() const;

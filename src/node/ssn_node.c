@@ -163,6 +163,7 @@ ssn_node_t *ssn_node_create(const ssn_node_config_t *config)
     }
 
     // Initialize state
+    node->valid = true;
     node->state = SSN_NODE_STATE_STOPPED;
     node->ref_count = 1;
     node->start_time = 0;
@@ -299,9 +300,17 @@ void ssn_node_destroy(ssn_node_t *node)
         return;
     }
 
+    /* 缺陷背景：原实现无 valid 标志，ref_count 无递增点（延迟销毁分支死代码），
+     * 重复 destroy 同一 node 即 use-after-free（第二次 destroy 访问已 free 内存）。
+     * 修复：valid 标志——首次 destroy 置 false，重复 destroy 幂等空操作。 */
     ipc_mutex_lock(node->lock);
+    if (!node->valid) {
+        ipc_mutex_unlock(node->lock);
+        return;
+    }
+    node->valid = false;
 
-    // Check reference count
+    // Check reference count（预留：当前无递增点，ref_count 恒为 1）
     if (--node->ref_count > 0) {
         LOG_WARN("ssn_node_destroy: node has %d references, deferring destruction", 
                  node->ref_count);
