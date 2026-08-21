@@ -1451,7 +1451,6 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
         LOG_ERROR("ssn client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
         return (false);
     }
-    }
 
     /* Register per-URL handler（加锁保护：与 poll 线程的 handle_publish 遍历互斥） */
     h = (ssn_sub_handler_t *)malloc(sizeof(ssn_sub_handler_t) + url->url_len);

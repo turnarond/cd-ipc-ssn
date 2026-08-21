@@ -166,7 +166,7 @@ typedef bool (*ssn_packet_handler_t)(ssn_header_t *ssn_hdr, void *arg);
  * @param seqno 序列号
  * @return IPC头部指针
  */
-ssn_header_t *SSN_API ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
+SSN_API ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
 
 /**
  * @brief 初始化IPC流接收上下文
@@ -208,7 +208,7 @@ bool SSN_API ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
  * @param buf_len 缓冲区长度
  * @return 处理成功返回IPC头部指针，失败返回NULL
  */
-ssn_header_t *SSN_API ssn_packet_input(void *buf, size_t buf_len);
+SSN_API ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
 
 /**
  * @brief 发送消息
