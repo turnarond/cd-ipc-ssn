@@ -26,8 +26,11 @@ extern "C" {
 #define SSN_API __attribute__((visibility("default"), used, noinline))
 
 /* C++ 服务框架导出宏：libssn_framework 用 CXX_VISIBILITY_PRESET hidden，
- * 公开类必须显式标记导出（与 ssn_transport 的可见性策略对齐） */
-#define SSN_FRAMEWORK_API __attribute__((visibility("default"), used))
+ * 公开类必须显式标记导出（与 ssn_transport 的可见性策略对齐）。
+ * 注意：不能加 used——C++ 类上的 used 属性非法（'used' does not apply to
+ * types，-Werror 下直接编译失败）；类方法符号不会被 IPA 内联丢弃，纯
+ * visibility 即足够（CI 曾因加 used 导致 4 个 C++ 示例构建失败）。 */
+#define SSN_FRAMEWORK_API __attribute__((visibility("default")))
 
 #ifdef __cplusplus
 }
