@@ -1,5 +1,5 @@
 /*
- * ipc_node.h - Node abstraction layer for cd-ipc-ssn
+ * ssn_node.h - Node abstraction layer for cd-ipc-ssn
  *
  * This file defines the core data structures and interfaces for the node abstraction layer,
  * which provides a unified interface for both client and server capabilities.
@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup IPC_Node Node Abstraction
+ * @defgroup SSN_Node Node Abstraction
  * @{*/
 
 /**

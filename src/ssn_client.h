@@ -27,10 +27,10 @@ typedef void (*ssn_client_result_handler_t)(ssn_client_t *client, bool success, 
 /* Client on message callback, for subscribe and onmessage. */
 typedef void (*ssn_client_msg_handler_t)(ssn_client_t *client, ssn_url_ref_t *url, ssn_data_ref_t *data, void *arg);
 
-/* Create IPC client , Callback for subscribed (published) messages */
+/* Create SSN client, Callback for subscribed (published) messages */
 SSN_API ssn_client_t *ssn_client_create();
 
-/* Close IPC client */
+/* Close SSN client */
 SSN_API void ssn_client_close(ssn_client_t *client);
 
 /* 引用计数接口（内部使用：node 层 poll 保活等；公开以便跨模块正确调用，
@@ -46,10 +46,10 @@ SSN_API bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
  * After disconnect, the `ssn_client_connect` function can be called again */
 SSN_API bool ssn_client_disconnect(ssn_client_t *client);
 
-/* IPC client is connect with server */
+/* SSN client is connect with server */
 SSN_API bool ssn_client_is_connect(ssn_client_t *client);
 
-/* IPC client send timeout
+/* SSN client send timeout
  * `timeout` NULL means use IPC_DEF_SEND_TIMEOUT */
 SSN_API bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms);
 
@@ -71,10 +71,10 @@ SSN_API int ssn_client_call(ssn_client_t *client, const ssn_url_ref_t *url, cons
 /* Send message to server */
 SSN_API int ssn_client_message(ssn_client_t *client, const ssn_url_ref_t *url, const ssn_data_ref_t *data);
 
-/* IPC client set MESSAGE-type handler (for error / unhandled messages) */
+/* SSN client set MESSAGE-type handler (for error / unhandled messages) */
 SSN_API void ssn_client_set_on_message(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
 
-/* IPC client set PUBLISH-type handler (for incoming publish messages).
+/* SSN client set PUBLISH-type handler (for incoming publish messages).
  * This is typically set internally by ssn_client_auto, not by user code. */
 SSN_API void ssn_client_set_on_publish(ssn_client_t *client, ssn_client_msg_handler_t callback, void *arg);
 

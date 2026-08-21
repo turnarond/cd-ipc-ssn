@@ -1,5 +1,5 @@
 /*
- * ipc_node.c - Node abstraction layer implementation
+ * ssn_node.c - Node abstraction layer implementation
  *
  * This file implements the node abstraction layer, providing a unified interface
  * for both client and server capabilities.

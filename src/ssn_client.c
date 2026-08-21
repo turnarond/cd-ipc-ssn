@@ -1,5 +1,5 @@
 /*
- * IPC client
+ * SSN client
  */
 
 #include <errno.h>
@@ -1207,7 +1207,6 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 
         if (num > 0) {
             pkt_e = false;
-            // TODO: deal recv msg;
             if (!ssn_stream_feed(&client->recv, client->recvbuf,
                                 num, ssn_client_input, client)) {
                 LOG_ERROR("ssn client process event failed: stream feed failed.");

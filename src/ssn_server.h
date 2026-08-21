@@ -61,7 +61,7 @@ SSN_API void ssn_server_run(ssn_server_t *server);
 SSN_API void ssn_server_set_connect_handler(ssn_server_t *server, ssn_on_connect_t oncli, void *arg);
 SSN_API void ssn_server_set_message_handler(ssn_server_t *server, ssn_server_msg_handler_t callback, void *arg);
 
-/* RPC Registeation*/
+/* RPC Registration */
 SSN_API bool ssn_server_add_method(ssn_server_t *server,
                               const ssn_url_ref_t *url, ssn_server_rpc_handler_t callback, void *arg);
 SSN_API void ssn_server_remove_method(ssn_server_t *server, const ssn_url_ref_t *url);

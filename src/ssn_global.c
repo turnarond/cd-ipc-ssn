@@ -1,5 +1,5 @@
 /**
- * @file ipc_global.c
+ * @file ssn_global.c
  * @brief 全局资源管理
  */
 
@@ -105,8 +105,6 @@ void ssn_global_cleanup(void)
     // 注意：g_ssn_client_list / g_ssn_server_list 应在业务层清空
     // （例如在 cleanup 前遍历并释放所有 client/server）
 }
-
-// ipc_global.c 末尾（或单独放回原文件）
 
 #if defined(__GNUC__) || defined(__clang__)
 /**

@@ -1,5 +1,5 @@
 /*
- * IPC server
+ * SSN server
  */
 #include <errno.h>
 #include <stddef.h>
@@ -323,7 +323,7 @@ static bool ssn_server_cli_sendmsg(ssn_server_cli_t *cli, ssn_header_t *ipc_hdr,
         if (cli->transport) {
             ssn_transport_disconnect(cli->transport);
         }
-        LOG_ERROR("ssn server sendmsg faield, cli %d", cli->id);
+        LOG_ERROR("ssn server sendmsg failed, cli %d", cli->id);
     }
     return ret;
 }
@@ -1627,7 +1627,6 @@ static void ssn_server_handle_new_connection(ssn_server_t *server, const fd_set 
             if (cli) {
                 cli->transport = client_transport;
                 cli->active = false;
-                /* TODO: deal with init recv buffer. */
                 ssn_stream_init(&cli->recv);
 
                 ipc_mutex_lock(server->lock);
@@ -1693,7 +1692,7 @@ static void ssn_server_input_fds (ssn_server_t *server, const fd_set *rfds)
 }
 
 /*
- * IPC server poll 
+ * SSN server poll
  */
 int ssn_server_poll(ssn_server_t *server, int timeout_ms)
 {

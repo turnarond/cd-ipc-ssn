@@ -1,5 +1,5 @@
 /*
- * ipc_node_comm.c - Node communication interfaces implementation
+ * ssn_node_comm.c - Node communication interfaces implementation
  *
  * This file implements the communication interfaces for the node abstraction layer,
  * including message sending, publish/subscribe, and RPC functionality.
