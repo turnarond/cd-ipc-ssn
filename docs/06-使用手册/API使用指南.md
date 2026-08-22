@@ -81,6 +81,7 @@ typedef struct {
     uint64_t conn_timeout_ms;      // 连接超时（毫秒）
     uint64_t idle_timeout_sec;     // 空闲超时（秒）
     char ifname[IF_NAMESIZE];      // 网络接口名称（TCP/UDP用）
+    uint32_t max_connections;      // 最大并发连接数（0=默认 1020，防 accept 洪泛 DoS）
 } server_options_t;
 ```
 
