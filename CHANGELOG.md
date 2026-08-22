@@ -2,6 +2,15 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.7] - 2026-08-22
+
+### Performance
+- **接收路径 head 偏移（评审 P1-9）**：`ssn_stream_feed` 原实现每处理完一个包就
+  memmove 剩余字节——小包突发（128KB 内 n 个 64B 包）总移动量 O(n²)，可到百 MB 级。
+  修复：`ssn_stream_ctx_t` 增加 head 读偏移——解析从 `buffer+head` 读，包消费只推进
+  head（O(1) 不搬数据）；仅当缓冲近满（无法容纳新数据）时 compact 一次。行为等价
+  （分片帧/粘包/跨 feed 调用均保持），16 套件回归全绿 + ASAN 0 错误
+
 ## [2.5.6] - 2026-08-22
 
 ### Fixed
