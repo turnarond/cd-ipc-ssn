@@ -2,6 +2,18 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.5.8] - 2026-08-22
+
+### Fixed
+- **服务端连接数上限（P2，accept 洪泛 DoS 防护）**：`ssn_server_handle_new_connection`
+  原无连接上限——accept 洪泛可耗尽内存（每连接约 132KB 流缓冲）与 fd，且
+  `ssn_server_fds` 用 fd_set（FD_SETSIZE 上限 1024），超过 ~1021 连接即 glibc
+  fd_set 越界 abort。修复：`server_options_t` 增加 `max_connections`
+  （0=默认 1020，对齐 fd_set 上限留余量给 listen/evtfd/stdio）；accept 后锁内
+  统计总连接数（含握手中的半连接），达到上限即拒绝新连接并关闭 accept transport
+  （防 fd 泄漏）；回归测试：`test_ssn_server` Test 11（max_connections=2，
+  第 3 个客户端握手被拒，peer_count 保持 2）
+
 ## [2.5.7] - 2026-08-22
 
 ### Performance

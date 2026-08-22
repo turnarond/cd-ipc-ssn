@@ -31,12 +31,12 @@ extern "C" {
 /**
  * @brief Patch version number
  */
-#define SSN_VERSION_PATCH 7
+#define SSN_VERSION_PATCH 8
 
 /**
  * @brief Version string
  */
-#define SSN_VERSION_STRING "2.5.7"
+#define SSN_VERSION_STRING "2.5.8"
 
 /**
  * @brief Version number (encoded as MNNPP)

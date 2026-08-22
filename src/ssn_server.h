@@ -25,6 +25,10 @@ typedef struct {
     uint64_t conn_timeout_ms; 
     uint64_t idle_timeout_sec;
     char ifname[IF_NAMESIZE];     /* Not used for AF_UNIX. */
+    /* 最大并发连接数（0 = 默认 SSN_SERVER_DEFAULT_MAX_CONNECTIONS）。
+     * 缺陷背景：原实现无连接上限——accept 洪泛可耗尽内存（每连接 ~132KB）与
+     * fd（fd_set 上限 1024，超过即 glibc 越界 abort）。默认值对齐 fd_set 上限。 */
+    uint32_t max_connections;
 } server_options_t;
 
 /* 命名规范别名（缺陷背景：公开类型无 ssn_ 前缀违反「类型 ssn_<module>_t」规范；
