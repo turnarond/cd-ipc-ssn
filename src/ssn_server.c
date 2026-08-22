@@ -29,6 +29,12 @@
 #define IPC_CLI_HASH_SIZE  64
 #define IPC_CLI_HASH_MASK  (IPC_CLI_HASH_SIZE - 1)
 
+/* 默认最大并发连接数（缺陷背景：原实现无连接上限——accept 洪泛可耗尽内存
+ * （每连接约 132KB 流缓冲）与 fd；且 ssn_server_fds 用 fd_set（FD_SETSIZE 上限
+ * 1024），超过 ~1021 连接即 glibc fd_set 越界 abort。默认值对齐 fd_set 上限，
+ * 留余量给 listen/evtfd/stdio 等固定 fd）。 */
+#define SSN_SERVER_DEFAULT_MAX_CONNECTIONS 1020
+
 /* Command hash */
 #define IPC_CMD_HASH_SIZE  32
 #define IPC_CMD_HASH_MASK  (IPC_CMD_HASH_SIZE - 1)
@@ -98,6 +104,7 @@ struct ssn_server {
     int send_timeout;
     int handshake_timeout;
     int keepalive_timeout;
+    uint32_t max_connections;   /* 最大并发连接数（含握手中；0=默认） */
     ssn_transport_t *transport;
     ipc_event_pair_t *evtfd;
     void *sendbuf;
@@ -396,6 +403,9 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
                                     ? opts->conn_timeout_ms
                                     : SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = opts->idle_timeout_sec;
+        server->max_connections = opts->max_connections > 0
+                                  ? opts->max_connections
+                                  : SSN_SERVER_DEFAULT_MAX_CONNECTIONS;
         if(opts->ifname[0]) {
             /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
             snprintf(server->ifname, sizeof(server->ifname), "%s", opts->ifname);
@@ -404,6 +414,7 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
         server->send_timeout = SSN_DEF_SEND_TIMEOUT;
         server->handshake_timeout = SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = SSN_SERVER_KEEPALIVE_TIMEOUT;
+        server->max_connections = SSN_SERVER_DEFAULT_MAX_CONNECTIONS;
     }
 
     /* 用 snprintf 保证 NUL 终止（srv_name 为 SRV_NAME_LEN 字节，strncpy 以
@@ -1561,6 +1572,25 @@ static void ssn_server_handle_new_connection(ssn_server_t *server, const fd_set 
         ssn_address_t client_addr;
         ssn_transport_t *client_transport = ssn_transport_accept(server->transport, &client_addr, 0);
         if (client_transport) {
+            /* 连接数上限检查（缺陷背景：原实现无上限——accept 洪泛耗尽内存/fd，
+             * 且 fd_set 越界 abort）。统计所有 cli（含握手中的半连接），达到上限
+             * 即拒绝新连接（关闭 accept 的 transport，避免 fd 泄漏）。 */
+            uint32_t cli_total = 0;
+            int h;
+            ipc_mutex_lock(server->lock);
+            for (h = 0; h < IPC_CLI_HASH_SIZE; h++) {
+                ssn_server_cli_t *it;
+                LIST_FOREACH(it, server->clis[h]) { cli_total++; }
+            }
+            ipc_mutex_unlock(server->lock);
+
+            if (cli_total >= server->max_connections) {
+                LOG_WARN("ssn server: connection limit reached (%u/%u), rejecting new client",
+                         cli_total, server->max_connections);
+                ssn_transport_destroy(client_transport);
+                return;
+            }
+
             cli = (ssn_server_cli_t *)calloc(1, sizeof(ssn_server_cli_t));
             if (cli) {
                 cli->transport = client_transport;

@@ -579,6 +579,76 @@ static int test_handshake_timeout_fin_race(void)
     return 0;
 }
 
+/* ---- Test 11: 连接数上限（P2：accept 洪泛 DoS 防护） ----
+ *
+ * 缺陷背景：ssn_server_handle_new_connection 原无连接上限——accept 洪泛可耗尽
+ * 内存（每连接约 132KB 流缓冲）与 fd，且 ssn_server_fds 用 fd_set（FD_SETSIZE
+ * 上限），超过 ~1021 连接即 glibc fd_set 越界 abort。
+ * 回归：max_connections=2 时，第 3 个客户端 connect 后握手应失败（被拒），
+ * 服务端仍健康（peer_count 保持 2）。
+ */
+static int test_max_connections_limit(void)
+{
+    printf("  Test 11: Max connections limit (DoS guard)... ");
+
+    server_options_t opts = {
+        .send_timeout_ms = 5000,
+        .conn_timeout_ms = 1000,
+        .idle_timeout_sec = 60,
+        .ifname = "",
+        .max_connections = 2
+    };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create)\n"); return 1; }
+    if (!ssn_server_start(srv)) {
+        printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1;
+    }
+    g_srv_running = 1;
+    g_srv_poll_ms = 10;
+    pthread_t tid;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(50000);
+
+    /* 前 2 个连接成功握手（SERVICE_INFO 交换） */
+    int ok_cnt = 0;
+    ssn_client_t *clis[3] = { NULL, NULL, NULL };
+    for (int i = 0; i < 3; i++) {
+        clis[i] = ssn_client_create();
+        if (!clis[i]) { printf("FAIL (client create %d)\n", i); goto cleanup; }
+        struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+        if (ssn_client_connect(clis[i], TEST_SERVER_ADDR, &ts)) {
+            ok_cnt++;
+        }
+    }
+
+    /* 上限 2：应恰好 2 个成功、第 3 个被拒 */
+    int ok = (ok_cnt == 2);
+    if (!ok) {
+        printf("FAIL (ok_cnt=%d, expect 2)\n", ok_cnt);
+    }
+
+    /* 服务端仍健康：peer_count 应等于成功连接数 */
+    for (int i = 0; i < 10 && ssn_server_peer_count(srv) != ok_cnt; i++) {
+        usleep(50000);
+    }
+    if (ssn_server_peer_count(srv) != ok_cnt) {
+        printf("FAIL (peer_count=%d, expect %d)\n", ssn_server_peer_count(srv), ok_cnt);
+        ok = 0;
+    }
+
+cleanup:
+    for (int i = 0; i < 3; i++) {
+        if (clis[i]) { ssn_client_close(clis[i]); }
+    }
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (!ok) { return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -594,7 +664,8 @@ int main(void)
     failed += test_empty_connection_not_blocking();
     failed += test_zero_handshake_timeout();
     failed += test_handshake_timeout_fin_race();
+    failed += test_max_connections_limit();
 
-    printf("=== Result: %d/10 passed, %d failed ===\n", 10 - failed, failed);
+    printf("=== Result: %d/11 passed, %d failed ===\n", 11 - failed, failed);
     return failed ? 1 : 0;
 }
