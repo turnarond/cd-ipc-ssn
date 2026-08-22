@@ -1,6 +1,6 @@
 # ssn (cd-ipc-ssn)
 
-**版本: 2.5.6**
+**版本: 2.5.7**
 
 SSN (Scalable Socket Network) is a lightweight inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
 
@@ -303,6 +303,7 @@ cd build
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| 2.5.7 | 2026-08-22 | 接收路径 head 偏移（P1-9：消除逐包 memmove 的 O(n²)） |
 | 2.5.6 | 2026-08-22 | node destroy 生命周期加固（P1-15：valid 标志 + 单次约束文档） |
 | 2.5.5 | 2026-08-21 | cliauto keepalive 忙等修复 + stream_feed 回调语义文档澄清（功能评审遗留 P1） |
 | 2.5.4 | 2026-08-21 | 工程化评审批次 B：死代码删除/DRY 重构/常量收敛/set_on_publish 接线 |

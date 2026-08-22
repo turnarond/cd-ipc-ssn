@@ -122,7 +122,9 @@ typedef struct __attribute__((packed)) {
  * @brief 流接收上下文，用于处理部分数据包
  */
 typedef struct {
-    uint32_t cur_len;       /**< 当前接收长度 */
+    uint32_t cur_len;       /**< 当前接收长度（buffer 内有效数据量） */
+    uint32_t head;          /**< 读偏移：已解析但未 compact 的数据起点（性能优化：
+                             *   小包突发时避免逐包 memmove，仅缓冲近满时 compact） */
     uint32_t total_len;     /**< 总长度 */
     uint8_t buffer[SSN_MAX_PACKET_SIZE]; /**< 接收缓冲区 */
 } ssn_stream_ctx_t;

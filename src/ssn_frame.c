@@ -208,6 +208,7 @@ void ssn_stream_init(ssn_stream_ctx_t *recv)
 {
     if (!recv) return;
     recv->cur_len = 0;
+    recv->head = 0;
     recv->total_len = 0;
 }
 
@@ -259,57 +260,76 @@ bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len, ssn_pack
     if (!recv || !callback) return false;
     if (!buf || buf_len == 0) return true; // nothing to do
 
+    /* 性能优化（评审 P1-9）：原实现每处理完一个包就 memmove 剩余字节——小包
+     * 突发（128KB 内 n 个 64B 包）总移动量 O(n²)，可到百 MB 级。改为维护 head
+     * 读偏移：解析从 buffer+head 读，包消费只推进 head 不搬数据；仅当剩余
+     * 未解析数据接近缓冲尾（无法容纳新数据）时才 compact 一次。 */
     const uint8_t *input_data = (const uint8_t *)buf;
     size_t consumed_bytes = 0;
 
     // 处理输入数据
     while (consumed_bytes < buf_len) {
-        // 检查缓冲区空间
+        // 剩余空间 = 缓冲尾到已写位置（head 之前是已消费数据，可被 compact 复用）
         size_t space_left = SSN_MAX_PACKET_SIZE - recv->cur_len;
         if (space_left == 0) {
-            // 缓冲区已满但没有完整数据包，视为格式错误的流
-            recv->cur_len = 0;
-            recv->total_len = 0;
-            return false;
+            /* 缓冲满：若 head>0 先 compact（复用已消费空间），仍满则格式错误 */
+            if (recv->head > 0) {
+                uint32_t remain = recv->cur_len - recv->head;
+                if (remain > 0) {
+                    memmove(recv->buffer, recv->buffer + recv->head, remain);
+                }
+                recv->cur_len = remain;
+                recv->head = 0;
+                space_left = SSN_MAX_PACKET_SIZE - recv->cur_len;
+            }
+            if (space_left == 0) {
+                // 缓冲区已满但没有完整数据包，视为格式错误的流
+                recv->cur_len = 0;
+                recv->head = 0;
+                recv->total_len = 0;
+                return false;
+            }
         }
 
-        // 复制数据到缓冲区
+        // 复制数据到缓冲区（追加到已写位置尾部）
         size_t bytes_to_copy = (buf_len - consumed_bytes) < space_left ? (buf_len - consumed_bytes) : space_left;
         memcpy(recv->buffer + recv->cur_len, input_data + consumed_bytes, bytes_to_copy);
         recv->cur_len += bytes_to_copy;
         consumed_bytes += bytes_to_copy;
 
-        // 尝试提取尽可能多的完整数据包
+        // 尝试提取尽可能多的完整数据包（从 head 读偏移开始解析）
         while (1) {
+            uint32_t available = recv->cur_len - recv->head;
             // 检查是否有足够的数据读取头部
-            if (recv->cur_len < SSN_HEADER_SIZE) break;
+            if (available < SSN_HEADER_SIZE) break;
 
             // 验证头部并获取总长度
             size_t total_length;
-            if (!validate_and_get_total_length(recv->buffer, recv->cur_len, &total_length)) {
+            if (!validate_and_get_total_length(recv->buffer + recv->head, available, &total_length)) {
                 // 头部无效或被截断
-                ssn_print_error(recv->buffer, "Invalid packet in stream", 0, recv->cur_len);
+                ssn_print_error(recv->buffer + recv->head, "Invalid packet in stream", 0, available);
                 recv->cur_len = 0;
+                recv->head = 0;
                 recv->total_len = 0;
                 return false;
             }
 
             // 检查是否有足够的数据读取整个数据包
-            if (recv->cur_len < total_length) break; // 数据不足
+            if (available < total_length) break; // 数据不足
 
-            // 有完整的数据包
-            ssn_header_t *header = (ssn_header_t *)recv->buffer;
+            // 有完整的数据包（回调直接使用缓冲内指针，head 偏移处）
+            ssn_header_t *header = (ssn_header_t *)(recv->buffer + recv->head);
             if (!callback(header, arg)) {
                 /* 回调请求停止（如连接已关闭）：重置缓冲并正常返回 true——
                  * 停止不是错误（见 ssn_frame.h 的回调语义说明） */
                 recv->cur_len = 0;
+                recv->head = 0;
                 recv->total_len = 0;
                 return true;
             }
 
-            // 移除已处理的数据包
-            memmove(recv->buffer, recv->buffer + total_length, recv->cur_len - total_length);
-            recv->cur_len -= total_length;
+            // 消费该包：仅推进 head 偏移（不搬数据，O(1)）
+            recv->head += (uint32_t)total_length;
         }
     }
 
