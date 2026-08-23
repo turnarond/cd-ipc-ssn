@@ -26,12 +26,12 @@ make -j4 || { echo "[FAIL] 构建失败"; exit 1; }
 TESTS=(
     test_transport            # 传输层（67 断言）
     test_node_basic           # 节点基础（3 用例）
-    test_node                 # 节点完整（6 用例）
-    test_protocol             # 协议层（25 断言）
+    test_node                 # 节点完整（7 用例）
+    test_protocol             # 协议层（31 断言）
     test_protocol_integration # 协议集成（19 用例）
-    example_server            # 服务端 API 功能测试（9 用例，含握手竞态回归）
-    example_client            # 客户端 API 功能测试（12 用例）
-    test_cliauto              # 自动重连客户端（19 断言，keepalive/断线检测）
+    example_server            # 服务端 API 功能测试（11 用例，含握手竞态/连接上限回归）
+    example_client            # 客户端 API 功能测试（14 用例）
+    test_cliauto              # 自动重连客户端（31 断言，keepalive/断线检测）
     test_hash_table           # 哈希表（50 断言，含字符串键回归）
 )
 

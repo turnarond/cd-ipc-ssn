@@ -20,7 +20,7 @@ cmake .. && make -j$(nproc)
 ```bash
 ./test_transport            # 传输层（67 断言）
 ./test_node_basic           # 节点基础（3 用例）
-./test_node                 # 节点完整（6 用例）
+./test_node                 # 节点完整（7 用例）
 ./test_protocol             # 协议层（31 断言）
 ./test_protocol_integration # 协议集成（19 用例）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
