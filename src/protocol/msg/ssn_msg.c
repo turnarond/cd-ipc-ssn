@@ -115,6 +115,26 @@ int ssn_msg_send(
     return 0;
 }
 
+int ssn_msg_handle_data(ssn_msg_recv_t *recv, const ssn_header_t *hdr)
+{
+    if (!recv || !hdr) {
+        LOG_ERROR("Invalid arguments for msg handle_data");
+        return -1;
+    }
+
+    if (hdr->msg_type != SSN_MSG_TYPE_MESSAGE) {
+        return 0;
+    }
+    if (!recv->on_message) {
+        return 0;
+    }
+
+    ssn_data_ref_t data_ref;
+    ssn_get_data(hdr, &data_ref);
+    recv->on_message(data_ref.data, data_ref.length, recv->user_arg);
+    return 1;
+}
+
 int ssn_msg_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
 {
     if (!ctx || !ctx->transport) {
@@ -129,13 +149,8 @@ int ssn_msg_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
     if (!hdr) return -1;
 
     if (ctx->role == SSN_ROLE_RECV) {
-        /* 接收端: 处理消息 */
-        ssn_msg_recv_t *recv = (ssn_msg_recv_t *)ctx;
-        if (hdr->msg_type == SSN_MSG_TYPE_MESSAGE && recv->on_message) {
-            ssn_data_ref_t data_ref;
-            ssn_get_data(hdr, &data_ref);
-            recv->on_message(data_ref.data, data_ref.length, recv->user_arg);
-        }
+        /* 收编到 handle 原语（Issue #31 v1.1）：帧校验 + 回调触发单份化 */
+        ssn_msg_handle_data((ssn_msg_recv_t *)ctx, hdr);
     }
 
     return 1;

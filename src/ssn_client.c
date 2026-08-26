@@ -1138,6 +1138,10 @@ static bool ssn_client_input(ssn_header_t *ipc_hdr, void *varg)
             break;
 
         case SSN_MSG_TYPE_RPC_REQUEST:
+            /* 收编（Issue #31 v1.1）：调协议层 handle 原语做帧校验/状态机更新；
+             * 协议池在生产路径为空（请求登记于 client 池，见 request_ex 登记处），
+             * 不触发回调（返回 0），派发仍走下方 client 池快照匹配 */
+            ssn_rpc_handle_reply(client->rpc_req, ipc_hdr);
             ssn_client_handle_rpc_response(client, ipc_hdr, pendq);
             break;
 

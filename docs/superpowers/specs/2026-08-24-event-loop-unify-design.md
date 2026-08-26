@@ -10,7 +10,7 @@
 | 修订记录 | v1.1（2026-08-26 评审修订，关联 Issue #31）：收编边界定案——handle 原语 = 帧校验/类型路由/协议状态机更新/回调触发，**不执行 pending 池匹配**（匹配与回调派发保留上层，§3.1/3.2/3.3）；server 方法表归属暂不迁移（§3.2/§7）；「协议层无锁」措辞统一（§3.1）；poll 行号精确化（§1.1）；回归清单补 example_client Test 9/13/14（§6）；批次 2 范围改为「类型路由收敛、池匹配不动」（§5） |
 | 关联 Issue | [#31 技术债：client/server 层与协议层事件循环双轨并存](https://github.com/turnarond/cd-ipc-ssn/issues/31) |
 | 关联分支 | `feature/event-loop-unify`（实施时创建） |
-| 目标版本 | 与 DDS 阶段 1 同车（v2.6.0，见第 7 节） |
+| 目标版本 | v2.6.0（独立先行发布；DDS 阶段 1 顺延至 2.7.0，见第 4 节） |
 
 ## 1. 背景
 
@@ -89,9 +89,9 @@ int ssn_rpc_handle_reply(ssn_rpc_req_t *req, const ssn_header_t *hdr);
        触发 req->on_reply（回调内由调用方完成池匹配与回调派发） */
 
 int ssn_rpc_handle_request(ssn_rpc_rep_t *rep, const ssn_header_t *hdr);
-    /* 请求帧校验 → rep->method_table 方法查找 → 触发 on_request；
-       应答仍由上层显式调 ssn_rpc_response。仅服务裸协议路径
-       （server 方法表归属暂不迁移，见 3.2/7） */
+    /* 请求帧校验 → 触发 rep->on_request；方法表由 ssn_rpc_register 维护，
+       现状分发不经方法表查找（与既有 poll 行为等价）；应答仍由上层显式调
+       ssn_rpc_response。仅服务裸协议路径（server 方法表归属暂不迁移，见 3.2/7） */
 
 /* ssn_pubsub.h */
 int ssn_pubsub_handle_message(ssn_pubsub_sub_t *sub, const ssn_header_t *hdr);
@@ -165,8 +165,9 @@ int ssn_msg_handle_data(ssn_msg_recv_t *recv, const ssn_header_t *hdr);
 
 - 本规格作为阶段 1（DCPS 概念模型，DR-01~03）的**地基前置**：概念层的
   Publisher/Subscriber 复用统一的 handle 上行路径，避免在双轨上叠加第三轨
-- 同车 v2.6.0 发布（次版本容纳新增 API + 行为等价重构）；若实施中发现行为
-  无法完全等价，则拆分独立版本先行，不阻塞阶段 1 设计评审
+- **发版裁决（2026-08-26 实施时定案）**：本规格**独立先行**发布 v2.6.0
+  （次版本容纳新增 API + 行为等价重构），不等待阶段 1；**DDS 阶段 1 目标
+  顺延至 2.7.0**（阶段 2/3 依次顺延 2.8.0/2.9.0），相关路线文档已同步
 - Issue #31 关联的选项 A/B/C 中，本规格实质为「A+B' 合体」：文档化（A）+
   接收分发正向收敛（B'，非原 B 反向方案）
 
@@ -187,7 +188,7 @@ feature/event-loop-unify 分支，TDD 红-绿-重构：
 ├── client input / server input 类型路由收敛 + 调 handle 原语做帧校验
 ├── client 池匹配（get_pending_snapshot）、per-URL 订阅、server 方法表
 │   全部原样保留（明确不迁移，见 3.2）
-├── 全量回归：16 套件 + ASAN（重点：hst UAF Test 10、maxconn Test 11、
+├── 全量回归：17 套件 + ASAN（重点：hst UAF Test 10、maxconn Test 11、
 │   cliauto Test 5 空闲保活、example_client Test 9 分片帧/13 空闲保活/
 │   14 并发 poll+connect、稳定性套件 T6 服务端重启重连）
 └── 删除被收编的重复类型路由代码
@@ -195,7 +196,7 @@ feature/event-loop-unify 分支，TDD 红-绿-重构：
 批次 3：poll 单步化 + 文档同步 + 发版
 ├── ssn_protocol_poll/run 重定义（test_protocol / test_protocol_integration 适配验证）
 ├── 第 3.5 节文档全量同步 + CHANGELOG
-└── 与 DDS 阶段 1 合并规划 v2.6.0 发版（四处版本号 + tag）
+└── 与 DDS 阶段 1 错开发版：本规格独立 v2.6.0 发布（四处版本号 + tag），阶段 1 顺延 2.7.0
 ```
 
 每批次独立提交（`[TDD]` 标识），批次间全量验证门禁（run_tests + verify_exports +
@@ -206,7 +207,7 @@ verify_examples）。
 | 层面 | 方法 |
 |---|---|
 | 新原语单元测试 | 批次 1 新增用例（红→绿） |
-| 行为等价回归 | 16 套件全绿（时序敏感用例为硬安全网：hst UAF Test 10、maxconn Test 11、cliauto Test 5、example_client Test 9/13/14、稳定性 T6） |
+| 行为等价回归 | 17 套件全绿（时序敏感用例为硬安全网：hst UAF Test 10、maxconn Test 11、cliauto Test 5、example_client Test 9/13/14、稳定性 T6） |
 | 内存安全 | ASAN 全量跑批（事发地为历史 UAF 高危区，零容忍） |
 | 导出完整性 | verify_exports.sh（新增 handle 符号入 REQUIRED） |
 | 示例冒烟 | verify_examples.sh（19 构建 + hello_world 往返） |

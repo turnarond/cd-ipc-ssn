@@ -296,6 +296,60 @@ int ssn_rpc_response(ssn_rpc_rep_t *rep, uint16_t seqno, uint32_t status,
     return 0;
 }
 
+int ssn_rpc_handle_reply(ssn_rpc_req_t *req, const ssn_header_t *hdr)
+{
+    if (!req || !hdr) {
+        LOG_ERROR("Invalid arguments for RPC handle_reply");
+        return -1;
+    }
+
+    /* 帧校验：应答复用 SSN_MSG_TYPE_RPC_REQUEST（Issue #19 统一）；非应答帧
+     * 不属于本原语（返回 0 不触发回调，由上层类型路由兜底） */
+    if (hdr->msg_type != SSN_MSG_TYPE_RPC_REQUEST) {
+        return 0;
+    }
+
+    uint16_t seqno = ssn_get_seqno(hdr);
+    rpc_pending_entry_t *pending = pending_pool_find(req, seqno);
+    if (!pending) {
+        /* 无匹配：协议池在生产路径为空属预期（请求登记于 client 池），
+         * 上层池匹配兜底——本原语仅完成帧校验与状态机检查 */
+        return 0;
+    }
+
+    if (pending->callback) {
+        ssn_data_ref_t data_ref;
+        ssn_get_data(hdr, &data_ref);
+        pending->callback(seqno, ssn_get_status(hdr),
+                          data_ref.data, data_ref.length, pending->arg);
+    }
+    pending_pool_free(req, pending);
+    return 1;
+}
+
+int ssn_rpc_handle_request(ssn_rpc_rep_t *rep, const ssn_header_t *hdr)
+{
+    if (!rep || !hdr) {
+        LOG_ERROR("Invalid arguments for RPC handle_request");
+        return -1;
+    }
+
+    if (hdr->msg_type != SSN_MSG_TYPE_RPC_REQUEST) {
+        return 0;
+    }
+    if (!rep->on_request) {
+        return 0;
+    }
+
+    ssn_url_ref_t url_ref;
+    ssn_data_ref_t data_ref;
+    ssn_get_url(hdr, &url_ref);
+    ssn_get_data(hdr, &data_ref);
+    rep->on_request(ssn_get_seqno(hdr), url_ref.url,
+                    data_ref.data, data_ref.length, rep->base.user_data);
+    return 1;
+}
+
 int ssn_rpc_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
 {
     if (!ctx || !ctx->transport) {
@@ -331,39 +385,16 @@ int ssn_rpc_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
     ssn_header_t *hdr = ssn_packet_input(buf, len);
     if (!hdr) return -1;
 
-    /* 根据角色分发 */
+    /* 根据角色分发：收编到 handle 原语（Issue #31 v1.1）——帧校验/协议
+     * 状态机更新/回调触发单份化；返回语义与重构前完全一致（REQ 非应答
+     * 类型返回 0，其余返回 1） */
     if (ctx->role == SSN_ROLE_REQ) {
-        /* RPC 请求端: 处理应答。缺陷背景：原不校验 msg_type，任意帧按 seqno
-         * 匹配即触发应答回调（误配）；现仅接受 RPC 请求类型（应答复用它） */
         if (hdr->msg_type != SSN_MSG_TYPE_RPC_REQUEST) {
             return 0;
         }
-        ssn_rpc_req_t *req = (ssn_rpc_req_t *)ctx;
-        uint16_t seqno = ssn_get_seqno(hdr);
-        rpc_pending_entry_t *pending = pending_pool_find(req, seqno);
-
-        if (pending && pending->callback) {
-            ssn_data_ref_t data_ref;
-            ssn_get_data(hdr, &data_ref);
-            uint32_t status = ssn_get_status(hdr);
-            pending->callback(seqno, status,
-                            data_ref.data, data_ref.length, pending->arg);
-        }
-        if (pending) {
-            pending_pool_free(req, pending);
-        }
+        ssn_rpc_handle_reply((ssn_rpc_req_t *)ctx, hdr);
     } else if (ctx->role == SSN_ROLE_REP) {
-        /* RPC 应答端: 处理请求 */
-        ssn_rpc_rep_t *rep = (ssn_rpc_rep_t *)ctx;
-        if (hdr->msg_type == SSN_MSG_TYPE_RPC_REQUEST && rep->on_request) {
-            ssn_url_ref_t url_ref;
-            ssn_data_ref_t data_ref;
-            ssn_get_url(hdr, &url_ref);
-            ssn_get_data(hdr, &data_ref);
-            uint16_t seqno = ssn_get_seqno(hdr);
-            rep->on_request(seqno, url_ref.url,
-                          data_ref.data, data_ref.length, rep->base.user_data);
-        }
+        ssn_rpc_handle_request((ssn_rpc_rep_t *)ctx, hdr);
     }
 
     return 1;

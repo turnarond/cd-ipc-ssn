@@ -23,6 +23,7 @@ cmake .. && make -j$(nproc)
 ./test_node                 # 节点完整（7 用例）
 ./test_protocol             # 协议层（31 断言）
 ./test_protocol_integration # 协议集成（19 用例）
+./test_protocol_handles    # 协议层 handle 原语（Issue #31，47 断言）
 ./example_server && ./example_client  # 服务端/客户端 API 功能测试
 ./test_cliauto && ./test_hash_table    # 自动重连/哈希表（31+50 断言）
 ./test_cpp_*                # C++ 框架套件（7 个：service_base / service_task / service_manager / ssn_service / ssn_client / json / stability）
@@ -32,7 +33,7 @@ cmake .. && make -j$(nproc)
 
 - 测试框架为各测试文件内自定义的 `ASSERT` 宏（C 套件）/ `CHECK` 宏（C++ 套件，统计 `g_cpp_passed`/`g_cpp_failed`），无外部测试框架；无法按用例名过滤，只能整体运行一个测试文件。
 - 高级/手工测试：`./test_comprehensive`、`./test_thread_safety`、`./test_stress`（需要先手工启动服务端）。
-- 一键验证：`bash test/run_tests.sh`（构建 + 16 个自动化套件）、`bash test/verify_examples.sh`（19 个示例构建 + hello_world 运行冒烟）。
+- 一键验证：`bash test/run_tests.sh`（构建 + 17 个自动化套件）、`bash test/verify_examples.sh`（19 个示例构建 + hello_world 运行冒烟）。
 
 ## 架构分层
 

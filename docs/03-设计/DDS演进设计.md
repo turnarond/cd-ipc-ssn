@@ -46,11 +46,15 @@ SSN 采用**概念借鉴型**定位：采用 DDS 的概念模型与关键机制�
 
 | 阶段 | 目标版本 | 主题 | 一句话概述 |
 |------|---------|------|-----------|
-| 阶段 1 | 2.6.0 | DCPS 概念模型 | 引入 Domain/Topic/Publisher/Subscriber 抽象层，建立「数据为中心」心智模型 |
-| 阶段 2 | 2.7.0 | QoS 策略语义 | 引进 RELIABILITY/HISTORY/DEADLINE/LIFESPAN/PARTITION 五种核心策略语义 |
-| 阶段 3 | 2.8.0 | 发现与高级特性 | 增强为 SPDP/SEDP 风格发现，引入 ContentFilteredTopic 与 Listener/WaitSet |
+| 阶段 1 | 2.7.0 | DCPS 概念模型 | 引入 Domain/Topic/Publisher/Subscriber 抽象层，建立「数据为中心」心智模型 |
+| 阶段 2 | 2.8.0 | QoS 策略语义 | 引进 RELIABILITY/HISTORY/DEADLINE/LIFESPAN/PARTITION 五种核心策略语义 |
+| 阶段 3 | 2.9.0 | 发现与高级特性 | 增强为 SPDP/SEDP 风格发现，引入 ContentFilteredTopic 与 Listener/WaitSet |
 
-每阶段独立设计详见第 4-6 章；学习要点汇总见第 7 章；明确不做的事与实施规划见第 8-9 章。验证方式贯穿三阶段：每阶段新增 `test/test_dds_*.c` 单元测试与 `examples/dds/` 概念 demo，既有 16 套件 + `test/verify_examples.sh` 全量回归（概念层纯新增，不破坏现有 API）。
+> ⚠️ **版本顺延（2026-08-26）**：v2.6.0 由事件循环归属收敛（Issue #31，
+> `docs/superpowers/specs/2026-08-24-event-loop-unify-design.md`）独立先行占用，
+> 各阶段目标版本整体顺延一个次版本（原 2.6.0/2.7.0/2.8.0）。
+
+每阶段独立设计详见第 4-6 章；学习要点汇总见第 7 章；明确不做的事与实施规划见第 8-9 章。验证方式贯穿三阶段：每阶段新增 `test/test_dds_*.c` 单元测试与 `examples/dds/` 概念 demo，既有 17 套件 + `test/verify_examples.sh` 全量回归（概念层纯新增，不破坏现有 API）。
 
 ## 4. 阶段 1：DCPS 概念模型（目标版本 2.6.0）
 
@@ -94,7 +98,7 @@ int ssn_subscriber_subscribe(ssn_subscriber_t *sub, ssn_topic_t *topic);
 
 - 新增 `test/test_dds_concept.c`（域创建/销毁、主题注册、发布订阅往返、多域隔离）
 - 新增 demo：`examples/dds/01_domain_topic`
-- 既有 16 套件 + `test/verify_examples.sh` 全部通过（回归）
+- 既有 17 套件 + `test/verify_examples.sh` 全部通过（回归）
 
 ### 4.5 学习要点
 

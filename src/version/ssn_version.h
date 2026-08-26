@@ -27,16 +27,16 @@ extern "C" {
 /**
  * @brief Minor version number
  */
-#define SSN_VERSION_MINOR 5
+#define SSN_VERSION_MINOR 6
 /**
  * @brief Patch version number
  */
-#define SSN_VERSION_PATCH 8
+#define SSN_VERSION_PATCH 0
 
 /**
  * @brief Version string
  */
-#define SSN_VERSION_STRING "2.5.8"
+#define SSN_VERSION_STRING "2.6.0"
 
 /**
  * @brief Version number (encoded as MNNPP)

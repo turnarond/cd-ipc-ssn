@@ -2,6 +2,41 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.6.0] - 2026-08-26
+
+### Added
+- **协议层 handle 原语（Issue #31 事件循环归属收敛 v1.1）**：新增
+  `ssn_rpc_handle_reply` / `ssn_rpc_handle_request` / `ssn_pubsub_handle_message` /
+  `ssn_msg_handle_data`——无 I/O、无锁、纯函数式的协议层分发入口（帧校验/类型路由/
+  协议状态机更新/回调触发单份化）；配套单元测试 `test_protocol_handles`（47 断言）
+  纳入 run_tests.sh 与 CMakeLists（自动化 17 套件）；verify_exports.sh REQUIRED
+  补 4 个新符号
+
+### Changed
+- **事件循环归属收敛**：`ssn_rpc_poll` / `ssn_pubsub_poll` / `ssn_msg_poll` 的
+  recv 后分发逻辑收编到 handle 原语（返回语义与重构前一致）；`ssn_protocol_poll`
+  明确单步模式（至多一次 recv + handle，不建循环）；`ssn_protocol_run` 标
+  deprecated（仅供无上层循环的嵌入/测试场景）
+- **client 接收路径收编**：`ssn_client_input` RPC 应答分支调 `ssn_rpc_handle_reply`
+  做帧校验/状态机更新；pending 池匹配（`get_pending_snapshot` 锁内快照）、per-URL
+  订阅、server 方法表（`ssn_server_add_method` 自持）全部原样保留（收编边界 v1.1，
+  行为等价）
+- **pending 双池裁决**：client 层池为生产权威；协议层 `rpc_pending_entry_t` 池仅
+  服务裸 `ssn_rpc_call`，头文件标注混用禁令（两池不可在同一连接混用）
+- **头文件 @note**：ssn_protocol.h / ssn_rpc.h / ssn_pubsub.h / ssn_msg.h 补事件
+  循环归属与收编边界说明
+- **DDS 版本顺延**：v2.6.0 由本项独立先行占用，DDS 阶段 1/2/3 目标顺延
+  2.7.0/2.8.0/2.9.0（DDS 演进设计 / 需求分析 4.6 同步）
+
+### Docs
+- 协议层模块化设计.md 新增「事件循环归属」章节并更新现状声明（v1.1）；
+  架构设计总览.md 3.1、白皮书 2.2 分层说明补事件循环归属一句；
+  事件循环归属收敛设计规格 v1.1（PR #33）正式落地实施
+
+### Verification
+- 自动化 17 套件全绿（新增 test_protocol_handles 47 断言）+ ASAN 0 错误；
+  verify_exports / verify_examples 通过
+
 ## [2.5.8] - 2026-08-22
 
 ### Fixed
