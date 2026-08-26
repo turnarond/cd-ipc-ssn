@@ -12,11 +12,24 @@
 #include <stddef.h>
 
 #include "../../ssn_export.h"
+#include "../../ssn_frame.h"
 #include "../ssn_protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @note 事件循环归属（Issue #31，v1.1）：生产应用应使用 ssn_client_poll /
+ *       ssn_server_poll / ssn_node_poll 驱动事件循环——client/server 层是唯一
+ *       权威循环；协议层为「纯状态机 + 编解码」，不拥有循环。ssn_rpc_poll /
+ *       ssn_protocol_poll 为协议层独立嵌入/测试模式（单步：至多一次 recv +
+ *       调 handle 原语）。协议层无锁，handle 原语假定调用方已串行化。
+ *
+ * @note pending 混用禁令：本模块的 pending 池（rpc_pending_entry_t，仅服务裸
+ *       ssn_rpc_call 场景）与 ssn_client 的 pending 池为两套独立实现，不得在
+ *       同一连接上混用（生产路径使用 ssn_client_call 等上层 API）。
+ */
 
 /**
  * @defgroup SSN_RPC RPC Protocol
@@ -154,6 +167,38 @@ SSN_API int ssn_rpc_response(ssn_rpc_rep_t *ctx, uint16_t seqno, uint32_t status
  * @return Number of events processed, -1 on error
  */
 SSN_API int ssn_rpc_poll(ssn_protocol_ctx_t *ctx, int timeout_ms);
+
+/**
+ * @brief 处理 RPC 应答帧（无 I/O、无锁、纯函数式）
+ *
+ * 事件循环归属（Issue #31 v1.1）：本原语由调用方在其串行化上下文中驱动。
+ * 职责：帧校验（msg_type/seqno/status/data 提取）→ 协议池匹配
+ * （req->pending_pool，协议层状态机）→ 命中则触发该 pending 的回调并释放槽位。
+ *
+ * 收编边界：不匹配任何上层（client/server）池——上层池匹配由调用方在自身回调
+ * 内完成；协议池在生产路径为空属预期（请求登记于 client 池），本原语仅做帧
+ * 校验与状态机更新，不触发回调（返回 0）。
+ *
+ * @param req RPC 请求端上下文
+ * @param hdr 已解帧的头部（须来自 ssn_create_header / ssn_packet_input）
+ * @return 1=已分发（命中 pending 并触发回调）；0=帧有效但未命中（非 RPC 应答
+ *         类型或无匹配 pending）；-1=参数非法
+ */
+SSN_API int ssn_rpc_handle_reply(ssn_rpc_req_t *req, const ssn_header_t *hdr);
+
+/**
+ * @brief 处理 RPC 请求帧（无 I/O、无锁；仅服务裸协议路径）
+ *
+ * 帧校验（msg_type/url/seqno/data 提取）→ 触发 rep->on_request(seqno, method,
+ * data, len, arg)。方法表由 ssn_rpc_register 维护；现状分发不经方法表查找
+ * （与既有 ssn_rpc_poll 行为等价）。应答由调用方显式调 ssn_rpc_response。
+ * server 生产路径的方法表归属不变（见规格 v1.1 §3.2），不通过本原语分发。
+ *
+ * @param rep RPC 应答端上下文
+ * @param hdr 已解帧的头部
+ * @return 1=已分发；0=帧有效但非 RPC 请求或无 on_request；-1=参数非法
+ */
+SSN_API int ssn_rpc_handle_request(ssn_rpc_rep_t *rep, const ssn_header_t *hdr);
 
 /**
  * @brief Check if RPC is connected

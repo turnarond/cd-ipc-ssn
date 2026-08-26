@@ -38,8 +38,8 @@ set(IPC_SOURCES
 
 # 版本信息
 set(VERSION_MAJOR 2)
-set(VERSION_MINOR 5)
-set(VERSION_PATCH 8)
+set(VERSION_MINOR 6)
+set(VERSION_PATCH 0)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 # 创建动态库
@@ -235,6 +235,10 @@ target_link_libraries(test_protocol ${PROJECT_NAME} pthread)
 
 add_executable(test_protocol_integration test/test_protocol_integration.c)
 target_link_libraries(test_protocol_integration ${PROJECT_NAME} pthread)
+
+# 协议层 handle 原语单元测试（Issue #31 事件循环归属收敛 v1.1）
+add_executable(test_protocol_handles test/test_protocol_handles.c)
+target_link_libraries(test_protocol_handles ${PROJECT_NAME} pthread)
 
 # Example applications (interactive, run with manual server)
 add_executable(example_server test/test_ssn_server.c)

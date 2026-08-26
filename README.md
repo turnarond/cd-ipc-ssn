@@ -1,6 +1,6 @@
 # ssn (cd-ipc-ssn)
 
-**版本: 2.5.8**
+**版本: 2.6.0**
 
 SSN (Scalable Socket Network) is a lightweight inter-process communication (IPC) framework supporting RPC, publish/subscribe, and message passing over Unix domain sockets, TCP, and UDP. Features a layered architecture with node abstraction, protocol modularization, and platform abstraction (VSI).
 
@@ -275,19 +275,20 @@ cmake .. && make -j$(nproc)
 | `test_node` | 节点完整功能（创建、启停、PubSub、RPC、统计、destroy 幂等） | 7 |
 | `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 31 |
 | `test_protocol_integration` | 协议层集成测试（RPC、PubSub、Msg 全链路） | 19 |
+| `test_protocol_handles` | 协议层 handle 原语（Issue #31：帧校验/回调触发/无 transport 可用性） | 47 |
 | `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle/握手超时、hst UAF、连接数上限） | 11 |
 | `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手、并发 poll+connect） | 14 |
 | `test_cliauto` | 自动重连客户端（keepalive/断线检测/空闲不误断） | 31 |
 | `test_hash_table` | 哈希表（含字符串键回归） | 50 |
 | `test_cpp_*` | C++ 服务框架 7 套件（生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 485 |
 
-**合计：自动化 16 套件 718 例**，另有 3 个手工套件（需自行启动服务端）与
+**合计：自动化 17 套件 765 例**，另有 3 个手工套件（需自行启动服务端）与
 19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
-# 一键：构建 + 全部 16 个自动化套件（位置无关）
+# 一键：构建 + 全部 17 个自动化套件（位置无关）
 bash test/run_tests.sh
 
 # 或构建后逐个运行
@@ -303,6 +304,7 @@ cd build
 
 | 版本 | 日期 | 主要变更 |
 |------|------|----------|
+| 2.6.0 | 2026-08-26 | 事件循环归属收敛（Issue #31：协议层 handle 原语 + poll 单步化 + client 收编） |
 | 2.5.8 | 2026-08-22 | 服务端连接数上限（max_connections，accept 洪泛 DoS 防护） |
 | 2.5.7 | 2026-08-22 | 接收路径 head 偏移（P1-9：消除逐包 memmove 的 O(n²)） |
 | 2.5.6 | 2026-08-22 | node destroy 生命周期加固（P1-15：valid 标志 + 单次约束文档） |

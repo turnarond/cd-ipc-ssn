@@ -17,7 +17,7 @@ wsl bash -c "cd /mnt/d/personal/cd-ipc-ssn && bash test/run_tests.sh"
 CI（`.github/workflows/ci.yml`）依次跑三步，本地提交前同样跑齐：
 
 ```bash
-bash test/run_tests.sh        # 构建 + 16 个自动化套件
+bash test/run_tests.sh        # 构建 + 17 个自动化套件
 bash test/verify_exports.sh   # 公开符号导出校验（需先构建）
 bash test/verify_examples.sh  # 19 个示例构建 + hello_world 冒烟（需先构建两库）
 ```

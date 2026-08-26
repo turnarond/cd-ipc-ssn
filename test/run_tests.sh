@@ -29,6 +29,7 @@ TESTS=(
     test_node                 # 节点完整（7 用例）
     test_protocol             # 协议层（31 断言）
     test_protocol_integration # 协议集成（19 用例）
+    test_protocol_handles     # 协议层 handle 原语（Issue #31，帧校验/回调触发）
     example_server            # 服务端 API 功能测试（11 用例，含握手竞态/连接上限回归）
     example_client            # 客户端 API 功能测试（14 用例）
     test_cliauto              # 自动重连客户端（31 断言，keepalive/断线检测）

@@ -23,7 +23,7 @@
 | 分层架构 | 节点抽象 → 客户端/服务端 → 协议 → 传输 → 平台抽象（VSI） |
 | 节点模型 | `ssn_node_t` 双角色，一个节点同时是生产者/消费者/服务提供者 |
 | C++ 服务框架 | v2.4.0 起，`ServiceManager::Run<T>()` 一行启动服务 |
-| 工程完备 | 16 套件 718 例测试全绿、`find_package(ssn)` 包配置、GitHub Actions CI、docsify 文档站 |
+| 工程完备 | 17 套件 765 例测试全绿、`find_package(ssn)` 包配置、GitHub Actions CI、docsify 文档站 |
 
 ### 适用场景
 

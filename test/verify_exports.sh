@@ -46,6 +46,10 @@ REQUIRED=(
     ssn_server_publish
     ssn_node_create
     ssn_node_poll
+    ssn_rpc_handle_reply
+    ssn_rpc_handle_request
+    ssn_pubsub_handle_message
+    ssn_msg_handle_data
 )
 
 exported=$(nm -D --defined-only "$LIB" 2>/dev/null | awk '{print $3}' | grep '^ssn_' | sort -u)

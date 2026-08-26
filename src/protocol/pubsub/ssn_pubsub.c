@@ -243,6 +243,29 @@ int ssn_pubsub_pub_publish(
     return 0;
 }
 
+int ssn_pubsub_handle_message(ssn_pubsub_sub_t *sub, const ssn_header_t *hdr)
+{
+    if (!sub || !hdr) {
+        LOG_ERROR("Invalid arguments for pubsub handle_message");
+        return -1;
+    }
+
+    if (hdr->msg_type != SSN_MSG_TYPE_PUBLISH) {
+        return 0;
+    }
+    if (!sub->on_message) {
+        return 0;
+    }
+
+    ssn_url_ref_t url_ref;
+    ssn_data_ref_t data_ref;
+    ssn_get_url(hdr, &url_ref);
+    ssn_get_data(hdr, &data_ref);
+    sub->on_message(url_ref.url, data_ref.data,
+                    data_ref.length, sub->user_arg);
+    return 1;
+}
+
 int ssn_pubsub_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
 {
     if (!ctx || !ctx->transport) {
@@ -257,16 +280,8 @@ int ssn_pubsub_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
     if (!hdr) return -1;
 
     if (ctx->role == SSN_ROLE_SUB) {
-        /* 订阅端: 处理发布消息 */
-        ssn_pubsub_sub_t *sub = (ssn_pubsub_sub_t *)ctx;
-        if (hdr->msg_type == SSN_MSG_TYPE_PUBLISH && sub->on_message) {
-            ssn_url_ref_t url_ref;
-            ssn_data_ref_t data_ref;
-            ssn_get_url(hdr, &url_ref);
-            ssn_get_data(hdr, &data_ref);
-            sub->on_message(url_ref.url, data_ref.data,
-                          data_ref.length, sub->user_arg);
-        }
+        /* 收编到 handle 原语（Issue #31 v1.1）：帧校验 + 回调触发单份化 */
+        ssn_pubsub_handle_message((ssn_pubsub_sub_t *)ctx, hdr);
     }
 
     return 1;
