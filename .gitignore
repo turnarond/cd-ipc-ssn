@@ -2,6 +2,10 @@ build/**
 .omc/
 .clang-format
 
+# Python 工具缓存
+__pycache__/
+*.pyc
+
 # examples 构建产物（二进制与构建日志）
 examples/*/*/build.log
 examples/*/*/client

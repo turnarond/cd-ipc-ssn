@@ -28,12 +28,12 @@ cmake .. && make -j$(nproc)
 ### 运行测试
 
 ```bash
-bash test/run_tests.sh        # 一键：构建 + 全部 14 个自动化套件
-# 或构建后逐个运行：
+bash test/run_tests.sh        # 一键：构建 + 全部 16 个自动化套件
+# 或构建后运行单个套件，例如：
 ./test_transport                # 传输层测试 (67 断言)
 ./test_node_basic               # 节点基础测试 (3 用例)
 ./test_node                     # 节点完整测试 (6 用例)
-./test_protocol                 # 协议层测试 (25 断言)
+./test_protocol                 # 协议层测试 (31 断言)
 ./test_protocol_integration     # 协议集成测试 (19 用例)
 ```
 
@@ -273,26 +273,33 @@ cmake .. && make -j$(nproc)
 | `test_transport` | 传输层完整测试（创建、连接、收发、工厂、IPv6） | 67 |
 | `test_node_basic` | 节点基础生命周期 | 3 |
 | `test_node` | 节点完整功能（创建、启停、PubSub、RPC、统计） | 6 |
-| `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 25 |
+| `test_protocol` | 协议层单元测试（创建、类型、角色、绑定） | 31 |
 | `test_protocol_integration` | 协议层集成测试（RPC、PubSub、Msg 全链路） | 19 |
-| `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle 超时） | 8 |
+| `example_server` | 服务端 API 功能测试（创建、启停、RPC、idle 超时） | 9 |
 | `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手） | 12 |
+| `test_cliauto` | 自动重连、keepalive 与断线检测 | 19 |
+| `test_hash_table` | 哈希表与字符串键回归 | 50 |
 | `test_cpp_*` | C++ 服务框架 7 套件（生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 485 |
 
-**合计：自动化 14 套件 625 例**，另有 3 个手工套件（需自行启动服务端）与
+**合计：自动化 16 套件 701 例**，另有 3 个手工套件（需自行启动服务端）与
 19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
-# 一键：构建 + 全部 14 个自动化套件（位置无关）
+# 一键：构建 + 全部 16 个自动化套件（位置无关）
 bash test/run_tests.sh
 
-# 或构建后逐个运行
+# 或构建后显式运行全部套件
 cd build
 ./test_transport && ./test_node_basic && ./test_node \
   && ./test_protocol && ./test_protocol_integration \
-  && ./example_server && ./example_client && ./test_cpp_*
+  && ./example_server && ./example_client \
+  && ./test_cliauto && ./test_hash_table \
+  && ./test_cpp_service_base && ./test_cpp_service_task \
+  && ./test_cpp_service_manager && ./test_cpp_ssn_service \
+  && ./test_cpp_ssn_client && ./test_cpp_json \
+  && ./test_cpp_stability
 ```
 
 ## 版本历史
@@ -310,7 +317,6 @@ cd build
 | 2.4.0 | 2026-08-16 | C++ 服务框架（libssn_framework）、Issue #4 空连接挂死修复 |
 | 2.3.2 | 2026-08-08 | 使用手册/示例全面修正、定时器线程与分片帧接收修复 |
 | 2.3.1 | 2026-08-06 | 稳定化：node 自锁、IPv6 截断、poll 毫秒换算等修复；需求分析与部署手册补写 |
-| 2.3.0 | 2026-05-07 | driver-sdk 稳定性与完备性升级（状态机、数据管道、诊断收集） |
 | 2.2.0 | 2026-05-06 | client/server API 自动化测试、ssn_cliauto 适配、EAGAIN 修复、文档全面清理 |
 | 2.1.0 | 2026-04-29 | 统一 ssn_ 命名、client/server 重构集成协议层、修复多项 bug、补全测试 |
 | 2.0.0 | 2026-04-21 | 节点抽象、多协议支持 |
