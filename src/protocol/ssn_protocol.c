@@ -141,7 +141,8 @@ int ssn_protocol_poll(ssn_protocol_ctx_t *ctx, int timeout_ms)
         return -1;
     }
 
-    /* 根据协议类型委托给专门的 poll 函数 */
+    /* 单步模式（Issue #31 v1.1）：至多一次 recv + 委托子类分发（子类内部
+     * 收编到 handle 原语），不建 select 循环、不阻塞等待 */
     switch (ctx->type) {
     case SSN_PROTOCOL_RPC:
         return ssn_rpc_poll(ctx, timeout_ms);
@@ -161,6 +162,11 @@ void ssn_protocol_run(ssn_protocol_ctx_t *ctx)
         LOG_ERROR("Invalid protocol context or transport");
         return;
     }
+
+    /* 事件循环归属（Issue #31 v1.1）：生产环境唯一权威循环是 client/server
+     * 层（ssn_client_poll/ssn_server_poll/ssn_node_poll）；本函数仅为无上层
+     * 循环的嵌入/测试场景保留（deprecated 语义） */
+    LOG_WARN("ssn_protocol_run deprecated: 生产环境请使用 ssn_client_poll / ssn_server_poll / ssn_node_poll");
 
     LOG_DEBUG("Starting protocol run loop");
 

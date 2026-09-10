@@ -1,5 +1,5 @@
 /*
- * ipc_node.h - Node abstraction layer for cd-ipc-ssn
+ * ssn_node.h - Node abstraction layer for cd-ipc-ssn
  *
  * This file defines the core data structures and interfaces for the node abstraction layer,
  * which provides a unified interface for both client and server capabilities.
@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup IPC_Node Node Abstraction
+ * @defgroup SSN_Node Node Abstraction
  * @{*/
 
 /**
@@ -117,8 +117,9 @@ typedef struct ssn_node {
     char node_name[64];                  /**< Node name */
     
     // State
+    bool valid;                          /**< 有效标志：create 置 true，destroy 置 false（防重复 destroy UAF） */
     ssn_node_state_t state;              /**< Node state */
-    int ref_count;                       /**< Reference count */
+    int ref_count;                       /**< Reference count（当前仅 create 置 1，无递增点——延迟销毁为预留） */
     time_t start_time;                   /**< Start time */
     time_t last_activity;                /**< Last activity time */
     
@@ -173,6 +174,10 @@ SSN_API bool ssn_node_stop(ssn_node_t *node);
 /**
  * @brief Destroy the node
  * 
+ * 注意：只能调用一次。重复 destroy 同一指针是调用方违约（UB，指针已悬垂）。
+ * 与 ssn_node_create/start/stop 的并发调用需调用方串行化（无内部引用计数；
+ * ref_count 为预留字段，当前无递增点）。
+ * 
  * @param node Node instance
  */
 SSN_API void ssn_node_destroy(ssn_node_t *node);
@@ -201,7 +206,7 @@ SSN_API uint32_t ssn_node_get_capabilities(ssn_node_t *node);
  * @param node Node instance
  * @return Client instance, or NULL if not available
  */
-ssn_client_t *ssn_node_get_client(ssn_node_t *node);
+SSN_API ssn_client_t *ssn_node_get_client(ssn_node_t *node);
 
 /**
  * @brief Get server handle from node
@@ -211,7 +216,7 @@ ssn_client_t *ssn_node_get_client(ssn_node_t *node);
  * @param node Node instance
  * @return Server instance, or NULL if not available
  */
-ssn_server_t *ssn_node_get_server(ssn_node_t *node);
+SSN_API ssn_server_t *ssn_node_get_server(ssn_node_t *node);
 
 /**
  * @brief Send message to a peer
@@ -338,13 +343,6 @@ SSN_API void ssn_node_set_client_message_handler(ssn_node_t *node,
  * @return 0 on success, -1 on failure
  */
 SSN_API int ssn_node_poll(ssn_node_t *node, uint64_t timeout_ms);
-
-/**
- * @brief Run node event loop
- * 
- * @param node Node instance
- */
-SSN_API void ssn_node_run(ssn_node_t *node);
 
 /**
  * @brief Get node statistics

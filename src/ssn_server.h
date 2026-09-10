@@ -25,6 +25,10 @@ typedef struct {
     uint64_t conn_timeout_ms; 
     uint64_t idle_timeout_sec;
     char ifname[IF_NAMESIZE];     /* Not used for AF_UNIX. */
+    /* 最大并发连接数（0 = 默认 SSN_SERVER_DEFAULT_MAX_CONNECTIONS）。
+     * 缺陷背景：原实现无连接上限——accept 洪泛可耗尽内存（每连接 ~132KB）与
+     * fd（fd_set 上限 1024，超过即 glibc 越界 abort）。默认值对齐 fd_set 上限。 */
+    uint32_t max_connections;
 } server_options_t;
 
 /* 命名规范别名（缺陷背景：公开类型无 ssn_ 前缀违反「类型 ssn_<module>_t」规范；
@@ -61,7 +65,7 @@ SSN_API void ssn_server_run(ssn_server_t *server);
 SSN_API void ssn_server_set_connect_handler(ssn_server_t *server, ssn_on_connect_t oncli, void *arg);
 SSN_API void ssn_server_set_message_handler(ssn_server_t *server, ssn_server_msg_handler_t callback, void *arg);
 
-/* RPC Registeation*/
+/* RPC Registration */
 SSN_API bool ssn_server_add_method(ssn_server_t *server,
                               const ssn_url_ref_t *url, ssn_server_rpc_handler_t callback, void *arg);
 SSN_API void ssn_server_remove_method(ssn_server_t *server, const ssn_url_ref_t *url);
@@ -75,7 +79,6 @@ SSN_API int ssn_server_peer_list(ssn_server_t *server, ssn_peer_id_t ids[], int 
 
 /* Get address (must be called after `ssn_server_start`) */
 SSN_API int ssn_server_address(ssn_server_t *server, struct sockaddr *addr, socklen_t *namelen);
-SSN_API int ssn_server_peer_address(ssn_server_t *server, ssn_peer_id_t id, struct sockaddr *addr, socklen_t *namelen);
 
 /* Publish Management */
 SSN_API bool ssn_server_is_subscribed(ssn_server_t *server, const ssn_url_ref_t *url);

@@ -1,6 +1,6 @@
 /**
  * @file ssn_frame.h
- * @brief IPC协议定义和相关函数
+ * @brief SSN 协议定义和相关函数
  */
 
 #ifndef SSN_FRAME_H
@@ -15,13 +15,14 @@
 #include <arpa/inet.h>
 #endif
 #include "transports/ssn_transport.h"
+#include "ssn_export.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @defgroup IPC_Protocol IPC协议定义
+ * @defgroup SSN_Protocol SSN协议定义
  * @{
  */
 
@@ -121,7 +122,9 @@ typedef struct __attribute__((packed)) {
  * @brief 流接收上下文，用于处理部分数据包
  */
 typedef struct {
-    uint32_t cur_len;       /**< 当前接收长度 */
+    uint32_t cur_len;       /**< 当前接收长度（buffer 内有效数据量） */
+    uint32_t head;          /**< 读偏移：已解析但未 compact 的数据起点（性能优化：
+                             *   小包突发时避免逐包 memmove，仅缓冲近满时 compact） */
     uint32_t total_len;     /**< 总长度 */
     uint8_t buffer[SSN_MAX_PACKET_SIZE]; /**< 接收缓冲区 */
 } ssn_stream_ctx_t;
@@ -165,13 +168,13 @@ typedef bool (*ssn_packet_handler_t)(ssn_header_t *ssn_hdr, void *arg);
  * @param seqno 序列号
  * @return IPC头部指针
  */
-ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
+SSN_API ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno);
 
 /**
  * @brief 初始化IPC流接收上下文
  * @param recv 流接收上下文
  */
-void ssn_stream_init(ssn_stream_ctx_t *recv);
+void SSN_API ssn_stream_init(ssn_stream_ctx_t *recv);
 
 /**
  * @brief 获取IPC URL
@@ -179,7 +182,7 @@ void ssn_stream_init(ssn_stream_ctx_t *recv);
  * @param url URL引用
  * @return 获取成功返回true，失败返回false
  */
-bool ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
+bool SSN_API ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
 
 /**
  * @brief 获取IPC数据
@@ -187,18 +190,22 @@ bool ssn_get_url(const ssn_header_t *ssn_hdr, ssn_url_ref_t *url);
  * @param data 数据引用
  * @return 获取成功返回true，失败返回false
  */
-bool ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
+bool SSN_API ssn_get_data(const ssn_header_t *ssn_hdr, ssn_data_ref_t *data);
 
 /**
- * @brief IPC流输入处理
+ * @brief IPC流输入处理（粘包重组）
  * @param recv 流接收上下文
  * @param buf 输入缓冲区
  * @param buf_len 缓冲区长度
  * @param callback 数据包处理回调函数
  * @param arg 回调参数
  * @return 处理成功返回true，失败返回false
+ * 
+ * 回调语义：返回 true 继续处理后续包；返回 false 表示「请求停止处理」
+ * （调用方主动中止，如连接已关闭）——stream_feed 视为正常结束并返回 true，
+ * 不是错误。返回 false 仅表示流层错误（缓冲区溢出/头部无效/数据被截断）。
  */
-bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
+bool SSN_API ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
                        ssn_packet_handler_t callback, void *arg);
 
 /**
@@ -207,7 +214,7 @@ bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len,
  * @param buf_len 缓冲区长度
  * @return 处理成功返回IPC头部指针，失败返回NULL
  */
-ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
+SSN_API ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
 
 /**
  * @brief 发送消息
@@ -217,7 +224,7 @@ ssn_header_t *ssn_packet_input(void *buf, size_t buf_len);
  * @param data 数据引用
  * @return 发送成功返回true，失败返回false
  */
-bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ssn_hdr, 
+bool SSN_API ssn_send_message(ssn_transport_t *transport, ssn_header_t *ssn_hdr, 
     const ssn_url_ref_t *url, const ssn_data_ref_t *data);
 
 /** @} */

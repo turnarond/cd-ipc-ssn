@@ -27,7 +27,7 @@ class DocumentGuardTests(unittest.TestCase):
             '#define SSN_VERSION_STRING "2.5.1"\n',
             encoding="utf-8",
         )
-        suites = "\n".join(f"    test_suite_{index}" for index in range(16))
+        suites = "\n".join(f"    test_suite_{index}" for index in range(17))
         (self.root / "test/run_tests.sh").write_text(
             f"TESTS=(\n{suites}\n)\nCPP_TESTS=(\n)\n", encoding="utf-8"
         )
@@ -35,7 +35,7 @@ class DocumentGuardTests(unittest.TestCase):
             "[使用手册](06-使用手册/README.md)\n", encoding="utf-8"
         )
         (self.root / "docs/06-使用手册/README.md").write_text(
-            "当前基线：16 个自动化套件、701 个断言、19 个示例。\n",
+            "当前基线：17 个自动化套件、765 个断言、19 个示例。\n",
             encoding="utf-8",
         )
 
@@ -109,9 +109,16 @@ class DocumentGuardTests(unittest.TestCase):
 
         self.assertEqual([], inspect_repository(self.root))
 
+    def test_allows_protocol_handles_count(self):
+        (self.root / "README.md").write_text(
+            "test_protocol_handles（47 个断言）。\n", encoding="utf-8"
+        )
+
+        self.assertEqual([], inspect_repository(self.root))
+
     def test_reports_incorrect_total_assertion_and_example_counts(self):
         (self.root / "docs/README.md").write_text(
-            "全量自动化测试 16 个套件、999 个断言通过。\n"
+            "全量自动化测试 17 个套件、999 个断言通过。\n"
             "示例构建 99 个示例。\n",
             encoding="utf-8",
         )

@@ -152,6 +152,16 @@ SSN_API int ssn_protocol_bind(ssn_protocol_ctx_t *ctx, ssn_transport_t *transpor
 SSN_API int ssn_protocol_connect(ssn_protocol_ctx_t *ctx, ssn_transport_t *transport);
 
 /**
+ * @note 事件循环归属（Issue #31，v1.1）：生产应用应使用 ssn_client_poll /
+ *       ssn_server_poll / ssn_node_poll 驱动事件循环——client/server 层是唯一
+ *       权威循环；本协议层为「纯状态机 + 编解码」，不拥有循环。
+ *       ssn_protocol_poll 与各子类 poll 为协议层独立嵌入/测试模式（单步：
+ *       至多一次 recv + 调 handle 原语，不建循环）。协议层无锁，handle 原语
+ *       假定调用方已串行化；上层（client/server）的 pending 池匹配、per-URL
+ *       订阅、方法表分发均不迁入协议层。
+ */
+
+/**
  * @brief Poll protocol for events
  *
  * @param ctx Protocol context
@@ -163,6 +173,8 @@ SSN_API int ssn_protocol_poll(ssn_protocol_ctx_t *ctx, int timeout_ms);
 /**
  * @brief Run protocol event loop
  *
+ * @deprecated 仅提供无上层循环的嵌入场景/测试使用；生产应用应使用
+ *             ssn_client_poll / ssn_server_poll / ssn_node_poll。
  * @param ctx Protocol context
  */
 SSN_API void ssn_protocol_run(ssn_protocol_ctx_t *ctx);

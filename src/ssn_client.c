@@ -1,5 +1,5 @@
 /*
- * IPC client
+ * SSN client
  */
 
 #include <errno.h>
@@ -174,7 +174,7 @@ void *ssn_client_timer_handle(void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_TIMER_PERIOD);
+        ipc_thread_msleep(SSN_TIMER_PERIOD);
 
         /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
         if (__atomic_load_n(&g_ssn_client_timer_exit, __ATOMIC_ACQUIRE)) {
@@ -196,8 +196,8 @@ void *ssn_client_timer_handle(void *arg)
             for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
                 if (is_bit_set(client->pending_bitmap, i)) {
                     pendq = &client->pending_pool[i];
-                    if (pendq->timeout_ms > IPC_TIMER_PERIOD) {
-                        pendq->timeout_ms -= IPC_TIMER_PERIOD;
+                    if (pendq->timeout_ms > SSN_TIMER_PERIOD) {
+                        pendq->timeout_ms -= SSN_TIMER_PERIOD;
                     } else {
                         pendq->timeout_ms = 0;
                         emit = true;
@@ -220,6 +220,9 @@ void *ssn_client_timer_handle(void *arg)
 
     return (NULL);
 }
+
+/* 前向声明：ssn_client_unref 释放路径先于定义处调用（DRY 助手，见下） */
+static void ssn_client_collect_and_call_pending(ssn_client_t *client, bool only_timeout);
 
 /**
  * @brief 增加客户端引用计数
@@ -299,36 +302,7 @@ void ssn_client_unref(ssn_client_t *client)
         
         /* 缺陷背景：原实现持 client->lock 调用剩余 pending 的用户回调，回调内
          * 调用 ssn_client_* API 会自锁死锁。修复：锁内收集并清位图，解锁后回调。 */
-        struct timeout_item {
-            uint32_t ftype;
-            ssn_client_callback_u callback;
-            void *arg;
-        } items[SSN_CLIENT_MAX_PENDING];
-        int n_items = 0;
-
-        ipc_mutex_lock(client->lock);
-        for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
-            if (is_bit_set(client->pending_bitmap, i)) {
-                pendq = &client->pending_pool[i];
-                if (n_items < SSN_CLIENT_MAX_PENDING) {
-                    items[n_items].ftype = pendq->ftype;
-                    items[n_items].callback = pendq->callback;
-                    items[n_items].arg = pendq->arg;
-                    n_items++;
-                }
-                free_pending_index(client, pendq->index);
-            }
-        }
-        ipc_mutex_unlock(client->lock);
-        
-        /* 锁外回调：客户端已 invalid，回调内对 ssn_client_* 的调用会被拒绝 */
-        for (int i = 0; i < n_items; i++) {
-            if (items[i].ftype == SSN_CLIENT_FTYPE_RPC && items[i].callback.rpc) {
-                items[i].callback.rpc(client, NULL, NULL, items[i].arg);
-            } else if (items[i].ftype == SSN_CLIENT_FTYPE_RES && items[i].callback.res) {
-                items[i].callback.res(client, false, items[i].arg);
-            }
-        }
+        ssn_client_collect_and_call_pending(client, false);
 
         ipc_mutex_destroy(client->lock);
         ipc_spinlock_destroy(client->spin);
@@ -382,6 +356,14 @@ static void free_pending_index(ssn_client_t *client, uint16_t index)
     }
 
     // 注意：此函数假设调用者已经持有 client->lock 锁
+    /* 缺陷背景：原实现只清位图，seqno_to_index 映射残留——seqno 回绕或迟到
+     * 应答时旧 seqno 错配到复用同 index 的新请求（应答串台）。修复：释放时
+     * 同步清映射，并校验槽位 seqno 与映射一致才清（防误清新请求）。 */
+    uint16_t slot_seqno = client->pending_pool[index].seqno;
+    if (client->seqno_to_index[slot_seqno] == index) {
+        client->seqno_to_index[slot_seqno] = 0xFFFF;
+    }
+
     int w = index / 32;
     int b = index % 32;
     client->pending_bitmap[w] &= ~(1U << b);
@@ -442,7 +424,7 @@ ssn_client_t *ssn_client_create(void)
     client->onmsg        = NULL;
     client->msg_arg      = NULL;
     client->sub_handlers = NULL;
-    client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+    client->send_timeout = SSN_DEF_SEND_TIMEOUT;
     client->valid        = true;
     client->ref_count    = 1;  // 初始化引用计数为1
 
@@ -509,14 +491,26 @@ error:
  */
 void ssn_client_close(ssn_client_t *client)
 {
-    if (!client || !client->valid) {
+    if (!client) {
         return;
     }
 
+    /* 缺陷背景：原实现 valid 检查/置位与 DELETE_FROM_LIST 分属不同锁，两线程
+     * 同时 close 同一 client 时双双通过 valid 检查 → 第二个 DELETE 命中已摘除
+     * 节点（next==prev==NULL）→ 全局链表头被置 NULL，其余 client 泄漏且定时器
+     * 停止处理超时；ref_count 双 decrement 亦可能提前触发释放。
+     * 修复：valid 的检查与置位在 client->lock 内原子完成（单次进入），
+     * 全局链表删除仍持 g_ssn_client_lock。 */
+    ipc_mutex_lock(client->lock);
+    if (!client->valid) {
+        ipc_mutex_unlock(client->lock);
+        return;
+    }
     /* Set client to invalid state, so that no new operations can be performed.
      * This is necessary to ensure that the client is not used after closing.
      */
     client->valid = false;
+    ipc_mutex_unlock(client->lock);
 
     ipc_mutex_lock(g_ssn_client_lock);
     DELETE_FROM_LIST(client, g_ssn_client_list);
@@ -531,20 +525,22 @@ void ssn_client_close(ssn_client_t *client)
  * @brief 客户端发送数据包
  * 
  * @param client 客户端实例指针
+ * @param transport 传输层实例（connect 握手期间传入局部 transport，
+ *                  其余路径为 client->transport）
  * @param len 数据包长度
  * @return 发送成功返回true，失败返回false
  */
-static bool ssn_client_send(ssn_client_t *client, size_t len)
+static bool ssn_client_send(ssn_client_t *client, ssn_transport_t *transport, size_t len)
 {
     uint8_t *buffer = (uint8_t *)client->sendbuf;
     ssize_t num, total = 0;
 
     do {
-        num = ssn_transport_send(client->transport, &buffer[total], len - total);
+        num = ssn_transport_send(transport, &buffer[total], len - total);
         if (num > 0) {
             total += num;
         } else {
-            ssn_transport_disconnect(client->transport);
+            ssn_transport_disconnect(transport);
             break;
         }
     } while (total < len);
@@ -572,15 +568,19 @@ static bool ssn_client_sendmsg(ssn_client_t *client, ssn_header_t *ipc_hdr,
 }
 
 /**
- * @brief 所有RPC回调超时处理
+ * @brief 锁内收集 pending 超时/清理项并锁外回调（DRY：unref 释放路径、
+ * timeout_all、process_events 三处共用）
+ * 
+ * 缺陷背景：原实现持 client->lock 直接调用用户回调，回调内调用任何
+ * ssn_client_* API 会自锁死锁。修复：锁内收集（拷贝 ftype/callback/arg）
+ * 并清位图，解锁后逐个回调——回调内可安全调用 ssn_client_call/disconnect。
  * 
  * @param client 客户端实例指针
+ * @param only_timeout true 仅收集 timeout_ms==0 的项（process_events 用），
+ *                     false 收集全部（释放路径/timeout_all 用）
  */
-static void ssn_client_timeout_all (ssn_client_t *client)
+static void ssn_client_collect_and_call_pending(ssn_client_t *client, bool only_timeout)
 {
-    /* 缺陷背景：原实现持 client->lock 直接调用用户回调，而回调内再调用任何
-     * ssn_client_* API（call/disconnect/close）都需取同一把非递归锁 → 自锁死锁。
-     * 修复：先在锁内收集超时项（拷贝回调/arg）并清位图，解锁后再逐个回调。 */
     struct timeout_item {
         uint32_t ftype;
         ssn_client_callback_u callback;
@@ -589,21 +589,23 @@ static void ssn_client_timeout_all (ssn_client_t *client)
     int n_items = 0;
 
     ipc_mutex_lock(client->lock);
-    for (int i = 0; i < SSN_CLIENT_MAX_PENDING; i++) {
-        if (is_bit_set(client->pending_bitmap, i)) { // used
+    for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
+        if (is_bit_set(client->pending_bitmap, i)) {
             ssn_pending_request_t *pendq = &client->pending_pool[i];
-            if (n_items < SSN_CLIENT_MAX_PENDING) {
-                items[n_items].ftype = pendq->ftype;
-                items[n_items].callback = pendq->callback;
-                items[n_items].arg = pendq->arg;
-                n_items++;
+            if (!only_timeout || pendq->timeout_ms == 0) {
+                if (n_items < SSN_CLIENT_MAX_PENDING) {
+                    items[n_items].ftype = pendq->ftype;
+                    items[n_items].callback = pendq->callback;
+                    items[n_items].arg = pendq->arg;
+                    n_items++;
+                }
+                free_pending_index(client, pendq->index);
             }
-            free_pending_index(client, pendq->index);
         }
     }
     ipc_mutex_unlock(client->lock);
 
-    /* 锁外调用回调：回调内可安全调用 ssn_client_call/disconnect 等 API */
+    /* 锁外回调：回调内可安全调用 ssn_client_call/disconnect 等 API */
     for (int i = 0; i < n_items; i++) {
         if (items[i].ftype == SSN_CLIENT_FTYPE_RPC && items[i].callback.rpc) {
             items[i].callback.rpc(client, NULL, NULL, items[i].arg);
@@ -611,6 +613,13 @@ static void ssn_client_timeout_all (ssn_client_t *client)
             items[i].callback.res(client, false, items[i].arg);
         }
     }
+}
+
+
+static void ssn_client_timeout_all (ssn_client_t *client)
+{
+    /* 收集全部 pending 并锁外回调（复用 DRY 助手；行为与原实现一致） */
+    ssn_client_collect_and_call_pending(client, false);
 }
 
 /**
@@ -661,9 +670,6 @@ static bool ssn_client_conn_input(ssn_header_t *ipc_hdr, void *varg)
 bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
                         const struct timespec *timeout)
 {
-    int errcode, ret, on = 1, off = 0;
-    bool suc = false;
-    char *opt;
     fd_set fds;
     size_t len = 0;
     ssize_t num;
@@ -694,7 +700,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     ssn_client_timeout_all(client);
 
     if (timeout == NULL) {
-        struct timespec default_timeout = {3, 0}; // 默认超时5秒
+        struct timespec default_timeout = {3, 0}; // 默认超时 3 秒（注释修正：原误写 5 秒，与 recv 超时混淆）
         timeout = &default_timeout;
     }
     // 创建transport配置
@@ -723,24 +729,31 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
 
     // 根据地址类型设置配置和创建transport
     config.type = addr.type;
-    client->transport = ssn_transport_create(addr.type, &config);
-    if (!client->transport) {
+    /* 缺陷背景：原实现创建后立即锁内赋值 client->transport，随后锁外使用——
+     * poll 线程检测到旧连接丢失时销毁 client->transport，可能销毁 connect 刚
+     * 发布/正在使用的新 transport（UAF，稳定性套件 T6 负载下偶发；ASAN 定位
+     * unix_transport_connect 读已释放 transport）。修复：connect 全程使用局部
+     * transport（不发布到 client->transport），握手成功后一次性锁内发布。 */
+    ssn_transport_t *new_transport = ssn_transport_create(addr.type, &config);
+    if (!new_transport) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "create transport failed");
         ssn_client_unref(client);
         return (false);
     }
 
     // 连接到服务器
-    if (!ssn_transport_connect(client->transport, &addr, config.connect_timeout_ms)) {
+    if (!ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms)) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "connect to '%s' failed", ipc_path);
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
 
     ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_SERVICE_INFO, 0, 0);
 
-    if (!ssn_client_send(client, sizeof(ssn_header_t))) {
+    if (!ssn_client_send(client, new_transport, sizeof(ssn_header_t))) {
         ssn_handle_error(SSN_ECODE_NET_WRITE, __FILE__, __LINE__, __func__, "send failed");
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
@@ -762,7 +775,7 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     }
 
     while (retries < max_retries) {
-        num = ssn_transport_recv(client->transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
+        num = ssn_transport_recv(new_transport, client->recvbuf, SSN_MAX_PACKET_SIZE, config.recv_timeout_ms);
         
         if (num > 0) {
             arg.client     = client;
@@ -780,12 +793,14 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
             // 连接被关闭
             LOG_ERROR("recv failed, connection closed by peer");
             ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed, connection closed by peer");
+            ssn_transport_destroy(new_transport);
             ssn_client_unref(client);
             return (false);
         } else if (num < 0 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
             // 发生了真正的错误
             LOG_ERROR("recv failed, errno %d: %s", errno, strerror(errno));
             ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed");
+            ssn_transport_destroy(new_transport);
             ssn_client_unref(client);
             return (false);
         }
@@ -798,14 +813,26 @@ bool ssn_client_connect(ssn_client_t *client, const char* ipc_path,
     if (retries >= max_retries || !arg.packet_cnt) {
         LOG_ERROR("recv failed after %d retries", max_retries);
         ssn_handle_error(SSN_ECODE_NET_READ, __FILE__, __LINE__, __func__, "recv failed after multiple retries");
+        ssn_transport_destroy(new_transport);
         ssn_client_unref(client);
         return (false);
     }
 
+    /* 握手成功：锁内发布新 transport 并置 connected（与 poll 线程 fds/
+     * process_events 锁内读 client->transport 互斥）。缺陷背景：发布前
+     * connected 保持 false，poll 线程不会使用/销毁它；发布后 poll 线程
+     * 才能看到完整就绪的 transport，杜绝「销毁未就绪 transport」的 UAF。 */
+    ipc_mutex_lock(client->lock);
+    if (client->transport) {
+        ssn_transport_destroy(client->transport);
+        client->transport = NULL;
+    }
+    client->transport = new_transport;
     client->connected = true;
     ipc_memory_barrier();
+    ipc_mutex_unlock(client->lock);
 
-    /* 绑定协议层实例到传输层 */
+    /* 绑定协议层实例到传输层（transport 已发布，可直接引用） */
     ssn_rpc_connect((ssn_protocol_ctx_t *)client->rpc_req, client->transport);
     ssn_pubsub_sub_connect(client->pubsub_sub, client->transport);
     ssn_msg_send_connect(client->msg_send, client->transport);
@@ -887,7 +914,7 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
     if (timeout_ms > 0) {
         client->send_timeout  = timeout_ms;
     } else {
-        client->send_timeout = IPC_DEF_SEND_TIMEOUT;
+        client->send_timeout = SSN_DEF_SEND_TIMEOUT;
     }
 
     /* 加锁保护 transport 重建：与 poll 线程的 process_events/fds 读 transport
@@ -901,9 +928,18 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
         if (new_transport) {
             ssn_address_t addr;
             if (ssn_transport_get_address(client->transport, &addr)) {
-                ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms);
-                ssn_transport_destroy(client->transport);
-                client->transport = new_transport;
+                /* 缺陷背景：原实现忽略 connect 返回值，失败仍销毁旧 transport 并
+                 * 发布新 transport（fd=-1）——connected 保持 true 形成「假连接」：
+                 * 后续 send 全失败、poll 等不到 EOF 状态卡死，且新连接未握手，
+                 * 服务端 5s 超时后将其销毁（双向状态不一致）。修复：connect 失败
+                 * 保留旧 transport（发送超时设置仍生效于下次真正重建），仅成功才替换。 */
+                if (ssn_transport_connect(new_transport, &addr, config.connect_timeout_ms)) {
+                    ssn_transport_destroy(client->transport);
+                    client->transport = new_transport;
+                } else {
+                    LOG_WARN("ssn client send timeout: reconnect failed, keep old transport");
+                    ssn_transport_destroy(new_transport);
+                }
             } else {
                 ssn_transport_destroy(new_transport);
             }
@@ -928,12 +964,15 @@ bool ssn_client_send_timeout(ssn_client_t *client, const int timeout_ms)
 int ssn_client_fds(ssn_client_t *client, fd_set *rfds)
 {
     int max_fd;
-    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
 
+    /* 缺陷背景：原实现先取 evt_fd 再判空——ssn_client_fds(NULL) 必崩。
+     * 修复：NULL/valid 检查前置。 */
     if (!client || !client->valid) {
         LOG_ERROR("ssn client fds failed: invalid client handle.");
         return (-1);
     }
+
+    int evt_fd = ipc_event_pair_get_read_fd(client->evtfd);
 
     if (!client->connected) {
         FD_SET(evt_fd, rfds);
@@ -1006,6 +1045,15 @@ static bool ssn_client_handle_publish(ssn_client_t *client, ssn_header_t *ipc_hd
 
     if (matched && match_cb) {
         match_cb(client, &url, &data, match_arg);
+        return true;
+    }
+
+    /* Fallback：先 onsub（ssn_client_set_on_publish 设置的发布回调——缺陷背景：
+     * 原实现从未读取 onsub，cliauto 内部 set_on_publish(ssn_client_auto_msg_cb)
+     * 永不触发，订阅消息丢失；接线后与 set_on_message 语义区分：onsub 面向
+     * PUBLISH 消息，onmsg 面向未处理消息兜底） */
+    if (client->onsub) {
+        client->onsub(client, &url, &data, client->sub_arg);
         return true;
     }
 
@@ -1090,6 +1138,10 @@ static bool ssn_client_input(ssn_header_t *ipc_hdr, void *varg)
             break;
 
         case SSN_MSG_TYPE_RPC_REQUEST:
+            /* 收编（Issue #31 v1.1）：调协议层 handle 原语做帧校验/状态机更新；
+             * 协议池在生产路径为空（请求登记于 client 池，见 request_ex 登记处），
+             * 不触发回调（返回 0），派发仍走下方 client 池快照匹配 */
+            ssn_rpc_handle_reply(client->rpc_req, ipc_hdr);
             ssn_client_handle_rpc_response(client, ipc_hdr, pendq);
             break;
 
@@ -1119,7 +1171,10 @@ out:
  */
 static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 {
-    bool pkt_e;
+    /* pkt_e 必须初始化（缺陷背景：未初始化 UB——socket 无数据（did_recv=false）
+     * 时 pkt_e 读栈垃圾值，可能为 true 导致误判「连接丢失」断开，触发 cliauto
+     * 连接建立后 ~50ms 循环重连（Issue #22）） */
+    bool pkt_e = false;
     ssize_t num;
     ssn_header_t *ipc_hdr;
     ssn_pending_request_t *pendq;
@@ -1149,7 +1204,6 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 
         if (num > 0) {
             pkt_e = false;
-            // TODO: deal recv msg;
             if (!ssn_stream_feed(&client->recv, client->recvbuf,
                                 num, ssn_client_input, client)) {
                 LOG_ERROR("ssn client process event failed: stream feed failed.");
@@ -1186,39 +1240,8 @@ static bool ssn_client_process_events (ssn_client_t *client, const fd_set *rfds)
 
         /* 缺陷背景：原实现持 client->lock 遍历超时项并直接调用用户回调，回调内
          * 调用任何 ssn_client_* API 会自锁死锁。修复：锁内收集超时项并清位图，
-         * 解锁后由 ssn_client_timeout_all 在锁外回调（与超时路径共用）。 */
-        struct timeout_item {
-            uint32_t ftype;
-            ssn_client_callback_u callback;
-            void *arg;
-        } items[SSN_CLIENT_MAX_PENDING];
-        int n_items = 0;
-
-        ipc_mutex_lock(client->lock);
-        for (int i = 0 ; i < SSN_CLIENT_MAX_PENDING ; i++) {
-            if (is_bit_set(client->pending_bitmap, i)) {
-                pendq = &client->pending_pool[i];
-                if (pendq->timeout_ms == 0) {
-                    if (n_items < SSN_CLIENT_MAX_PENDING) {
-                        items[n_items].ftype = pendq->ftype;
-                        items[n_items].callback = pendq->callback;
-                        items[n_items].arg = pendq->arg;
-                        n_items++;
-                    }
-                    free_pending_index(client, pendq->index);
-                }
-            }
-        }
-        ipc_mutex_unlock(client->lock);
-
-        /* 锁外回调：回调内可安全调用 ssn_client_call/disconnect 等 API */
-        for (int i = 0; i < n_items; i++) {
-            if (items[i].ftype == SSN_CLIENT_FTYPE_RPC && items[i].callback.rpc) {
-                items[i].callback.rpc(client, NULL, NULL, items[i].arg);
-            } else if (items[i].ftype == SSN_CLIENT_FTYPE_RES && items[i].callback.res) {
-                items[i].callback.res(client, false, items[i].arg);
-            }
-        }
+         * 解锁后锁外回调（复用 DRY 助手，仅收集已到期项）。 */
+        ssn_client_collect_and_call_pending(client, true);
     }
 
     return (true);
@@ -1286,13 +1309,14 @@ static int alloc_pending_index (ssn_client_t *client)
  * @param callback 回调函数
  * @param arg 回调参数
  * @param timeout_ms 超时时间
+ * @param[out] out_seqno 可选：登记成功的请求 seqno（用于调用方主动撤销）
  * @return 发送成功返回true，失败返回false
  */
-static bool ssn_client_request (ssn_client_t *client, uint8_t type, 
-                                const ssn_url_ref_t *url, const ssn_data_ref_t *data,
-                                ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+static bool ssn_client_request_ex (ssn_client_t *client, uint8_t type, 
+                                   const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                                   ssn_client_result_handler_t callback, void *arg,
+                                   uint64_t timeout_ms, uint16_t *out_seqno)
 {
-    size_t len;
     uint16_t seqno;
     ssn_header_t *ipc_hdr;
     ssn_pending_request_t *pendq;
@@ -1305,10 +1329,19 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
     // 增加引用计数
     ssn_client_ref(client);
 
+    /* 缺陷背景：原实现在加锁前执行 alloc_pending_index + seqno++ +
+     * seqno_to_index 登记——与定时器线程（锁内改 pendq->timeout_ms）、并发
+     * subscribe/call 竞态：槽位重复分配、seqno 重复 → 应答串线/误回调；
+     * pending 池满时 return false 未 unref → 引用计数泄漏。修复：登记整体
+     * 移入锁内（与 ssn_client_call_ex 对齐），失败路径补 unref。 */
+    ipc_mutex_lock(client->lock);
+
     if (callback) {
         int index = alloc_pending_index(client);
         if (index < 0) {
+            ipc_mutex_unlock(client->lock);
             LOG_ERROR("ssn client request: prepare pendq failed.");
+            ssn_client_unref(client);
             return (false);
         }
         pendq = &client->pending_pool[index];
@@ -1326,33 +1359,35 @@ static bool ssn_client_request (ssn_client_t *client, uint8_t type,
         seqno = ssn_client_prepare_seqno(client);
     }
 
-    ipc_mutex_lock(client->lock);
-
     ipc_hdr = ssn_create_header(client->sendbuf, type, 0, seqno);
 
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
         LOG_ERROR("ssn client request: sendmsg failed.");
-        goto error;
+        if (pendq) {
+            free_pending_index(client, pendq->index);   /* 已在锁内 */
+        }
+        ipc_mutex_unlock(client->lock);
+        ssn_client_unref(client);
+        return (false);
     }
 
     ipc_mutex_unlock(client->lock);
+
+    if (out_seqno) {
+        *out_seqno = seqno;
+    }
 
     LOG_DEBUG("ssn client request success.");
     ssn_client_unref(client);
     return (true);
+}
 
-error:
-    ipc_mutex_unlock(client->lock);
-
-    if (pendq) {
-        // 重新加锁保护 free_pending_index 操作
-        ipc_mutex_lock(client->lock);
-        free_pending_index(client, pendq->index);
-        ipc_mutex_unlock(client->lock);
-    }
-
-    ssn_client_unref(client);
-    return (false);
+/* 无 seqno 输出的薄封装（subscribe/unsubscribe 等无需主动撤销的路径） */
+static bool ssn_client_request (ssn_client_t *client, uint8_t type, 
+                                const ssn_url_ref_t *url, const ssn_data_ref_t *data,
+                                ssn_client_result_handler_t callback, void *arg, uint64_t timeout_ms)
+{
+    return ssn_client_request_ex(client, type, url, data, callback, arg, timeout_ms, NULL);
 }
 
 /**
@@ -1370,12 +1405,15 @@ bool ssn_client_subscribe (ssn_client_t *client, const ssn_url_ref_t *url,
 {
     ssn_sub_handler_t *h;
 
-    if (!client || !client->valid || !client->connected) {
-        LOG_ERROR("ssn client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
-        return (false);
-    }
+    /* 缺陷背景：原实现先判 client 再在日志参数中解引用 url（未判空）——
+     * 未连接时传 url=NULL 会在 LOG_ERROR 的 %.*s 参数求值处空指针崩溃。
+     * 修复：url 判空前置。 */
     if (!url || !url->url || !url->url_len || url->url[0] != '/') {
         LOG_ERROR("ssn client subscribe failed: invalid url.");
+        return (false);
+    }
+    if (!client || !client->valid || !client->connected) {
+        LOG_ERROR("ssn client subscribe to '%.*s' failed: client not connected.", (int)url->url_len, url->url);
         return (false);
     }
 
@@ -1454,8 +1492,15 @@ bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms)
         return false;
     }
 
-    if (!ssn_client_request(client, SSN_MSG_TYPE_PING_ECHO, NULL, NULL,
-                            ping_reply_cb, (void *)&replied, timeout_ms)) {
+    /* 缺陷背景：原实现把栈上 replied 的地址作为回调 arg 登记 pending，等待窗口
+     * 结束后 pending 仍留在位图（仅定时器置超时、下次 poll 才触发回调并释放），
+     * 迟到应答/超时回调会向已返回函数的栈帧写入 → 栈污染（UB）。修复：等待结束
+     * 时主动撤销 pending 登记，杜绝回调再访问栈地址。 */
+    uint16_t ping_seqno = 0;
+    bool registered = ssn_client_request_ex(client, SSN_MSG_TYPE_PING_ECHO, NULL, NULL,
+                                            ping_reply_cb, (void *)&replied, timeout_ms,
+                                            &ping_seqno);
+    if (!registered) {
         return false;
     }
 
@@ -1464,6 +1509,19 @@ bool ssn_client_ping(ssn_client_t *client, uint64_t timeout_ms)
     while (!replied && waited < timeout_ms) {
         ssn_client_poll(client, 10);
         waited += 10;
+    }
+
+    if (!replied) {
+        /* 超时无应答：主动撤销 pending 登记（锁内清位图与 seqno 映射），
+         * 之后迟到的应答/超时回调因查不到 seqno 被丢弃，不再触碰栈上 replied */
+        ipc_mutex_lock(client->lock);
+        if (client->seqno_to_index[ping_seqno] != 0xFFFF) {
+            uint16_t idx = client->seqno_to_index[ping_seqno];
+            if (is_bit_set(client->pending_bitmap, idx)) {
+                free_pending_index(client, idx);
+            }
+        }
+        ipc_mutex_unlock(client->lock);
     }
 
     return replied;
@@ -1526,18 +1584,20 @@ static int ssn_client_call_ex (ssn_client_t *client, const ssn_url_ref_t *url, c
 
     ipc_hdr = ssn_create_header(client->sendbuf, SSN_MSG_TYPE_RPC_REQUEST, 0, seqno);
 
-    ipc_mutex_unlock(client->lock);
-
+    /* 缺陷背景：原实现在此先解锁再 sendmsg——sendmsg 内部无锁读
+     * client->transport，与 poll 线程销毁 transport（连接丢失）竞争 UAF。
+     * 修复：sendmsg 在锁内执行（与 ssn_client_request/message 一致）。 */
     if (!ssn_client_sendmsg(client, ipc_hdr, url, data)) {
         LOG_ERROR("ssn client call failed: send msg failed.");
         if (pendq) {
-            ipc_mutex_lock(client->lock);
             free_pending_index(client, pendq->index);
-            ipc_mutex_unlock(client->lock);
         }
+        ipc_mutex_unlock(client->lock);
         ssn_client_unref(client);
         return -1;
     }
+
+    ipc_mutex_unlock(client->lock);
 
     LOG_DEBUG("ssn client call success.");
 
@@ -1683,10 +1743,18 @@ int ssn_client_poll(ssn_client_t *client, uint64_t timeout_ms)
             /* Connection lost but keep client valid so auto-client can reconnect */
             client->connected = false;
             ipc_memory_barrier();
+            /* 缺陷背景：原实现无锁销毁 transport，与 ssn_client_connect 重建时
+             * 无锁赋值 transport 竞争——poll 线程销毁的可能是 connect 线程刚
+             * 创建/正在使用的 transport（UAF），后续 get_fd 读到垃圾 fd 触发
+             * glibc fd_set 越界 abort（稳定性套件 T6 在负载下偶发复现）。
+             * 修复：销毁/替换统一持 client->lock（与 connect/fds/process_events
+             * 的锁内读 transport 互斥）。 */
+            ipc_mutex_lock(client->lock);
             if (client->transport) {
                 ssn_transport_destroy(client->transport);
                 client->transport = NULL;
             }
+            ipc_mutex_unlock(client->lock);
             LOG_ERROR("ssn client poll: connection of client %d lost", client->cid);
         }
         cnt = 0;

@@ -9,11 +9,12 @@
 ```bash
 cmake -S . -B build          # 配置 C99/C++17 工程
 cmake --build build -j4      # 构建动态库、测试及示例
-bash test/run_tests.sh       # 构建并运行全部自动化测试
-bash test/verify_examples.sh # 验证 examples/ 可编译
+bash test/run_tests.sh       # 构建并运行 17 个自动化套件
+bash test/verify_exports.sh  # 校验公开 API 导出符号
+bash test/verify_examples.sh # 验证 19 个示例及消费集成
 ```
 
-Linux 为主要构建环境；Windows 问题优先使用 CMake 工具链，必要时转 WSL。疑难崩溃可用 Linux `gdb` 或 Windows `cdb` 定位。
+Linux/POSIX 为支持环境；仓库位于 Windows 时必须在 WSL 中构建和测试。疑难崩溃可用 Linux `gdb` 或 Windows `cdb` 定位。
 
 ## 编码风格与命名约定
 

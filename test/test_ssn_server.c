@@ -509,6 +509,146 @@ static int test_zero_handshake_timeout(void)
     return 0;
 }
 
+/* ---- Test 10: 握手超时到期与对端 FIN 并发（hst 链表 UAF 回归） ----
+ *
+ * 缺陷背景：ssn_server_cli_destroy 用 cli->hst.alive 判断是否从 hst 链表摘除，
+ * 而 alive==0 同时表示「定时器已到期但事件未消费」与「已摘除」二义。竞态：
+ * 定时器（独立线程，不依赖 poll）将 alive 置 0 并 signal evtfd → 对端 FIN
+ * 触发 recv 0 → destroy 因 alive==0 跳过摘除 → free(cli) → 之后
+ * handle_event_input 对已释放节点 DELETE_FROM_LIST + 读 cli->transport → UAF。
+ * 回归：主线程手动控制 poll 时机——先让定时器归零 signal（不消费），再 FIN，
+ * 最后单次 poll 同时看到 FIN+evtfd 两事件（clis 先处理 → UAF 确定性触发）。
+ * 修复前 ASAN 报 heap-use-after-free，修复后全绿。
+ */
+static int test_handshake_timeout_fin_race(void)
+{
+    printf("  Test 10: Handshake-timeout + FIN race (hst UAF)... ");
+
+    const int ROUNDS = 20;
+    for (int r = 0; r < ROUNDS; r++) {
+        server_options_t opts = {
+            .send_timeout_ms = 5000,
+            .conn_timeout_ms = 60,       /* 短握手超时：~50ms 内 alive 归零并 signal evtfd */
+            .idle_timeout_sec = 60,
+            .ifname = ""
+        };
+        ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+        if (!srv) { printf("FAIL (create round %d)\n", r); return 1; }
+        if (!ssn_server_start(srv)) {
+            printf("FAIL (start round %d)\n", r); ssn_server_destroy(srv); return 1;
+        }
+        /* 不启动 poll 线程：定时器线程独立运行，主线程手动控制 poll 时机 */
+
+        /* 裸 TCP 连接（不发握手包）：cli 进入 hst 链表，alive=60ms 倒计时 */
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            printf("FAIL (socket round %d)\n", r);
+            ssn_server_destroy(srv);
+            return 1;
+        }
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        const char *path = TEST_SERVER_ADDR + strlen("unix://");
+        strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            printf("FAIL (connect round %d)\n", r);
+            close(fd);
+            ssn_server_destroy(srv);
+            return 1;
+        }
+
+        /* 步骤 1：不 poll，等定时器 tick（50ms）把 alive 减到 0 并 signal evtfd */
+        usleep(80000);
+
+        /* 步骤 2：对端 FIN（此时 evtfd 已 signal 但未被消费） */
+        close(fd);
+
+        /* 步骤 3：单次 poll——pselect 同时返回 cli fd（FIN）与 evtfd →
+         * clis 先处理（recv 0 → destroy，alive==0 跳过 hst 摘除 → free），
+         * 随后 handle_event_input 遍历残留 hst 节点 → UAF */
+        ssn_server_poll(srv, 0);
+
+        /* 再 poll 一轮让事件循环收敛 */
+        usleep(100000);
+        ssn_server_poll(srv, 0);
+
+        ssn_server_destroy(srv);
+    }
+    printf("PASS\n");
+    return 0;
+}
+
+/* ---- Test 11: 连接数上限（P2：accept 洪泛 DoS 防护） ----
+ *
+ * 缺陷背景：ssn_server_handle_new_connection 原无连接上限——accept 洪泛可耗尽
+ * 内存（每连接约 132KB 流缓冲）与 fd，且 ssn_server_fds 用 fd_set（FD_SETSIZE
+ * 上限），超过 ~1021 连接即 glibc fd_set 越界 abort。
+ * 回归：max_connections=2 时，第 3 个客户端 connect 后握手应失败（被拒），
+ * 服务端仍健康（peer_count 保持 2）。
+ */
+static int test_max_connections_limit(void)
+{
+    printf("  Test 11: Max connections limit (DoS guard)... ");
+
+    server_options_t opts = {
+        .send_timeout_ms = 5000,
+        .conn_timeout_ms = 1000,
+        .idle_timeout_sec = 60,
+        .ifname = "",
+        .max_connections = 2
+    };
+    ssn_server_t *srv = ssn_server_create_with_options(TEST_SERVER_ADDR, &opts);
+    if (!srv) { printf("FAIL (create)\n"); return 1; }
+    if (!ssn_server_start(srv)) {
+        printf("FAIL (start)\n"); ssn_server_destroy(srv); return 1;
+    }
+    g_srv_running = 1;
+    g_srv_poll_ms = 10;
+    pthread_t tid;
+    pthread_create(&tid, NULL, server_thread, srv);
+    usleep(50000);
+
+    /* 前 2 个连接成功握手（SERVICE_INFO 交换） */
+    int ok_cnt = 0;
+    ssn_client_t *clis[3] = { NULL, NULL, NULL };
+    for (int i = 0; i < 3; i++) {
+        clis[i] = ssn_client_create();
+        if (!clis[i]) { printf("FAIL (client create %d)\n", i); goto cleanup; }
+        struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+        if (ssn_client_connect(clis[i], TEST_SERVER_ADDR, &ts)) {
+            ok_cnt++;
+        }
+    }
+
+    /* 上限 2：应恰好 2 个成功、第 3 个被拒 */
+    int ok = (ok_cnt == 2);
+    if (!ok) {
+        printf("FAIL (ok_cnt=%d, expect 2)\n", ok_cnt);
+    }
+
+    /* 服务端仍健康：peer_count 应等于成功连接数 */
+    for (int i = 0; i < 10 && ssn_server_peer_count(srv) != ok_cnt; i++) {
+        usleep(50000);
+    }
+    if (ssn_server_peer_count(srv) != ok_cnt) {
+        printf("FAIL (peer_count=%d, expect %d)\n", ssn_server_peer_count(srv), ok_cnt);
+        ok = 0;
+    }
+
+cleanup:
+    for (int i = 0; i < 3; i++) {
+        if (clis[i]) { ssn_client_close(clis[i]); }
+    }
+    g_srv_running = 0;
+    pthread_join(tid, NULL);
+    ssn_server_destroy(srv);
+
+    if (!ok) { return 1; }
+    printf("PASS\n");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -523,7 +663,9 @@ int main(void)
     failed += test_active_connection_kept();
     failed += test_empty_connection_not_blocking();
     failed += test_zero_handshake_timeout();
+    failed += test_handshake_timeout_fin_race();
+    failed += test_max_connections_limit();
 
-    printf("=== Result: %d/9 passed, %d failed ===\n", 9 - failed, failed);
+    printf("=== Result: %d/11 passed, %d failed ===\n", 11 - failed, failed);
     return failed ? 1 : 0;
 }

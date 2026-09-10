@@ -299,52 +299,6 @@ bool ssn_address_to_string(const ssn_address_t* addr, char* buffer, size_t size)
     return true;
 }
 
-bool ssn_address_copy(const ssn_address_t* src, ssn_address_t* dst)
-{
-    if (!src || !dst) {
-        return false;
-    }
-
-    memcpy(dst, src, sizeof(ssn_address_t));
-    return true;
-}
-
-bool ssn_address_equal(const ssn_address_t* addr1, const ssn_address_t* addr2)
-{
-    if (!addr1 || !addr2) {
-        return false;
-    }
-
-    if (addr1->type != addr2->type) {
-        return false;
-    }
-
-    switch (addr1->type) {
-        case SSN_TRANSPORT_UNIX:
-            return strcmp(addr1->addr.unix_addr.sun_path,
-                          addr2->addr.unix_addr.sun_path) == 0;
-
-        case SSN_TRANSPORT_TCP:
-        case SSN_TRANSPORT_UDP:
-            return addr1->addr.inet_addr.sin_port ==
-                       addr2->addr.inet_addr.sin_port &&
-                   memcmp(&addr1->addr.inet_addr.sin_addr,
-                          &addr2->addr.inet_addr.sin_addr,
-                          sizeof(addr1->addr.inet_addr.sin_addr)) == 0;
-
-        case SSN_TRANSPORT_TCP6:
-        case SSN_TRANSPORT_UDP6:
-            return addr1->addr.inet6_addr.sin6_port ==
-                       addr2->addr.inet6_addr.sin6_port &&
-                   memcmp(&addr1->addr.inet6_addr.sin6_addr,
-                          &addr2->addr.inet6_addr.sin6_addr,
-                          sizeof(addr1->addr.inet6_addr.sin6_addr)) == 0;
-
-        default:
-            return false;
-    }
-}
-
 const char* ssn_transport_type_to_string(ssn_transport_type_t type)
 {
     switch (type) {

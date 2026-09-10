@@ -21,6 +21,8 @@ STALE_FACTS = (
     "14 套件",
     "581 例",
     "625 例",
+    "701 个断言",
+    "701 例",
     "test_protocol（25",
 )
 STALE_PATTERNS = ((re.compile(r"全量测试[^\r\n]{0,40}7 套件"), "全量测试……7 套件"),)
@@ -28,13 +30,13 @@ TOTAL_SUITE_PATTERN = re.compile(
     r"(?:全部|全量|构建\s*\+)[^\r\n]{0,30}?(\d+)\s*个?\s*自动化套件"
 )
 KEY_FACT_PATTERNS = (
-    (re.compile(r"(?P<claim>合计[:：]?\s*自动化\s*(?P<value>\d+)\s*套件)"), 16),
+    (re.compile(r"(?P<claim>合计[:：]?\s*自动化\s*(?P<value>\d+)\s*套件)"), 17),
     (
         re.compile(
             r"(?P<claim>(?:全部|全量|合计[:：]?\s*自动化|自动化测试)"
             r"[^。\r\n]{0,60}?(?P<value>\d+)\s*个?\s*(?:断言|例))"
         ),
-        701,
+        765,
     ),
     (
         re.compile(
@@ -45,7 +47,7 @@ KEY_FACT_PATTERNS = (
     ),
     (
         re.compile(
-            r"(?P<claim>test_protocol(?!_integration)[^\r\n]{0,30}?[（(]"
+            r"(?P<claim>test_protocol(?!_)[^\r\n]{0,30}?[（(]"
             r"(?P<value>\d+))"
         ),
         31,
@@ -103,7 +105,7 @@ def _document_findings(root: Path) -> list[Finding]:
             if pattern.search(text):
                 findings.append(Finding("事实", relative, f"包含过期口径：{label}"))
         for match in TOTAL_SUITE_PATTERN.finditer(text):
-            if int(match.group(1)) != 16:
+            if int(match.group(1)) != 17:
                 findings.append(Finding("事实", relative, f"包含过期口径：{match.group(0)}"))
         for pattern, expected in KEY_FACT_PATTERNS:
             for match in pattern.finditer(text):
@@ -129,9 +131,9 @@ def _document_findings(root: Path) -> list[Finding]:
 def _test_findings(root: Path) -> list[Finding]:
     script = _read(root / "test/run_tests.sh")
     suite_count = len(re.findall(r"^\s+(?:test_|example_)[a-z0-9_]+\s*(?:#.*)?$", script, re.MULTILINE))
-    if suite_count == 16:
+    if suite_count == 17:
         return []
-    return [Finding("事实", "test/run_tests.sh", f"自动化套件应为 16，实际解析为 {suite_count}")]
+    return [Finding("事实", "test/run_tests.sh", f"自动化套件应为 17，实际解析为 {suite_count}")]
 
 
 def inspect_repository(root: Path) -> list[Finding]:

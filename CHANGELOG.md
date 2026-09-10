@@ -2,6 +2,185 @@
 
 All notable changes to the ssn (cd-ipc-ssn) IPC framework.
 
+## [2.6.0] - 2026-08-26
+
+### Added
+- **协议层 handle 原语（Issue #31 事件循环归属收敛 v1.1）**：新增
+  `ssn_rpc_handle_reply` / `ssn_rpc_handle_request` / `ssn_pubsub_handle_message` /
+  `ssn_msg_handle_data`——无 I/O、无锁、纯函数式的协议层分发入口（帧校验/类型路由/
+  协议状态机更新/回调触发单份化）；配套单元测试 `test_protocol_handles`（47 断言）
+  纳入 run_tests.sh 与 CMakeLists（自动化 17 套件）；verify_exports.sh REQUIRED
+  补 4 个新符号
+
+### Changed
+- **事件循环归属收敛**：`ssn_rpc_poll` / `ssn_pubsub_poll` / `ssn_msg_poll` 的
+  recv 后分发逻辑收编到 handle 原语（返回语义与重构前一致）；`ssn_protocol_poll`
+  明确单步模式（至多一次 recv + handle，不建循环）；`ssn_protocol_run` 标
+  deprecated（仅供无上层循环的嵌入/测试场景）
+- **client 接收路径收编**：`ssn_client_input` RPC 应答分支调 `ssn_rpc_handle_reply`
+  做帧校验/状态机更新；pending 池匹配（`get_pending_snapshot` 锁内快照）、per-URL
+  订阅、server 方法表（`ssn_server_add_method` 自持）全部原样保留（收编边界 v1.1，
+  行为等价）
+- **pending 双池裁决**：client 层池为生产权威；协议层 `rpc_pending_entry_t` 池仅
+  服务裸 `ssn_rpc_call`，头文件标注混用禁令（两池不可在同一连接混用）
+- **头文件 @note**：ssn_protocol.h / ssn_rpc.h / ssn_pubsub.h / ssn_msg.h 补事件
+  循环归属与收编边界说明
+- **DDS 版本顺延**：v2.6.0 由本项独立先行占用，DDS 阶段 1/2/3 目标顺延
+  2.7.0/2.8.0/2.9.0（DDS 演进设计 / 需求分析 4.6 同步）
+
+### Docs
+- 协议层模块化设计.md 新增「事件循环归属」章节并更新现状声明（v1.1）；
+  架构设计总览.md 3.1、白皮书 2.2 分层说明补事件循环归属一句；
+  事件循环归属收敛设计规格 v1.1（PR #33）正式落地实施
+
+### Verification
+- 自动化 17 套件全绿（新增 test_protocol_handles 47 断言）+ ASAN 0 错误；
+  verify_exports / verify_examples 通过
+
+## [2.5.8] - 2026-08-22
+
+### Fixed
+- **服务端连接数上限（P2，accept 洪泛 DoS 防护）**：`ssn_server_handle_new_connection`
+  原无连接上限——accept 洪泛可耗尽内存（每连接约 132KB 流缓冲）与 fd，且
+  `ssn_server_fds` 用 fd_set（FD_SETSIZE 上限 1024），超过 ~1021 连接即 glibc
+  fd_set 越界 abort。修复：`server_options_t` 增加 `max_connections`
+  （0=默认 1020，对齐 fd_set 上限留余量给 listen/evtfd/stdio）；accept 后锁内
+  统计总连接数（含握手中的半连接），达到上限即拒绝新连接并关闭 accept transport
+  （防 fd 泄漏）；回归测试：`test_ssn_server` Test 11（max_connections=2，
+  第 3 个客户端握手被拒，peer_count 保持 2）
+
+## [2.5.7] - 2026-08-22
+
+### Performance
+- **接收路径 head 偏移（评审 P1-9）**：`ssn_stream_feed` 原实现每处理完一个包就
+  memmove 剩余字节——小包突发（128KB 内 n 个 64B 包）总移动量 O(n²)，可到百 MB 级。
+  修复：`ssn_stream_ctx_t` 增加 head 读偏移——解析从 `buffer+head` 读，包消费只推进
+  head（O(1) 不搬数据）；仅当缓冲近满（无法容纳新数据）时 compact 一次。行为等价
+  （分片帧/粘包/跨 feed 调用均保持），16 套件回归全绿 + ASAN 0 错误
+
+## [2.5.6] - 2026-08-22
+
+### Fixed
+- **node destroy 生命周期加固（功能评审 P1-15）**：`ssn_node_destroy` 原无 valid
+  标志且 ref_count 无递增点（延迟销毁分支死代码）——destroy ACTIVE 节点时内部调
+  `ssn_node_stop`（重新加锁）依赖锁序正确，头文件未明确「destroy 只能调用一次」
+  （重复调用即悬垂 UB）。修复：`ssn_node_t` 加 valid 标志（create 置 true、
+  destroy 置 false，防未 free 重入路径）；头文件明确单次约束与 ref_count 预留
+  说明；`test_node` 新增 Test 7（ACTIVE 节点 destroy 幂等生命周期，ASAN 0 错误）
+
+### Docs
+- `SsnService.hpp` builtinVersion 注释版本号去硬编码（引用 SSN_VERSION_STRING，
+  避免每次发版同步）
+
+## [2.5.5] - 2026-08-21
+
+### Fixed
+- **cliauto keepalive 参数被忽略（功能评审遗留 P1）**：CONNECTED 分支原以
+  ping(50ms)+poll(10ms) 忙等循环（约 60ms/圈），`keepalive` 从未使用（与头文件/
+  文档「keepalive 为 ping 间隔」不符，空闲连接持续空转 CPU）。修复：每 tick 结束
+  按 keepalive 睡眠；ping 超时窗口从硬编码 50ms 改为 keepalive
+- **`ssn_stream_feed` 回调语义文档澄清（功能评审遗留 P1）**：头文件 @return 未说明
+  「回调返回 false = 请求停止处理（正常结束）」——实现把停止当成功返回 true 是
+  合理行为，但文档误导（停止≠错误，流层错误才返回 false）。修复：头文件补回调
+  语义说明，实现注释明确；调用方行为不受影响
+
+## [2.5.4] - 2026-08-21
+
+### Fixed
+- **`ssn_client_set_on_publish` 死接线（P1-3）**：`ssn_client_handle_publish` 无匹配
+  订阅时仅兜底 onmsg、从不读 onsub——cliauto 内部 `set_on_publish(ssn_client_auto_msg_cb)`
+  永不触发，订阅消息丢失。修复：无匹配时优先调用 onsub（PUBLISH 语义），再兜底 onmsg
+
+### Cleanup（工程化评审批次 B）
+- **死代码批量删除（P1-11，均有 grep 零引用依据）**：`ssn_set_url`、`ssn_address_copy/equal`、
+  `SSN_ERR_*` 枚举（ssn_error_t 更名残留）、factory `register/cleanup/is_type_supported/
+  get_supported_types`、`ssn_node_run`、`ssn_server_peer_address`、hash_table
+  `contains/capacity/is_empty/foreach/hash_int/hash_pointer` + allocator typedef、
+  vsi `ipc_socket_shutdown/set_send_timeout/bind_to_interface`、未用变量
+  （ssn_client_connect 的 errcode/ret/on/off/opt/suc、ssn_server_start 的 en）——共 370 行
+- **重构（DRY）**：抽取 `ssn_client_collect_and_call_pending`（消灭三份「锁内收集
+  pending + 锁外回调」拷贝，含三份 struct timeout_item 定义）；抽取
+  `node_ensure_connected`（消灭 send_to_peer/subscribe/rpc_call 三份「未连接则
+  connect + 更新 peer_address」拷贝）
+- **常量收敛（P1-12）**：`IPC_*` 应用层常量改名 `SSN_*`（TIMER_PERIOD/SERVER_BACKLOG/
+  DEF_SEND_TIMEOUT/SERVER_DEF_HANDSHAKE_TIMEOUT/SERVER_KEEPALIVE_TIMEOUT），
+  消除与 ssn_ 命名体系并存；删除 transport 死宏（MAX_BUFFER_SIZE/DEFAULT_TIMEOUT_MS/
+  DEFAULT_BACKLOG）
+- 注释/命名/拼写清理：文件头 `ipc_*`→`ssn_*`、`IPC client/server`→`SSN`、
+  `sendmsg faield`/`Registeation` 拼写、过时 TODO（deal recv msg / init recv buffer /
+  搬迁残留）、connect 默认超时注释（3 秒非 5 秒）
+
+### Changed
+- 测试：16 套件 715 例保持全绿；verify_exports 通过（151 符号、25 关键 API）
+
+## [2.5.3] - 2026-08-21
+
+### Fixed
+- **服务端 hst 链表 UAF（P0，确定性堆破坏）**：`ssn_server_cli_destroy` 用
+  `cli->hst.alive` 判断是否从 hst 链表摘除，而 alive==0 同时表示「定时器到期未消费」
+  与「已摘除」二义——定时器将 alive 置 0 并 signal evtfd 后、evtfd 被消费前，对端
+  FIN 触发 recv 0 → destroy 因 alive==0 跳过摘除即 free(cli)，残留 hst 节点随后被
+  `ssn_server_handle_event_input` 遍历（DELETE_FROM_LIST + 读 cli->transport）→ UAF。
+  修复：hst 增加显式 `linked` 标志（入链置 true、摘除置 false），三处摘除路径统一
+  以 linked 判断链表归属；回归测试：`test_ssn_server` Test 10（手动控制 poll 时序，
+  修复前 ASAN 稳定报 heap-use-after-free）
+- **锁内 EAGAIN 忙等（P0，慢对端冻结服务端 5s/DoS）**：`ssn_send_message` 非阻塞
+  send 遇 EAGAIN 时 `nanosleep(1ms)` 盲重试最多 send_timeout_ms（默认 5000ms），
+  不检测 socket 可写性；调用方持锁（server_response/do_publish/client_call），慢对端
+  填满 SO_SNDBUF 后事件循环持锁空转最多 5s。修复：改 `poll(POLLOUT)` 等待可写
+  （受剩余超时预算约束），可写后立即重试
+- **`ssn_client_request` 无锁 pending 登记 + ref 泄漏（P0）**：subscribe/unsubscribe/
+  ping 的 `alloc_pending_index`+`seqno++`+`seqno_to_index` 登记在加锁前执行，与定时器
+  线程、并发请求竞态（槽位重复/seqno 重复 → 应答串线）；pending 池满时 return false
+  未 unref（引用泄漏）。修复：登记整体移入锁内（与 call_ex 对齐），失败路径补 unref
+- **公开 API 导出缺失（P1）**：`-fvisibility=hidden` 下 ssn_frame.h/ssn_error.h/
+  ssn_node.h 部分函数未标 SSN_API 不导出（外部 find_package 消费者链接失败）；
+  且 -O3 下声明处 default 可见性可能被 IPA 丢弃（符号残留 GLOBAL HIDDEN）。修复：
+  补 SSN_API + `used`+`noinline` 属性 + 关键函数定义处兜底；新增
+  `test/verify_exports.sh`（nm -D 断言 25 个关键 API 导出）并接入 CI
+- **`ssn_client_ping` 栈 use-after-return（P1）**：回调 arg 指向栈上 volatile bool，
+  超时返回后 pending 残留，迟到应答/超时回调写已失效栈帧。修复：等待结束后主动
+  撤销 pending 登记
+- **RPC 方法并发移除 UAF（P1）**：`ssn_server_handle_rpc_request` 解锁后读取
+  `cmd->arg`，跨线程 remove_method 时读已释放内存。修复：锁内拷贝 callback 与 arg
+- **`ssn_server_run` 无引用计数守卫（P1）**：跨线程 destroy 后 run 循环仍访问
+  server（UAF）且未 start 时无限空转。修复：循环持引用计数 + valid 守卫 +
+  max_fd<0 退出（对齐 poll 的 ref 模式）
+- **`ssn_client_send_timeout` 忽略 connect 结果（P1）**：重建 transport 时 connect
+  失败仍发布 fd=-1 的新 transport（假连接状态卡死）。修复：失败保留旧 transport
+- **并发 `ssn_client_close` 双重删除全局链表（P1）**：valid 检查/置位与链表删除
+  分属不同锁，双线程 close 时第二个 DELETE 命中已摘除节点 → 链表头丢失。修复：
+  valid 检查/置位移入 client->lock
+- **`free_pending_index` 不清 seqno 映射（P1）**：槽位释放后 seqno_to_index 残留，
+  seqno 回绕/迟到应答错配。修复：释放时同步清映射（校验槽位 seqno）
+- **NULL 解引用（P1/P2）**：`ssn_client_fds(NULL)` 先解引用 evtfd、
+  `ssn_client_subscribe` 未连接时日志参数解引用 NULL url——判空前置
+- **删除 `src/core/ssn_global.h` 死头文件（P0）**：与 `src/ssn_global.h` 同名同
+  保护宏、内含冲突常量与遗留 API，任何 TU 误包含会静默吞掉真实头文件声明
+
+### Changed
+- 测试数字同步：自动化 16 套件 715 例（C 230 + C++ 485，实测）；README/部署手册/
+  工程规范/测试架构/CLAUDE.md 全量核对；CI 注释 14→16 套件
+- 测试体系：`test_ssn_server` 新增 Test 10（hst UAF 回归），10 用例
+
+## [2.5.2] - 2026-08-20
+
+### Fixed
+- **空闲连接误判断开（Issue #22，P0 回归）**：`ssn_client_process_events` 局部变量
+  `pkt_e` 未初始化——socket 无数据（`did_recv=false`）时读取未初始化栈值（UB），垃圾值
+  可能为 true → 误判「连接丢失」→ 断开。v2.5.1 保活改造后 cliauto 每次 tick 都 poll，
+  空闲连接稳定触发「建立后 ~50ms 误断 → 循环重连」（edge-framework 场景复现）。修复：
+  `pkt_e` 初始化为 false；回归测试：`test_cliauto` Test 5（空闲 5 轮循环无断开）、
+  `test_ssn_client` Test 13（空闲 poll 保持连接）
+- **transport 发布/销毁竞态 UAF（P0）**：`ssn_client_poll` 无锁销毁 transport 与
+  `ssn_client_connect` 无锁赋值竞争——poll 线程检测旧连接丢失时销毁
+  `client->transport`，可能销毁 connect 刚创建/正在使用的新 transport（UAF）。
+  稳定性套件 T6（服务端重启重连）在负载下偶发：glibc fd_set 越界 abort /
+  tcache 堆损坏（ASAN 定位 `unix_transport_connect` 读已释放 transport）。修复：
+  connect 全程使用局部 transport、握手成功后一次性锁内发布；poll 销毁持锁；
+  `ssn_client_call_ex` sendmsg 移回锁内（消除无锁读 transport 窗口）；回归测试：
+  `test_ssn_client` Test 14（服务端反复启停 + 并发 poll/connect 30 轮）
+
 ## [2.5.1] - 2026-08-20
 
 ### Fixed

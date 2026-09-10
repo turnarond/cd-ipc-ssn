@@ -103,28 +103,6 @@ bool ssn_transport_factory_init(void)
     return true;
 }
 
-void ssn_transport_factory_cleanup(void)
-{
-    if (!g_factory) {
-        return;
-    }
-
-    if (g_factory->creators) {
-        ssn_hash_table_destroy(g_factory->creators);
-        g_factory->creators = NULL;
-    }
-
-    if (g_factory->lock) {
-        ssn_mutex_destroy(g_factory->lock);
-        g_factory->lock = NULL;
-    }
-
-    free(g_factory);
-    g_factory = NULL;
-
-    LOG_INFO("Transport factory cleaned up");
-}
-
 ssn_transport_t* ssn_transport_factory_create(
     ssn_transport_type_t type,
     const ssn_transport_config_t* config)
@@ -156,77 +134,6 @@ ssn_transport_t* ssn_transport_factory_create(
     }
 
     return transport;
-}
-
-bool ssn_transport_factory_register(
-    ssn_transport_type_t type,
-    ssn_transport_t* (*creator)(const ssn_transport_config_t* config))
-{
-    if (!g_factory) {
-        if (!ssn_transport_factory_init()) {
-            return false;
-        }
-    }
-
-    ssn_mutex_lock(g_factory->lock);
-
-    void* existing = ssn_hash_table_get(g_factory->creators,
-                                        (void*)((uintptr_t)type + 1));
-    if (existing) {
-        LOG_WARN("Transport type %d already registered, replacing", type);
-    }
-
-    bool result = ssn_hash_table_set(g_factory->creators,
-                                      (void*)((uintptr_t)type + 1),
-                                      (void*)creator);
-
-    ssn_mutex_unlock(g_factory->lock);
-
-    if (result) {
-        LOG_DEBUG("Registered transport creator for type %d", type);
-    }
-
-    return result;
-}
-
-bool ssn_transport_factory_is_type_supported(ssn_transport_type_t type)
-{
-    if (!g_factory) {
-        return false;
-    }
-
-    ssn_mutex_lock(g_factory->lock);
-
-    void* creator = ssn_hash_table_get(g_factory->creators,
-                                       (void*)((uintptr_t)type + 1));
-
-    ssn_mutex_unlock(g_factory->lock);
-
-    return creator != NULL;
-}
-
-int ssn_transport_factory_get_supported_types(
-    ssn_transport_type_t* types,
-    int max_count)
-{
-    if (!g_factory || !types || max_count <= 0) {
-        return 0;
-    }
-
-    ssn_mutex_lock(g_factory->lock);
-
-    int count = 0;
-    for (int i = 0; i < max_count && i <= SSN_TRANSPORT_DTLS; i++) {
-        void* creator = ssn_hash_table_get(g_factory->creators,
-                                           (void*)((uintptr_t)i + 1));
-        if (creator) {
-            types[count++] = (ssn_transport_type_t)i;
-        }
-    }
-
-    ssn_mutex_unlock(g_factory->lock);
-
-    return count;
 }
 
 ssn_transport_t* ssn_transport_create(ssn_transport_type_t type,

@@ -11,8 +11,6 @@
 #include "../ssn_export.h"
 
 typedef struct ssn_hash_table ssn_hash_table_t;
-typedef void* (*ssn_hash_table_allocator_t)(size_t size);
-typedef void (*ssn_hash_table_deallocator_t)(void* ptr);
 
 typedef uint32_t (*ssn_hash_func_t)(const void* key);
 typedef bool (*ssn_hash_key_equal_t)(const void* key1, const void* key2);
@@ -23,7 +21,6 @@ SSN_API void ssn_hash_table_destroy(ssn_hash_table_t* table);
 SSN_API bool ssn_hash_table_set(ssn_hash_table_t* table, void* key, void* value);
 SSN_API void* ssn_hash_table_get(ssn_hash_table_t* table, const void* key);
 SSN_API bool ssn_hash_table_remove(ssn_hash_table_t* table, const void* key);
-SSN_API bool ssn_hash_table_contains(ssn_hash_table_t* table, const void* key);
 
 /* ---- 字符串键 API（内容哈希 + key 复制持有） ----
  * 缺陷背景：原 set/get/remove 按 key 指针值比较，字符串键（RPC 方法名/主题名）
@@ -37,17 +34,8 @@ SSN_API bool ssn_hash_table_remove_str(ssn_hash_table_t* table, const char* key)
 SSN_API bool ssn_hash_table_contains_str(ssn_hash_table_t* table, const char* key);
 
 SSN_API size_t ssn_hash_table_size(const ssn_hash_table_t* table);
-SSN_API size_t ssn_hash_table_capacity(const ssn_hash_table_t* table);
-SSN_API bool ssn_hash_table_is_empty(const ssn_hash_table_t* table);
-
-typedef bool (*ssn_hash_table_foreach_cb)(void* key, void* value, void* user_data);
-SSN_API void ssn_hash_table_foreach(ssn_hash_table_t* table,
-                             ssn_hash_table_foreach_cb callback,
-                             void* user_data);
 
 SSN_API uint32_t ssn_hash_string(const char* str);
-SSN_API uint32_t ssn_hash_int(const void* key);
-SSN_API uint32_t ssn_hash_pointer(const void* ptr);
 
 #endif
 

@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include "../../ssn_export.h"
+#include "../../ssn_frame.h"
 #include "../ssn_protocol.h"
 
 #ifdef __cplusplus
@@ -116,6 +117,19 @@ SSN_API int ssn_pubsub_pub_publish(
  * @return Number of events processed, -1 on error
  */
 SSN_API int ssn_pubsub_poll(ssn_protocol_ctx_t *ctx, int timeout_ms);
+
+/**
+ * @brief 处理 PUBLISH 消息帧（无 I/O、无锁、纯函数式）
+ *
+ * 帧校验（msg_type/topic/data 提取）→ 触发 sub->on_message(topic, data,
+ * len, arg)。事件循环归属与收编边界见 ssn_protocol.h @note（Issue #31 v1.1：
+ * 本原语不匹配上层 per-URL 订阅表，订阅匹配由上层在自身回调内完成）。
+ *
+ * @param sub 订阅端上下文
+ * @param hdr 已解帧的头部
+ * @return 1=已分发；0=帧有效但非 PUBLISH 或无 on_message；-1=参数非法
+ */
+SSN_API int ssn_pubsub_handle_message(ssn_pubsub_sub_t *sub, const ssn_header_t *hdr);
 
 /**
  * @brief Check if PubSub is connected

@@ -199,11 +199,6 @@ bool ssn_hash_table_remove(ssn_hash_table_t* table, const void* key)
     return true;
 }
 
-bool ssn_hash_table_contains(ssn_hash_table_t* table, const void* key)
-{
-    return ssn_hash_table_get(table, key) != NULL;
-}
-
 /* ---- 字符串键 API：按内容哈希与比较，key 由节点复制持有 ---- */
 
 static size_t str_hash_index(const char* key, size_t capacity)
@@ -310,38 +305,6 @@ size_t ssn_hash_table_size(const ssn_hash_table_t* table)
     return table ? table->size : 0;
 }
 
-size_t ssn_hash_table_capacity(const ssn_hash_table_t* table)
-{
-    return table ? table->capacity : 0;
-}
-
-bool ssn_hash_table_is_empty(const ssn_hash_table_t* table)
-{
-    return table ? table->size == 0 : true;
-}
-
-void ssn_hash_table_foreach(ssn_hash_table_t* table,
-                           ssn_hash_table_foreach_cb callback,
-                           void* user_data)
-{
-    if (!table || !callback) {
-        return;
-    }
-
-    for (size_t i = 0; i < table->capacity; i++) {
-        hash_node_t* node = table->buckets[i];
-        while (node) {
-            /* 字符串键节点回调其内容键（str_key），其余回调原始 key */
-            void* cb_key = node->str_key ? (void*)node->str_key
-                                         : (void*)node->key;
-            if (!callback(cb_key, node->value, user_data)) {
-                return;
-            }
-            node = node->next;
-        }
-    }
-}
-
 uint32_t ssn_hash_string(const char* str)
 {
     if (!str) {
@@ -356,16 +319,5 @@ uint32_t ssn_hash_string(const char* str)
     }
 
     return hash;
-}
-
-uint32_t ssn_hash_int(const void* key)
-{
-    return (uint32_t)(*(const int*)key);
-}
-
-uint32_t ssn_hash_pointer(const void* ptr)
-{
-    uintptr_t addr = (uintptr_t)ptr;
-    return (uint32_t)(addr ^ (addr >> 16));
 }
 

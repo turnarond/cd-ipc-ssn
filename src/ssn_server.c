@@ -1,5 +1,5 @@
 /*
- * IPC server
+ * SSN server
  */
 #include <errno.h>
 #include <stddef.h>
@@ -29,6 +29,12 @@
 #define IPC_CLI_HASH_SIZE  64
 #define IPC_CLI_HASH_MASK  (IPC_CLI_HASH_SIZE - 1)
 
+/* 默认最大并发连接数（缺陷背景：原实现无连接上限——accept 洪泛可耗尽内存
+ * （每连接约 132KB 流缓冲）与 fd；且 ssn_server_fds 用 fd_set（FD_SETSIZE 上限
+ * 1024），超过 ~1021 连接即 glibc fd_set 越界 abort。默认值对齐 fd_set 上限，
+ * 留余量给 listen/evtfd/stdio 等固定 fd）。 */
+#define SSN_SERVER_DEFAULT_MAX_CONNECTIONS 1020
+
 /* Command hash */
 #define IPC_CMD_HASH_SIZE  32
 #define IPC_CMD_HASH_MASK  (IPC_CMD_HASH_SIZE - 1)
@@ -46,6 +52,10 @@ typedef struct ssn_server_hst {
     struct ssn_server_hst *next;
     struct ssn_server_hst *prev;
     int alive;
+    bool linked;   /* 是否在 server->hst_h 链表中（缺陷背景：alive==0 同时表示
+                    * 「定时器到期未消费」与「已摘除」二义，cli_destroy 无法据此
+                    * 判断链表归属 → 到期与 FIN 并发时跳过摘除即 free → 残留节点
+                    * 被 event_input 遍历 → UAF。显式 linked 标志消除二义） */
 } ssn_server_hst_t;
 
 /* Client node */
@@ -94,6 +104,7 @@ struct ssn_server {
     int send_timeout;
     int handshake_timeout;
     int keepalive_timeout;
+    uint32_t max_connections;   /* 最大并发连接数（含握手中；0=默认） */
     ssn_transport_t *transport;
     ipc_event_pair_t *evtfd;
     void *sendbuf;
@@ -132,7 +143,7 @@ void *ssn_server_timer_handle(void *arg)
     (void)arg;
 
     do {
-        ipc_thread_msleep(IPC_TIMER_PERIOD);
+        ipc_thread_msleep(SSN_TIMER_PERIOD);
 
         /* 进程退出时由 ssn_global_cleanup 置位退出标志，确保线程可退出（join 不阻塞） */
         if (__atomic_load_n(&g_ssn_server_timer_exit, __ATOMIC_ACQUIRE)) {
@@ -157,11 +168,11 @@ void *ssn_server_timer_handle(void *arg)
             ipc_mutex_lock(server->lock);
 
             LIST_FOREACH(hst, server->hst_h) {
-                if (hst->alive <= IPC_TIMER_PERIOD) {
+                if (hst->alive <= SSN_TIMER_PERIOD) {
                     hst->alive = 0;
                     emit = true;
                 } else {
-                    hst->alive -= IPC_TIMER_PERIOD;
+                    hst->alive -= SSN_TIMER_PERIOD;
                 }
             }
 
@@ -239,6 +250,7 @@ static void ssn_server_cli_init(ssn_server_t *server, ssn_server_cli_t *cli)
     INSERT_TO_HEADER(cli, server->clis[hash]);
 
     cli->hst.alive = server->handshake_timeout;
+    cli->hst.linked = true;   /* 入 hst 链表（与 INSERT_TO_HEADER 同步维护） */
     INSERT_TO_HEADER(&cli->hst, server->hst_h);
     LOG_DEBUG("ssn server cli init success");
 }
@@ -258,8 +270,12 @@ static void ssn_server_cli_destroy(ssn_server_t *server, ssn_server_cli_t *cli)
 
     DELETE_FROM_LIST(cli, server->clis[hash]);
 
-    if (cli->hst.alive) {
-        cli->hst.alive = 0;
+    /* 缺陷背景：原用 cli->hst.alive 判断是否摘除——alive==0 二义（到期未消费
+     * vs 已摘除），定时器到期与对端 FIN 并发时（FIN 先触发 destroy、alive==0）
+     * 跳过摘除即 free，残留 hst 节点随后被 event_input 遍历 → UAF。改用显式
+     * linked 标志判断链表归属，摘除后置 false。 */
+    if (cli->hst.linked) {
+        cli->hst.linked = false;
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
 
@@ -314,7 +330,7 @@ static bool ssn_server_cli_sendmsg(ssn_server_cli_t *cli, ssn_header_t *ipc_hdr,
         if (cli->transport) {
             ssn_transport_disconnect(cli->transport);
         }
-        LOG_ERROR("ssn server sendmsg faield, cli %d", cli->id);
+        LOG_ERROR("ssn server sendmsg failed, cli %d", cli->id);
     }
     return ret;
 }
@@ -385,16 +401,20 @@ ssn_server_t *ssn_server_create_with_options(const char *name, const server_opti
          * 握手中的连接（竞态窗口，客户端偶发连接失败，Issue #15） */
         server->handshake_timeout = (opts->conn_timeout_ms > 0)
                                     ? opts->conn_timeout_ms
-                                    : IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
+                                    : SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
         server->keepalive_timeout = opts->idle_timeout_sec;
+        server->max_connections = opts->max_connections > 0
+                                  ? opts->max_connections
+                                  : SSN_SERVER_DEFAULT_MAX_CONNECTIONS;
         if(opts->ifname[0]) {
             /* 用 snprintf 保证 NUL 终止并防越界（ifname 仅 IF_NAMESIZE 字节） */
             snprintf(server->ifname, sizeof(server->ifname), "%s", opts->ifname);
         }
     } else {
-        server->send_timeout = IPC_DEF_SEND_TIMEOUT;
-        server->handshake_timeout = IPC_SERVER_DEF_HANDSHAKE_TIMEOUT;
-        server->keepalive_timeout = IPC_SERVER_KEEPALIVE_TIMEOUT;
+        server->send_timeout = SSN_DEF_SEND_TIMEOUT;
+        server->handshake_timeout = SSN_SERVER_DEF_HANDSHAKE_TIMEOUT;
+        server->keepalive_timeout = SSN_SERVER_KEEPALIVE_TIMEOUT;
+        server->max_connections = SSN_SERVER_DEFAULT_MAX_CONNECTIONS;
     }
 
     /* 用 snprintf 保证 NUL 终止（srv_name 为 SRV_NAME_LEN 字节，strncpy 以
@@ -466,8 +486,6 @@ ssn_server_t *ssn_server_create(const char *server_info)
  */
 bool ssn_server_start(ssn_server_t *server)
 {
-    int en = 1;
-
     if (!server || !server->valid) {
         ssn_handle_error(SSN_ECODE_INVALID_ARGS, __FILE__, __LINE__, __func__, "invalid server handle");
         return  (false);
@@ -540,7 +558,7 @@ bool ssn_server_start(ssn_server_t *server)
     }
 
     // 开始监听
-    if (!ssn_transport_listen(server->transport, IPC_SERVER_BACKLOG)) {
+    if (!ssn_transport_listen(server->transport, SSN_SERVER_BACKLOG)) {
         ssn_handle_error(SSN_ECODE_NET_CONNECT, __FILE__, __LINE__, __func__, "listen failed");
         goto error;
     }
@@ -1023,66 +1041,6 @@ void ssn_server_remove_method (ssn_server_t *server, const ssn_url_ref_t *url)
 }
 
 /**
- * @brief 获取远程客户端地址
- * 
- * @param server 服务器实例指针
- * @param id 客户端ID
- * @param addr 地址结构体
- * @param namelen 地址长度
- * @return 获取成功返回true，失败返回false
- */
-int ssn_server_peer_address (ssn_server_t *server, ssn_peer_id_t id, struct sockaddr *addr, socklen_t *namelen)
-{
-    ssn_server_cli_t *cli;
-
-    if (!server || !server->valid) {
-        LOG_ERROR("ssn server peer address: invalid server handle.");
-        return  (false);
-    }
-
-    ipc_mutex_lock(server->lock);
-
-    cli = ssn_server_cli_find(server, id);
-    if (!cli || !cli->transport) {
-        ipc_mutex_unlock(server->lock);
-        if (!cli) {
-            LOG_ERROR("ssn server peer address: client not found for id %d.", id);
-        } else {
-            LOG_ERROR("ssn server peer address: invalid client handle %d.", cli->id);
-        }
-        return  (false);
-    }
-
-    // 使用transport的get_address方法获取地址
-    ssn_address_t ssn_addr;
-    if (!ssn_transport_get_address(cli->transport, &ssn_addr)) {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: get_address failed");
-        return  (false);
-    }
-
-    // 复制地址到输出参数
-    if (ssn_addr.type == SSN_TRANSPORT_UNIX) {
-        memcpy(addr, &ssn_addr.addr.unix_addr, sizeof(struct sockaddr_un));
-        *namelen = sizeof(struct sockaddr_un);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP || ssn_addr.type == SSN_TRANSPORT_UDP) {
-        memcpy(addr, &ssn_addr.addr.inet_addr, sizeof(struct sockaddr_in));
-        *namelen = sizeof(struct sockaddr_in);
-    } else if (ssn_addr.type == SSN_TRANSPORT_TCP6 || ssn_addr.type == SSN_TRANSPORT_UDP6) {
-        memcpy(addr, &ssn_addr.addr.inet6_addr, sizeof(struct sockaddr_in6));
-        *namelen = sizeof(struct sockaddr_in6);
-    } else {
-        ipc_mutex_unlock(server->lock);
-        LOG_ERROR("ssn server peer address: unsupported address type");
-        return  (false);
-    }
-
-    ipc_mutex_unlock(server->lock);
-
-    return  (true);
-}
-
-/**
  * @brief 服务器RPC响应
  * 
  * @param server 服务器实例指针
@@ -1349,8 +1307,9 @@ static bool ssn_server_handle_service_info(ssn_server_t *server, ssn_server_cli_
      * idle 禁用（keepalive_timeout <= 0）时保持原语义：清零并移出链表 */
     if (server->keepalive_timeout > 0) {
         cli->hst.alive = server->keepalive_timeout * 1000;
-    } else if (cli->hst.alive) {
+    } else if (cli->hst.linked) {
         cli->hst.alive = 0;
+        cli->hst.linked = false;
         DELETE_FROM_LIST(&cli->hst, server->hst_h);
     }
     
@@ -1378,9 +1337,14 @@ static bool ssn_server_handle_rpc_request(ssn_server_t *server, ssn_server_cli_t
     if (url->url_len && url->url[0] == '/') {
         cmd = ssn_server_cmd_match(server, url);
         if (cmd) {
+            /* 缺陷背景：原实现解锁后才读 cmd->arg——另一线程并发
+             * ssn_server_remove_method/add_method 会锁外 free(cmd)，
+             * 回调读已释放的 arg → UAF。修复：锁内把 callback 与 arg
+             * 都拷入局部变量，解锁后仅用局部值。 */
             callback = cmd->onrpc;
+            void *cmd_arg = cmd->arg;
             ipc_mutex_unlock(server->lock);
-            callback(server, cli->id, ipc_hdr, (ssn_url_ref_t *)url, (ssn_data_ref_t *)data, cmd->arg);
+            callback(server, cli->id, ipc_hdr, (ssn_url_ref_t *)url, (ssn_data_ref_t *)data, cmd_arg);
         } else {
             send_hdr = ssn_create_header(server->sendbuf, ipc_hdr->msg_type, SSN_ECODE_NOT_FOUND, seqno);
             ssn_server_cli_sendmsg(cli, send_hdr, NULL, NULL);
@@ -1608,11 +1572,29 @@ static void ssn_server_handle_new_connection(ssn_server_t *server, const fd_set 
         ssn_address_t client_addr;
         ssn_transport_t *client_transport = ssn_transport_accept(server->transport, &client_addr, 0);
         if (client_transport) {
+            /* 连接数上限检查（缺陷背景：原实现无上限——accept 洪泛耗尽内存/fd，
+             * 且 fd_set 越界 abort）。统计所有 cli（含握手中的半连接），达到上限
+             * 即拒绝新连接（关闭 accept 的 transport，避免 fd 泄漏）。 */
+            uint32_t cli_total = 0;
+            int h;
+            ipc_mutex_lock(server->lock);
+            for (h = 0; h < IPC_CLI_HASH_SIZE; h++) {
+                ssn_server_cli_t *it;
+                LIST_FOREACH(it, server->clis[h]) { cli_total++; }
+            }
+            ipc_mutex_unlock(server->lock);
+
+            if (cli_total >= server->max_connections) {
+                LOG_WARN("ssn server: connection limit reached (%u/%u), rejecting new client",
+                         cli_total, server->max_connections);
+                ssn_transport_destroy(client_transport);
+                return;
+            }
+
             cli = (ssn_server_cli_t *)calloc(1, sizeof(ssn_server_cli_t));
             if (cli) {
                 cli->transport = client_transport;
                 cli->active = false;
-                /* TODO: deal with init recv buffer. */
                 ssn_stream_init(&cli->recv);
 
                 ipc_mutex_lock(server->lock);
@@ -1641,6 +1623,7 @@ static void ssn_server_handle_event_input(ssn_server_t *server, const fd_set *rf
 
         LIST_FOREACH_SAFE(hst, hst_temp, server->hst_h) {
             if (hst->alive == 0) {
+                hst->linked = false;   /* 先摘除再销毁（与 cli_destroy 的 linked 判断同步） */
                 DELETE_FROM_LIST(hst, server->hst_h);
 
                 cli = (ssn_server_cli_t *)((char *)hst - offsetof(ssn_server_cli_t, hst));
@@ -1677,7 +1660,7 @@ static void ssn_server_input_fds (ssn_server_t *server, const fd_set *rfds)
 }
 
 /*
- * IPC server poll 
+ * SSN server poll
  */
 int ssn_server_poll(ssn_server_t *server, int timeout_ms)
 {
@@ -1722,10 +1705,23 @@ void ssn_server_run(ssn_server_t *server)
     fd_set fds;
     sigset_t empty_mask;
 
-    while (true) {
+    if (!server) {
+        return;
+    }
+
+    /* 缺陷背景：原实现裸用 server 且无退出条件——另一线程 ssn_server_destroy
+     * 后 run 循环仍访问已释放的 server（UAF），且未 start 时 ssn_server_fds
+     * 返回 -1 也不退出（永久空转）。修复：与 poll 对齐，循环持引用计数，
+     * destroy 后（valid=false 且引用归零）run 退出。 */
+    ssn_server_ref(server);
+
+    while (server->valid) {
         sigemptyset(&empty_mask);
         FD_ZERO(&fds);
         int max_fd = ssn_server_fds(server, &fds);
+        if (max_fd < 0) {
+            break;   /* 未 start / transport 不可用：不再空转 */
+        }
         // 阻塞空信号集，可以传递并中断所有信号
         int cnt;
         do {
@@ -1733,9 +1729,10 @@ void ssn_server_run(ssn_server_t *server)
         } while (cnt < 0 && errno == EINTR);
         if (cnt > 0) {
             ssn_server_input_fds(server, &fds);
-            continue;
         }
     }
+
+    ssn_server_unref(server);
 }
 
 /*

@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include "ssn_frame.h"
 #include "util/ssn_log.h"
 #include <errno.h>
@@ -130,26 +131,50 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     // 发送消息：循环处理部分写入（TCP 大包/慢对端/小 SO_SNDBUF 下 send 可能
     // 只发送部分字节，单次 send 返回后剩余数据必须补发，否则对端收到残缺帧）
     /* EAGAIN 重试受 transport 发送超时约束：慢客户端/满缓冲区不应无限持锁阻塞
-     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS） */
+     * 调用方（尤其 server 在锁内发送时，无限重试会拖垮整个事件循环——DoS）。
+     * 缺陷背景：原实现遇 EAGAIN 用 nanosleep(1ms) 盲重试（最多 send_timeout_ms
+     * 次），不检测 socket 可写性——慢对端填满 SO_SNDBUF 后，服务端唯一事件循环
+     * 持锁空转最多 5s，期间所有 recv/握手/超时停滞。修复：改用 poll(POLLOUT)
+     * 等待可写（一次等待，受剩余超时预算约束），可写后立即重试 send。 */
     int send_timeout_ms = transport->config.send_timeout_ms > 0 ?
                           transport->config.send_timeout_ms : 5000;
     uint64_t deadline_ms = (uint64_t)send_timeout_ms;
+    int sock_fd = ssn_transport_get_fd(transport);
     size_t sent = 0;
     while (sent < pos) {
         send_len = ssn_transport_send(transport, buffer + sent, pos - sent);
         if (send_len > 0) {
             sent += (size_t)send_len;
         } else if (send_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            /* 非阻塞发送缓冲区满：受 deadline 约束让步重试，超时则放弃 */
-            if (deadline_ms == 0) {
+            /* 非阻塞发送缓冲区满：poll(POLLOUT) 等待可写（受 deadline 约束），
+             * 可写后重试；超时则放弃。比盲 nanosleep 高效且不空转持锁。 */
+            if (deadline_ms == 0 || sock_fd < 0) {
                 LOG_ERROR("ssn send message failed: send timeout after %d ms",
                           send_timeout_ms);
                 return false;
             }
-            struct timespec ts = { 0, 1000000 }; /* 1ms */
-            nanosleep(&ts, NULL);
-            deadline_ms--;
-            continue;
+            struct pollfd pfd;
+            pfd.fd = sock_fd;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+            int wait_ms = (int)(deadline_ms < 100 ? deadline_ms : 100);
+            int pr = poll(&pfd, 1, wait_ms);
+            if (pr < 0 && errno != EINTR) {
+                LOG_ERROR("ssn send message failed: poll error %s", strerror(errno));
+                return false;
+            }
+            /* 消耗等待预算：poll 超时（pr==0）全额扣除；就绪/中断按等待量扣除
+             * （保守取 wait_ms，保证总阻塞不超过 send_timeout_ms） */
+            if (deadline_ms <= (uint64_t)wait_ms) {
+                deadline_ms = 0;
+            } else {
+                deadline_ms -= (uint64_t)wait_ms;
+            }
+            if (pr > 0 && (pfd.revents & (POLLOUT | POLLERR | POLLHUP))) {
+                /* 可写（含对端关闭/错误）：再试一次 send；若 POLLERR/POLLHUP
+                 * 则下一次 send 会返回错误并走失败分支 */
+                continue;
+            }
         } else {
             LOG_ERROR("ssn send message failed: send returned %zd (errno %d)",
                       send_len, errno);
@@ -160,7 +185,11 @@ bool ssn_send_message(ssn_transport_t *transport, ssn_header_t *ipc_hdr,
     return true;
 }
 
-ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
+/* 定义处显式 default 可见性（缺陷背景：-O3 + -fvisibility=hidden 下 GCC 对
+ * 部分「声明带 default 但被库内调用」的函数在 IPA 路径丢弃可见性，符号残留
+ * GLOBAL HIDDEN → 外部链接失败（P1-1）。声明处 SSN_API 对多数函数生效，此处
+ * 为 create_header/packet_input 补定义处属性兜底） */
+__attribute__((visibility("default"))) ssn_header_t *ssn_create_header(void *outb, uint8_t type, uint32_t status, uint16_t seqno)
 {
     if (!outb) return NULL;
 
@@ -179,23 +208,8 @@ void ssn_stream_init(ssn_stream_ctx_t *recv)
 {
     if (!recv) return;
     recv->cur_len = 0;
+    recv->head = 0;
     recv->total_len = 0;
-}
-
-bool ssn_set_url(ssn_header_t *ipc_hdr, const ssn_url_ref_t *url)
-{
-    if (!ipc_hdr || !url) return false;
-    if (ipc_hdr->magic != SSN_MAGIC_BYTE || ipc_hdr->version != SSN_PROTOCOL_VERSION) 
-        return false;
-    if (ntohl(ipc_hdr->data_len) != 0) return false; // data already set
-
-    if (url->url_len > SSN_MAX_PAYLOAD_SIZE) return false;
-
-    ssn_set_url_length(ipc_hdr, (uint16_t)url->url_len);
-    if (url->url_len > 0) {
-        memcpy((char*)(ipc_hdr + 1), url->url, url->url_len);
-    }
-    return true;
 }
 
 bool ssn_get_url(const ssn_header_t *ipc_hdr, ssn_url_ref_t *url)
@@ -224,7 +238,7 @@ bool ssn_get_data(const ssn_header_t *ipc_hdr, ssn_data_ref_t *data)
     return true;
 }
 
-ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
+__attribute__((visibility("default"))) ssn_header_t *ssn_packet_input(void *buf, size_t buf_len)
 {
     if (!buf || buf_len == 0) return NULL;
     size_t total_len;
@@ -246,56 +260,76 @@ bool ssn_stream_feed(ssn_stream_ctx_t *recv, void *buf, size_t buf_len, ssn_pack
     if (!recv || !callback) return false;
     if (!buf || buf_len == 0) return true; // nothing to do
 
+    /* 性能优化（评审 P1-9）：原实现每处理完一个包就 memmove 剩余字节——小包
+     * 突发（128KB 内 n 个 64B 包）总移动量 O(n²)，可到百 MB 级。改为维护 head
+     * 读偏移：解析从 buffer+head 读，包消费只推进 head 不搬数据；仅当剩余
+     * 未解析数据接近缓冲尾（无法容纳新数据）时才 compact 一次。 */
     const uint8_t *input_data = (const uint8_t *)buf;
     size_t consumed_bytes = 0;
 
     // 处理输入数据
     while (consumed_bytes < buf_len) {
-        // 检查缓冲区空间
+        // 剩余空间 = 缓冲尾到已写位置（head 之前是已消费数据，可被 compact 复用）
         size_t space_left = SSN_MAX_PACKET_SIZE - recv->cur_len;
         if (space_left == 0) {
-            // 缓冲区已满但没有完整数据包，视为格式错误的流
-            recv->cur_len = 0;
-            recv->total_len = 0;
-            return false;
+            /* 缓冲满：若 head>0 先 compact（复用已消费空间），仍满则格式错误 */
+            if (recv->head > 0) {
+                uint32_t remain = recv->cur_len - recv->head;
+                if (remain > 0) {
+                    memmove(recv->buffer, recv->buffer + recv->head, remain);
+                }
+                recv->cur_len = remain;
+                recv->head = 0;
+                space_left = SSN_MAX_PACKET_SIZE - recv->cur_len;
+            }
+            if (space_left == 0) {
+                // 缓冲区已满但没有完整数据包，视为格式错误的流
+                recv->cur_len = 0;
+                recv->head = 0;
+                recv->total_len = 0;
+                return false;
+            }
         }
 
-        // 复制数据到缓冲区
+        // 复制数据到缓冲区（追加到已写位置尾部）
         size_t bytes_to_copy = (buf_len - consumed_bytes) < space_left ? (buf_len - consumed_bytes) : space_left;
         memcpy(recv->buffer + recv->cur_len, input_data + consumed_bytes, bytes_to_copy);
         recv->cur_len += bytes_to_copy;
         consumed_bytes += bytes_to_copy;
 
-        // 尝试提取尽可能多的完整数据包
+        // 尝试提取尽可能多的完整数据包（从 head 读偏移开始解析）
         while (1) {
+            uint32_t available = recv->cur_len - recv->head;
             // 检查是否有足够的数据读取头部
-            if (recv->cur_len < SSN_HEADER_SIZE) break;
+            if (available < SSN_HEADER_SIZE) break;
 
             // 验证头部并获取总长度
             size_t total_length;
-            if (!validate_and_get_total_length(recv->buffer, recv->cur_len, &total_length)) {
+            if (!validate_and_get_total_length(recv->buffer + recv->head, available, &total_length)) {
                 // 头部无效或被截断
-                ssn_print_error(recv->buffer, "Invalid packet in stream", 0, recv->cur_len);
+                ssn_print_error(recv->buffer + recv->head, "Invalid packet in stream", 0, available);
                 recv->cur_len = 0;
+                recv->head = 0;
                 recv->total_len = 0;
                 return false;
             }
 
             // 检查是否有足够的数据读取整个数据包
-            if (recv->cur_len < total_length) break; // 数据不足
+            if (available < total_length) break; // 数据不足
 
-            // 有完整的数据包
-            ssn_header_t *header = (ssn_header_t *)recv->buffer;
+            // 有完整的数据包（回调直接使用缓冲内指针，head 偏移处）
+            ssn_header_t *header = (ssn_header_t *)(recv->buffer + recv->head);
             if (!callback(header, arg)) {
-                // 回调请求停止
+                /* 回调请求停止（如连接已关闭）：重置缓冲并正常返回 true——
+                 * 停止不是错误（见 ssn_frame.h 的回调语义说明） */
                 recv->cur_len = 0;
+                recv->head = 0;
                 recv->total_len = 0;
                 return true;
             }
 
-            // 移除已处理的数据包
-            memmove(recv->buffer, recv->buffer + total_length, recv->cur_len - total_length);
-            recv->cur_len -= total_length;
+            // 消费该包：仅推进 head 偏移（不搬数据，O(1)）
+            recv->head += (uint32_t)total_length;
         }
     }
 

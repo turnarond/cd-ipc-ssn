@@ -1,5 +1,5 @@
 /*
- * CD-IPC list
+ * SSN list
  */
 
 #ifndef SSN_LIST_H

@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include "../../ssn_export.h"
+#include "../../ssn_frame.h"
 #include "../ssn_protocol.h"
 
 #ifdef __cplusplus
@@ -95,6 +96,18 @@ SSN_API int ssn_msg_send(
  * @return Number of events processed, -1 on error
  */
 SSN_API int ssn_msg_poll(ssn_protocol_ctx_t *ctx, int timeout_ms);
+
+/**
+ * @brief 处理 MESSAGE 数据帧（无 I/O、无锁、纯函数式）
+ *
+ * 帧校验（msg_type/data 提取）→ 触发 recv->on_message(data, len, arg)。
+ * 事件循环归属与收编边界见 ssn_protocol.h @note（Issue #31 v1.1）。
+ *
+ * @param recv 消息接收端上下文
+ * @param hdr 已解帧的头部
+ * @return 1=已分发；0=帧有效但非 MESSAGE 或无 on_message；-1=参数非法
+ */
+SSN_API int ssn_msg_handle_data(ssn_msg_recv_t *recv, const ssn_header_t *hdr);
 
 /**
  * @brief Check if message context is connected
