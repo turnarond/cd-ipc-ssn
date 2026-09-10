@@ -1,50 +1,31 @@
-# AGENTS.md
+# Repository Guidelines
 
-C99 IPC 框架（RPC/PubSub/消息，Unix/TCP/UDP）。产物两个共享库：`libssn_transport.so`（C 核心）+ `libssn_framework.so`（C++17 服务框架，链接前者）。
+## 项目结构与模块组织
 
-## 环境与构建（关键：Linux-only）
+核心 C/C++ 源码位于 `src/`：传输层在 `src/transports/`，协议在 `src/protocol/`，节点抽象在 `src/node/`，平台适配在 `src/vsi/`，C++17 服务框架在 `src/framework/`。公共 C++ 头文件位于 `include/ssn/framework/`，测试位于 `test/`，可运行示例位于 `examples/`，第三方单头依赖位于 `third_party/`。对外文档统一维护在 `docs/`，沿用 `01-白皮书`、`02-需求分析`、`03-设计` 等中文编号目录；文档是唯一对外接口，代码、API、版本或行为变化必须同步更新文档。
 
-- 仅支持 Linux/POSIX。**本仓库位于 Windows，构建与测试必须在 WSL 中运行**，不要在 Windows 原生环境执行 cmake/make：
-
-```bash
-wsl bash -c "cd /mnt/d/personal/cd-ipc-ssn && bash test/run_tests.sh"
-```
-
-- 工具链门槛：CMake ≥ 3.12；C 库 GCC ≥ 4.8；`ssn_framework` 需 GCC ≥ 7 / C++17。
-
-## 验证（改完代码必须全绿）
-
-CI（`.github/workflows/ci.yml`）依次跑三步，本地提交前同样跑齐：
+## 构建、测试与开发命令
 
 ```bash
-bash test/run_tests.sh        # 构建 + 17 个自动化套件
-bash test/verify_exports.sh   # 公开符号导出校验（需先构建）
-bash test/verify_examples.sh  # 19 个示例构建 + hello_world 冒烟（需先构建两库）
+cmake -S . -B build          # 配置 C99/C++17 工程
+cmake --build build -j4      # 构建动态库、测试及示例
+bash test/run_tests.sh       # 构建并运行 17 个自动化套件
+bash test/verify_exports.sh  # 校验公开 API 导出符号
+bash test/verify_examples.sh # 验证 19 个示例及消费集成
 ```
 
-测试体系怪癖：
+Linux/POSIX 为支持环境；仓库位于 Windows 时必须在 WSL 中构建和测试。疑难崩溃可用 Linux `gdb` 或 Windows `cdb` 定位。
 
-- 无外部测试框架：C 套件用文件内自定义 `ASSERT` 宏，C++ 用 `CHECK` 宏。**无法按用例名过滤，只能整文件运行**。
-- 高级测试 `test_comprehensive` / `test_thread_safety` / `test_stress` **需要先手工启动服务端**，不在自动化套件内。
-- 新增功能必须附带测试（TDD 红-绿-重构是硬性要求），测试放 `test/` 并加入 `test/run_tests.sh` 与 `CMakeLists.txt`。
+## 编码风格与命名约定
 
-## 易踩坑的架构事实
+遵循现有 C99/C++17 风格和整洁代码原则：4 空格缩进，职责单一，依赖方向清晰，避免跨层耦合。公开 C 符号使用 `ssn_` 前缀，类型采用 `ssn_<module>_t`，函数采用 `ssn_<module>_<action>`，宏采用 `SSN_UPPER_CASE`；VSI 内部符号使用 `ipc_`。不要引入 `.superpower`、`.claude`、`.omc` 等 AI/插件中间目录。项目工具优先以 Python 组织在职责明确的独立目录中，用于测试、部署和冒烟验证。
 
-- 分层依赖方向严格由外向内：节点抽象(`src/node/`) → client/server(`src/ssn_client.c` 等) → 协议(`src/protocol/`) → 帧编解码(`src/ssn_frame.c`) → 传输(`src/transports/`) → VSI 平台抽象(`src/vsi/`)。不得越层调用。
-- API 是**事件循环驱动**：连接握手、收发、回调都靠周期调用 `ssn_node_poll` / `ssn_client_poll` / `ssn_server_poll`（通常放独立线程）。写测试/示例时漏掉 poll 会得到「消息丢失」假象。
-- 回调可能在其他线程执行，**回调内禁止调用 `ssn_client_close`**（引用计数线程安全设计，见 `docs/03-设计/核心模块/线程安全设计.md`）。
-- 两库都开了 `-fvisibility=hidden`：公开函数必须标 `SSN_API`（`src/ssn_export.h`），否则不导出——曾有消费者 find_package 链接失败的回归，`verify_exports.sh` 就是为此而设。
-- **新增公共头文件**必须同步 `CMakeLists.txt` 的 install 规则并确认完整 include 引用链（如 `ssn_node.h` 相对引用 `../ssn_client.h`），缺一则安装后无法编译（见 CMakeLists.txt:160-176 注释）。
-- 命名前缀：公开符号 `ssn_`；VSI 内部保留 `ipc_`。错误码统一用 `SSN_ECODE_*`（`src/ssn_error.h`），错误必须打日志。
+## 测试与架构要求
 
-## 流程硬约束
+所有功能或缺陷修改必须遵循 TDD 的“红—绿—重构”：先新增失败测试，再完成最小实现，最后清理结构。测试文件命名为 `test/test_<module>.c` 或 `.cpp`，并接入 `CMakeLists.txt` 与测试脚本。评审需覆盖边界、并发、异常路径及长期运行中的内存、线程、句柄泄漏。SDK 头文件或接口变更必须保持源码与二进制 ABI 向前兼容；重大架构冲突先讨论重构方案。
 
-- **禁止直接提交 main**：需求走 `feature/<简述>`，修复走 `fix/<简述>`，测试通过后合回。
-- SemVer：需求变更次版本 +1，bug 修复修订版本 +1。发版必须同步四处：`VERSION`、`src/version/ssn_version.h`、`CMakeLists.txt`(VERSION_MAJOR/MINOR/PATCH/SOVERSION)、`CHANGELOG.md`，然后打 tag `vX.Y.Z`。
-- 代码变更必须同步 `docs/` 对应文档（文档腐败即 BUG）；非阻断问题创建 Issue 并打「技术债」标签，不顺手动代码。
-- 完整治理规范见 `docs/08-工程规范/产品级框架约定规则.md` 与全局 skill `engineering-governance`；更多细节见根目录 `CLAUDE.md`。
+## 分支、提交与交付
 
-## 文档与注释语言
+每项需求、变更或 Issue 修改都从独立分支开始，如 `feature/node-qos`、`fix/socket-leak`。禁止代理直接 `commit` 或 `push`；由维护者统一提交，相关改动应合并为少量、完整提交。历史采用 `docs:`、`fix:`、`release:` 等前缀，提交信息应简洁说明结果。PR 需包含变更目的、关联 Issue、验证命令与结果；界面变化附截图。
 
-- 所有交互、注释、生成的文档与文件夹名称一律中文（API/协议等专有名词除外）。
-- `docs/` 按编号目录组织（01-白皮书 … 09-归档），新文档放入对应编号目录。
+产品研发按 SDD 推进需求、方案、计划、实施和交付，关键阶段安排专家评审。白皮书与 roadmap 应明确版本边界；打包发布时同步创建 Git tag 并记录版本信息。非本项目问题只做必要排查，向对应工程、SDK 或文档供应方提交 Issue；暂缓的本项目问题也应登记 Issue。
