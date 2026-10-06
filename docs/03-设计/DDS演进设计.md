@@ -56,7 +56,7 @@ SSN 采用**概念借鉴型**定位：采用 DDS 的概念模型与关键机制�
 
 每阶段独立设计详见第 4-6 章；学习要点汇总见第 7 章；明确不做的事与实施规划见第 8-9 章。验证方式贯穿三阶段：每阶段新增 `test/test_dds_*.c` 单元测试与 `examples/dds/` 概念 demo，既有 17 套件 + `test/verify_examples.sh` 全量回归（概念层纯新增，不破坏现有 API）。
 
-## 4. 阶段 1：DCPS 概念模型（目标版本 2.6.0）
+## 4. 阶段 1：DCPS 概念模型（目标版本 2.7.0）
 
 ### 4.1 目标
 
@@ -106,7 +106,7 @@ int ssn_subscriber_subscribe(ssn_subscriber_t *sub, ssn_topic_t *topic);
 - Topic 作为解耦点（发布者与订阅者仅通过 Topic 名称耦合）
 - 发布者-订阅者匿名性（无需知道对方地址，由框架发现与路由）
 
-## 5. 阶段 2：QoS 策略语义（目标版本 2.7.0）
+## 5. 阶段 2：QoS 策略语义（目标版本 2.8.0）
 
 ### 5.1 目标
 
@@ -136,7 +136,7 @@ int ssn_subscriber_subscribe(ssn_subscriber_t *sub, ssn_topic_t *topic);
 - QoS 是「发布者-订阅者契约」而非单端配置（两侧策略交集生效）
 - 可靠性与实时性的权衡（RELIABLE 的延迟代价）
 
-## 6. 阶段 3：发现与高级特性（目标版本 2.8.0）
+## 6. 阶段 3：发现与高级特性（目标版本 2.9.0）
 
 ### 6.1 目标
 
@@ -199,4 +199,4 @@ int ssn_subscriber_subscribe(ssn_subscriber_t *sub, ssn_topic_t *topic);
 
 1. 每阶段一个 `feature/dds-stage-<n>` 分支，TDD：先写 `test_dds_*.c`（红）→ 实现概念层 → 全量验证（绿）
 2. 阶段间评审（子代理驱动 + 审查流程）
-3. 发版：每阶段完成 bump 次版本（2.6.0 → 2.7.0 → 2.8.0），更新 VERSION/CHANGELOG/白皮书
+3. 发版：每阶段完成 bump 次版本（2.7.0 → 2.8.0 → 2.9.0），更新 VERSION/CHANGELOG/白皮书
