@@ -63,7 +63,7 @@ VSI 平台抽象     src/vsi/ipc_{platform,socket,event,thread,mutex}.c（内部
 ## 改代码时容易踩的坑
 
 - **新增/改动测试套件**：需改 `CMakeLists.txt`（`add_executable` + 链接 `ssn_framework`/`ssn_transport`）与 `test/run_tests.sh` 的 `TESTS`/`CPP_TESTS` 数组。
-- **测试数字是受守卫的事实**：文档中的「自动化套件数 / 断言数 / 示例数 / test_protocol 断言数」口径硬编码在 `check_docs.py` 的 `KEY_FACT_PATTERNS`，分布在 README、白皮书、需求分析、测试架构、部署手册、CHANGELOG 等处约 20 个文件。变更套件或断言数时，一并改守卫基线与全部文档口径（守卫测试先红，见 `tools/document_guard/README.md`），否则 CI 的文档一致性检查失败。v3.0.0 已新增 6 个 Node 套件（types/peer_registry/lifecycle/backend/integration/backpressure），守卫基线已同步为 23 套件、1396 例；`check_docs.py` 须保持 0 问题。
+- **测试数字是受守卫的事实**：文档中的「自动化套件数 / 断言数 / 示例数 / test_protocol 断言数」口径硬编码在 `check_docs.py` 的 `KEY_FACT_PATTERNS`，分布在 README、白皮书、需求分析、测试架构、部署手册、CHANGELOG 等处约 20 个文件。变更套件或断言数时，一并改守卫基线与全部文档口径（守卫测试先红，见 `tools/document_guard/README.md`），否则 CI 的文档一致性检查失败。v3.0.0 已新增 7 个 Node 套件（types/peer_registry/lifecycle/backend/integration/backpressure/concurrency），守卫基线已同步为 24 套件、1479 例；`check_docs.py` 须保持 0 问题。
 - **版本号五处同步**：`VERSION`、`src/version/ssn_version.h`、`CMakeLists.txt` 的 `VERSION_MAJOR/MINOR/PATCH`、`CHANGELOG.md` 最新 `## [x.y.z]`，以及文档口径。
 - **新增文档**：须在 `docs/README.md` 与 `docs/_sidebar.md` 登记（守卫校验相对链接有效）。`docs/**` 内**禁止**出现 `CLAUDE.md`、`.claude`、`superpowers` 等字样（守卫 `PROHIBITED_REFERENCES`）——因此本文件刻意不进 docs 索引。
 - **长期运行稳定性**：评审与测试需覆盖内存/句柄/线程泄漏、并发与异常路径，不只覆盖功能happy path。

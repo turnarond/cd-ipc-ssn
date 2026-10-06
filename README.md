@@ -28,7 +28,7 @@ cmake .. && make -j$(nproc)
 ### 运行测试
 
 ```bash
-bash test/run_tests.sh        # 一键：构建 + 全部 23 个自动化套件
+bash test/run_tests.sh        # 一键：构建 + 全部 24 个自动化套件
 # 或构建后逐个运行：
 ./test_transport                # 传输层测试 (67 断言)
 ./test_node_basic               # 节点基础测试 (3 用例)
@@ -280,15 +280,15 @@ cmake .. && make -j$(nproc)
 | `example_client` | 客户端 API 功能测试（连接、RPC、订阅、消息、慢握手、并发 poll+connect） | 14 |
 | `test_cliauto` | 自动重连客户端（keepalive/断线检测/空闲不误断） | 31 |
 | `test_hash_table` | 哈希表（含字符串键回归） | 50 |
-| `test_cpp_*` | C++ 框架 13 套件（Node 公共类型/Peer 注册表/Node 生命周期/Node 后端/多 Peer 集成/背压与慢 Peer 隔离、服务生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 1116 |
+| `test_cpp_*` | C++ 框架 14 套件（Node 公共类型/Peer 注册表/Node 生命周期/Node 后端/多 Peer 集成/背压与慢 Peer 隔离/并发与停止语义、服务生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 1199 |
 
-**合计：自动化 23 套件 1396 例（C 280 + C++ 1116）**，另有 3 个手工套件（需自行启动服务端）与
+**合计：自动化 24 套件 1479 例（C 280 + C++ 1199）**，另有 3 个手工套件（需自行启动服务端）与
 19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
-# 一键：构建 + 全部 23 个自动化套件（位置无关）
+# 一键：构建 + 全部 24 个自动化套件（位置无关）
 bash test/run_tests.sh
 
 # 或构建后逐个运行

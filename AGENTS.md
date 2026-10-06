@@ -9,7 +9,7 @@
 ```bash
 cmake -S . -B build          # 配置 C99/C++17 工程
 cmake --build build -j4      # 构建动态库、测试及示例
-bash test/run_tests.sh       # 构建并运行 23 个自动化套件
+bash test/run_tests.sh       # 构建并运行 24 个自动化套件
 bash test/verify_exports.sh  # 校验公开 API 导出符号
 bash test/verify_examples.sh # 验证 19 个示例及消费集成
 ```

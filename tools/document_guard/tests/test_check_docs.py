@@ -27,7 +27,7 @@ class DocumentGuardTests(unittest.TestCase):
             '#define SSN_VERSION_STRING "2.5.1"\n',
             encoding="utf-8",
         )
-        suites = "\n".join(f"    test_suite_{index}" for index in range(23))
+        suites = "\n".join(f"    test_suite_{index}" for index in range(24))
         (self.root / "test/run_tests.sh").write_text(
             f"TESTS=(\n{suites}\n)\nCPP_TESTS=(\n)\n", encoding="utf-8"
         )
@@ -35,7 +35,7 @@ class DocumentGuardTests(unittest.TestCase):
             "[使用手册](06-使用手册/README.md)\n", encoding="utf-8"
         )
         (self.root / "docs/06-使用手册/README.md").write_text(
-            "当前基线：23 个自动化套件、1396 个断言、19 个示例。\n",
+            "当前基线：24 个自动化套件、1479 个断言、19 个示例。\n",
             encoding="utf-8",
         )
 

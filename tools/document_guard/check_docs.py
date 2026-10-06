@@ -18,7 +18,6 @@ class Finding:
 
 STALE_FACTS = (
     "14 个自动化套件",
-    "14 套件",
     "581 例",
     "625 例",
     "701 个断言",
@@ -27,11 +26,13 @@ STALE_FACTS = (
     "1159 个断言",
     "1304 例",
     "1304 个断言",
+    "1396 例",
+    "1396 个断言",
     "test_protocol（25",
 )
 STALE_PATTERNS = ((re.compile(r"全量测试[^\r\n]{0,40}7 套件"), "全量测试……7 套件"),)
-EXPECTED_SUITE_COUNT = 23
-EXPECTED_ASSERTION_COUNT = 1396
+EXPECTED_SUITE_COUNT = 24
+EXPECTED_ASSERTION_COUNT = 1479
 EXPECTED_EXAMPLE_COUNT = 19
 EXPECTED_PROTOCOL_COUNT = 31
 TOTAL_SUITE_PATTERN = re.compile(
