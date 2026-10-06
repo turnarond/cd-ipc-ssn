@@ -31,9 +31,9 @@ STALE_FACTS = (
     "test_protocol（25",
 )
 STALE_PATTERNS = ((re.compile(r"全量测试[^\r\n]{0,40}7 套件"), "全量测试……7 套件"),)
-EXPECTED_SUITE_COUNT = 24
-EXPECTED_ASSERTION_COUNT = 1481
-EXPECTED_EXAMPLE_COUNT = 19
+EXPECTED_SUITE_COUNT = 22
+EXPECTED_ASSERTION_COUNT = 1471
+EXPECTED_EXAMPLE_COUNT = 18
 EXPECTED_PROTOCOL_COUNT = 31
 TOTAL_SUITE_PATTERN = re.compile(
     r"(?:全部|全量|构建\s*\+)[^\r\n]{0,30}?(\d+)\s*个?\s*自动化套件"

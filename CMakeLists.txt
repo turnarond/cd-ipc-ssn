@@ -28,8 +28,6 @@ set(IPC_SOURCES
     src/ssn_cliauto.c
     src/ssn_global.c
     src/ssn_error.c
-    src/node/ssn_node.c
-    src/node/ssn_node_comm.c
     src/vsi/ipc_platform.c
     src/vsi/ipc_socket.c
     src/vsi/ipc_event.c
@@ -158,14 +156,8 @@ install(FILES src/ssn_cliauto.h
     DESTINATION include
 )
 
-# ssn_node.h 内部以 "../ssn_client.h" 等相对引用包含顶层头文件，
-# 安装到 include/node/ 后相对引用成立（include/ssn_client.h 等已在顶层）
-install(FILES src/node/ssn_node.h
-    DESTINATION include/node
-)
-
 # 以下头文件构成已安装头文件的完整引用链（缺一则安装后无法编译）：
-# ssn_node.h → ssn_error.h；ssn_client.h → ssn_global.h → vsi/ipc_platform.h
+# ssn_client.h → ssn_global.h → vsi/ipc_platform.h
 install(FILES src/ssn_error.h
     DESTINATION include
 )
@@ -239,12 +231,6 @@ install(FILES third_party/nlohmann/json.hpp
 
 add_executable(test_transport test/test_transport.c)
 target_link_libraries(test_transport ${PROJECT_NAME} pthread)
-
-add_executable(test_node test/test_node.c)
-target_link_libraries(test_node ${PROJECT_NAME} pthread)
-
-add_executable(test_node_basic test/test_node_basic.c)
-target_link_libraries(test_node_basic ${PROJECT_NAME} pthread)
 
 add_executable(test_protocol test/test_protocol.c)
 target_link_libraries(test_protocol ${PROJECT_NAME} pthread)

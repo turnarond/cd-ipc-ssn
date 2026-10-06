@@ -40,7 +40,7 @@ python -m unittest discover -s tools/document_guard/tests -v
   └── ssn::Node      include/ssn/node       → 同库（v3.0.0 新增，多 Peer、原始消息、自定义事件循环）
         Node → NodeImpl → PeerRegistry/PeerSession/EventQueue（私有实现位于 src/node/，不安装、不被公共头引用）
 ────────────────────────────────────────────────────────────
-Node C API      src/node/ssn_node.c（旧 ssn_node_* 将在 v3.0.0 移除）
+Node C API      （旧 ssn_node_* 已于 v3.0.0 移除；节点能力由 C++ ssn::Node 承载，include/ssn/node）
 Client/Server   ssn_client_* / ssn_server_*（双向 connect/accept 编排）
 协议层           src/protocol/{ssn_protocol, rpc/, pubsub/, msg/}（REQ/REP、PUB/SUB、PUSH/PULL、PAIR）
 传输层           src/transports/ssn_transport_{unix,tcp,udp}.c + factory（连接池）
@@ -54,7 +54,12 @@ VSI 平台抽象     src/vsi/ipc_{platform,socket,event,thread,mutex}.c（内部
 - C++ 公开类必须标 `SSN_FRAMEWORK_API`（**不能**加 `used`，类上非法，`-Werror` 直接失败）。例外：类内含嵌套**私有** `Impl` 时（如 `ssn::Node`）必须逐成员标注——类级标注会把可见性传给嵌套类，私有实现符号进入动态符号表（实测 `Node::Impl` 泄漏 11 个符号）。改完用 `nm -D -C build/libssn_framework.so` 复核。
 - 新增公开 C 符号后，把符号名加进 `test/verify_exports.sh` 的 `REQUIRED` 列表。
 
-**事件循环驱动是全局模型**：`ssn_node_poll` / `ssn_client_poll` / `ssn_server_poll` 必须被周期性调用（或置于独立线程），连接握手、订阅生效、消息收发与回调才会发生——例如发布前需先 poll 服务端，否则订阅握手未生效会丢首条消息。`libssn_framework` 的 `ServiceManager::Run` 与 `ssn::Node::startBackground` 内部封装了该循环。
+**事件循环驱动是全局模型**：低层 C API 的 `ssn_client_poll` / `ssn_server_poll`
+必须被周期性调用（或置于独立线程），连接握手、订阅生效、消息收发与回调才会发生——
+例如发布前需先 poll 服务端，否则订阅握手未生效会丢首条消息。`libssn_framework` 的
+`ServiceManager::Run`、`ssn::Node::startBackground` 与 `SsnService`/`SsnClient`
+内部封装了该循环（`ssn::Node` 也可由用户以 `poll()` 外部驱动，与
+`startBackground()` 二选一）。
 
 `ssn::Node` 采用的约束（见 `docs/03-设计/方案设计/2026-09-14-C++17多Peer-Node设计.md`）：外部 `poll()` 与 `startBackground()` 二选一，首次成功调用后生命周期内不得混用；回调执行期间用户回调不持内部锁，但回调中不得调用会等待当前事件线程的操作（`poll()` 返回 `InvalidState`，`waitStopped()` 返回 `WouldDeadlock`）；`MessageView` 只在回调期间有效，跨线程需 `copy()`；`PeerId` 含代际，过期 ID 不得命中新连接；锁序固定 `NodeImpl → PeerRegistry → PeerSession`。
 
@@ -63,7 +68,7 @@ VSI 平台抽象     src/vsi/ipc_{platform,socket,event,thread,mutex}.c（内部
 ## 改代码时容易踩的坑
 
 - **新增/改动测试套件**：需改 `CMakeLists.txt`（`add_executable` + 链接 `ssn_framework`/`ssn_transport`）与 `test/run_tests.sh` 的 `TESTS`/`CPP_TESTS` 数组。
-- **测试数字是受守卫的事实**：文档中的「自动化套件数 / 断言数 / 示例数 / test_protocol 断言数」口径硬编码在 `check_docs.py` 的 `KEY_FACT_PATTERNS`，分布在 README、白皮书、需求分析、测试架构、部署手册、CHANGELOG 等处约 20 个文件。变更套件或断言数时，一并改守卫基线与全部文档口径（守卫测试先红，见 `tools/document_guard/README.md`），否则 CI 的文档一致性检查失败。v3.0.0 已新增 7 个 Node 套件（types/peer_registry/lifecycle/backend/integration/backpressure/concurrency），守卫基线已同步为 24 套件、1481 例；`check_docs.py` 须保持 0 问题。
+- **测试数字是受守卫的事实**：文档中的「自动化套件数 / 断言数 / 示例数 / test_protocol 断言数」口径硬编码在 `check_docs.py` 的 `KEY_FACT_PATTERNS`，分布在 README、白皮书、需求分析、测试架构、部署手册、CHANGELOG 等处约 20 个文件。变更套件或断言数时，一并改守卫基线与全部文档口径（守卫测试先红，见 `tools/document_guard/README.md`），否则 CI 的文档一致性检查失败。v3.0.0 已新增 7 个 Node 套件（types/peer_registry/lifecycle/backend/integration/backpressure/concurrency），守卫基线已同步为 22 套件、1471 例；`check_docs.py` 须保持 0 问题。
 - **版本号五处同步**：`VERSION`、`src/version/ssn_version.h`、`CMakeLists.txt` 的 `VERSION_MAJOR/MINOR/PATCH`、`CHANGELOG.md` 最新 `## [x.y.z]`，以及文档口径。
 - **新增文档**：须在 `docs/README.md` 与 `docs/_sidebar.md` 登记（守卫校验相对链接有效）。`docs/**` 内**禁止**出现 `CLAUDE.md`、`.claude`、`superpowers` 等字样（守卫 `PROHIBITED_REFERENCES`）——因此本文件刻意不进 docs 索引。
 - **长期运行稳定性**：评审与测试需覆盖内存/句柄/线程泄漏、并发与异常路径，不只覆盖功能happy path。

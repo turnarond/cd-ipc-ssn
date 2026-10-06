@@ -25,8 +25,6 @@ make -j4 || { echo "[FAIL] 构建失败"; exit 1; }
 # 自动化测试套件（均为自包含测试，无需外部服务端）
 TESTS=(
     test_transport            # 传输层（67 断言）
-    test_node_basic           # 节点基础（3 用例）
-    test_node                 # 节点完整（7 用例）
     test_protocol             # 协议层（31 断言）
     test_protocol_integration # 协议集成（19 用例）
     test_protocol_handles     # 协议层 handle 原语（Issue #31，帧校验/回调触发）

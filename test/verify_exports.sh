@@ -19,7 +19,9 @@ if [ ! -f "$LIB" ]; then
     exit 1
 fi
 
-# 关键公开 API（frame 线协议 / error 错误处理 / node getters）
+# 关键公开 API（frame 线协议 / error 错误处理 / client / server）
+# 旧 Node C API（ssn_node_*）已于 v3.0.0 移除，不再进入正向断言，
+# 由下方"旧符号否定断言"保证其彻底消失。
 REQUIRED=(
     ssn_create_header
     ssn_stream_init
@@ -33,8 +35,6 @@ REQUIRED=(
     ssn_ecode_category
     ssn_ecode_subcategory
     ssn_ecode_code
-    ssn_node_get_client
-    ssn_node_get_server
     ssn_client_create
     ssn_client_connect
     ssn_client_poll
@@ -44,8 +44,6 @@ REQUIRED=(
     ssn_server_start
     ssn_server_poll
     ssn_server_publish
-    ssn_node_create
-    ssn_node_poll
     ssn_rpc_handle_reply
     ssn_rpc_handle_request
     ssn_pubsub_handle_message
@@ -61,6 +59,15 @@ for sym in "${REQUIRED[@]}"; do
         missing=$((missing + 1))
     fi
 done
+
+# 旧 Node C API 否定断言（v3.0.0 移除）：任何 ssn_node_* 符号导出均视为回归，
+# C 消费者应迁移至 ssn::Node（libssn_framework，include/ssn/node/Node.hpp）
+legacy=$(echo "$exported" | grep -c '^ssn_node_')
+if [ "$legacy" -ne 0 ]; then
+    echo "FAIL: 旧 Node C API 符号仍导出 $legacy 个（v3.0.0 已移除，C 消费者迁移 ssn::Node）"
+    echo "$exported" | grep '^ssn_node_' | head -5
+    missing=$((missing + 1))
+fi
 
 # 内部符号白名单：跨 .so 使用的私有接口（见 src/transports/ssn_transport_async_internal.h）。
 # 这些符号必须导出才能被 libssn_framework 解析，但不属于公开 C API；

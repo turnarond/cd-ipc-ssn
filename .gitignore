@@ -31,6 +31,12 @@ examples/*/*/robust_client
 examples/*/*/concurrent_server
 examples/*/*/concurrent_client
 
+# C++ Node 示例构建产物（examples/cpp/node/<旅程>/ 为三级深度）
+examples/*/*/*/node_lifecycle
+examples/*/*/*/duplex_message
+examples/*/*/*/multi_peer
+examples/*/*/*/external_loop
+
 # cmake_integration 消费示例构建产物
 examples/cmake_integration/build/
 

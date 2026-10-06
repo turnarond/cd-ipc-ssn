@@ -28,7 +28,7 @@ cmake .. && make -j$(nproc)
 ### 运行测试
 
 ```bash
-bash test/run_tests.sh        # 一键：构建 + 全部 24 个自动化套件
+bash test/run_tests.sh        # 一键：构建 + 全部 22 个自动化套件
 # 或构建后逐个运行：
 ./test_transport                # 传输层测试 (67 断言)
 ./test_node_basic               # 节点基础测试 (3 用例)
@@ -39,84 +39,65 @@ bash test/run_tests.sh        # 一键：构建 + 全部 24 个自动化套件
 
 ### 第一个应用
 
-```c
-#include <stdio.h>
-#include <pthread.h>
-#include "node/ssn_node.h"
-#include "version/ssn_version.h"
+```cpp
+// demo.cpp —— ssn::Node（v3.0.0，C++17；完整版见 examples/cpp/node/01_生命周期）
+#include <chrono>
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <thread>
 
-static void on_msg(ssn_client_t *cli, ssn_url_ref_t *url,
-                   ssn_data_ref_t *data, void *arg) {
-    (void)cli; (void)url; (void)arg;
-    printf("Received: %.*s\n", (int)data->length, (char*)data->data);
-}
+#include <ssn/node/Node.hpp>
 
-/* 服务端节点的事件循环必须在独立线程中驱动（poll 处理连接握手/订阅/消息分发） */
-static volatile int g_srv_running = 1;
-static void *srv_poll_thread(void *arg) {
-    ssn_node_t *srv = (ssn_node_t *)arg;
-    while (g_srv_running) ssn_node_poll(srv, 100);
-    return NULL;
-}
+int main() {
+    // 服务节点：创建 → 监听 → 后台事件线程自驱动（收发无需手工 poll）
+    auto hub = ssn::Node::create(ssn::NodeConfig{});
+    auto hub_node = std::make_unique<ssn::Node>(std::move(hub.value()));
+    hub_node->listen(ssn::ListenAddress{"tcp://127.0.0.1:19501"});
+    hub_node->setEventHandler([](const ssn::NodeEvent& event) {
+        if (event.type == ssn::NodeEventType::MessageReceived) {
+            std::string text(reinterpret_cast<const char*>(event.message.data()),
+                             event.message.size());
+            std::printf("Received: %s\n", text.c_str());
+        }
+    });
+    hub_node->startBackground();
 
-int main(void) {
-    printf("ssn version: %s\n", ssn_version_get_string());
-
-    // 创建并启动服务端节点
-    ssn_node_config_t srv_cfg = {
-        .node_type = "server", .node_name = "demo-server",
-        .listen_address = "127.0.0.1", .listen_port = 8888,
-        .capabilities = SSN_NODE_CAP_SERVER | SSN_NODE_CAP_PUBSUB
-    };
-    ssn_node_t *srv = ssn_node_create(&srv_cfg);
-    ssn_node_start(srv);
-    pthread_t srv_tid;
-    pthread_create(&srv_tid, NULL, srv_poll_thread, srv);
-
-    // 创建并启动客户端节点
-    ssn_node_config_t cli_cfg = {
-        .node_type = "client", .node_name = "demo-client",
-        .capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_PUBSUB
-    };
-    ssn_node_t *cli = ssn_node_create(&cli_cfg);
-    ssn_node_start(cli);
-
-    // 订阅主题
-    ssn_url_ref_t topic = { .url = "/demo", .url_len = 5 };
-    ssn_node_subscribe(cli, "tcp://127.0.0.1:8888", &topic, on_msg, NULL, 5000);
-
-    // 发布前先 poll 服务端：让订阅握手在服务端生效（subscribe 只发出请求，
-    // 服务端需 poll 处理后订阅才建立，否则首条消息会丢失）
-    ssn_node_poll(srv, 100);
-
-    // 发布消息
-    ssn_data_ref_t msg = { .data = "hello", .length = 5 };
-    ssn_node_publish(srv, &topic, &msg);
-
-    // 轮询接收（客户端节点的事件循环也由 poll 驱动；无事件时每次阻塞至多 100ms）
-    for (int i = 0; i < 10; i++) {
-        ssn_node_poll(cli, 100);
+    // 客户端节点：连接（InProgress 路径返回 Connecting 态 PeerId，
+    // 须轮询至 PeerState::Connected 后才能 send）→ 发送
+    auto cli = ssn::Node::create(ssn::NodeConfig{});
+    auto cli_node = std::make_unique<ssn::Node>(std::move(cli.value()));
+    cli_node->startBackground();
+    auto peer = cli_node->connect(ssn::ListenAddress{"tcp://127.0.0.1:19501"});
+    for (;;) {
+        auto info = cli_node->peerInfo(peer.value());
+        if (info.ok() && info.value().state == ssn::PeerState::Connected) { break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    std::string hello = "hello";
+    cli_node->send(peer.value(), ssn::ByteView{
+        reinterpret_cast<const std::byte*>(hello.data()), hello.size()});
 
-    ssn_node_stop(cli); ssn_node_destroy(cli);
-    g_srv_running = 0; pthread_join(srv_tid, NULL);
-    ssn_node_stop(srv); ssn_node_destroy(srv);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    cli_node->stop();  cli_node->waitStopped();
+    hub_node->stop();  hub_node->waitStopped();
     return 0;
 }
 ```
 
-编译运行（产物为 `libssn_transport.so`，位于 `build/`）：
+编译运行（产物为 `libssn_transport.so` 与 `libssn_framework.so`，位于 `build/`）：
 
 ```bash
-gcc -std=c99 -Wall -I src -o demo demo.c -L build -lssn_transport -lpthread \
-    -Wl,-rpath,$PWD/build
+g++ -std=c++17 -Wall -I include -o demo demo.cpp -L build \
+    -lssn_framework -lssn_transport -lpthread -Wl,-rpath,$PWD/build
 ./demo
 ```
 
-> 提示：节点（`ssn_node_*`）与客户端/服务端（`ssn_client_*` / `ssn_server_*`）均为
-> **事件循环驱动**——必须周期性调用 `ssn_node_poll` / `ssn_client_poll` /
-> `ssn_server_poll`（或在独立线程中轮询），连接握手、消息收发与回调才会发生。
-> 完整可运行示例见 `examples/`（`bash test/verify_examples.sh` 可构建全部 19 个）。
+> 提示：`ssn::Node` 的 `startBackground()` 内部封装了事件循环（外部 `poll()` 与
+> 之是二选一的生命周期约定，不得混用）；低层 C API（`ssn_client_*` /
+> `ssn_server_*`）仍为**事件循环驱动**——必须周期性调用 `ssn_client_poll` /
+> `ssn_server_poll`，连接握手、消息收发与回调才会发生。
+> 完整可运行示例见 `examples/`（`bash test/verify_examples.sh` 可构建全部 18 个）。
 
 ### C++ 服务框架（v2.4.0）
 
@@ -171,7 +152,7 @@ RPC 方法注册与调用（`RegisterMethod<Req,Resp>` / `Call<Req,Resp>`）、�
 
 | 组件 | 类型 | 文件 |
 |------|------|------|
-| `ssn_node_t` | 节点抽象（服务端+客户端双角色） | `src/node/ssn_node.c` |
+| `ssn_node_t` | 节点抽象（服务端+客户端双角色）——**已于 v3.0.0 移除**，由 C++ `ssn::Node`（`include/ssn/node/`）替代 | — |
 | `ssn_client_t` | 客户端 | `src/ssn_client.c` |
 | `ssn_server_t` | 服务端 | `src/ssn_server.c` |
 | `ssn_transport_t` | 传输层统一接口 | `src/transports/` |
@@ -282,13 +263,13 @@ cmake .. && make -j$(nproc)
 | `test_hash_table` | 哈希表（含字符串键回归） | 50 |
 | `test_cpp_*` | C++ 框架 14 套件（Node 公共类型/Peer 注册表/Node 生命周期/Node 后端/多 Peer 集成/背压与慢 Peer 隔离/并发与停止语义、服务生命周期、线程池、Run 编排、服务/客户端、DTO、稳定性） | 1201 |
 
-**合计：自动化 24 套件 1481 例（C 280 + C++ 1201）**，另有 3 个手工套件（需自行启动服务端）与
-19 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
+**合计：自动化 22 套件 1471 例（C 270 + C++ 1201）**，另有 3 个手工套件（需自行启动服务端）与
+18 个示例构建验证（`bash test/verify_examples.sh`，含 hello_world 运行冒烟）。
 
 ### 运行
 
 ```bash
-# 一键：构建 + 全部 24 个自动化套件（位置无关）
+# 一键：构建 + 全部 22 个自动化套件（位置无关）
 bash test/run_tests.sh
 
 # 或构建后逐个运行
