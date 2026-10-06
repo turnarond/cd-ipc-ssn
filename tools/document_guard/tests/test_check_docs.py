@@ -35,7 +35,7 @@ class DocumentGuardTests(unittest.TestCase):
             "[使用手册](06-使用手册/README.md)\n", encoding="utf-8"
         )
         (self.root / "docs/06-使用手册/README.md").write_text(
-            "当前基线：24 个自动化套件、1479 个断言、19 个示例。\n",
+            "当前基线：24 个自动化套件、1481 个断言、19 个示例。\n",
             encoding="utf-8",
         )
 

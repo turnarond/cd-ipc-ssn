@@ -183,6 +183,7 @@ add_library(ssn_framework SHARED
     src/framework/ServiceManager.cpp
     src/framework/SsnService.cpp
     src/framework/SsnClient.cpp
+    src/framework/NodeBus.cpp
     src/node/Message.cpp
     src/node/Node.cpp
     src/node/NodeBackend.cpp

@@ -330,9 +330,11 @@ void test_handler_exception_storm() {
     srv.destroy();
 }
 
-// —— T6 服务端重启客户端重连 ——
-// 服务端 stop/destroy 后同端口起新服务端；客户端重试至多 5 次最终成功
-//（C 层 rpc_call 检测到连接失效后自动重连）
+// —— T6 服务端重启客户端恢复 ——
+// 行为变更（v3.0.0 任务 8，组合 ssn::Node）：连接生命周期显式化，不再隐式
+// 自动重连（旧 C 层实现细节，未曾在 SsnClient 公共契约中承诺；自动重连/
+// 退避为待落地项，见测试架构 Issue 表）。服务端重启后：在途调用失败
+//（不崩溃）→ 客户端显式 disconnect/connect 后恢复。
 void test_server_restart_reconnect() {
     StabilityServer srv_a;
     CHECK(srv_a.initialize(0, nullptr));
@@ -347,11 +349,21 @@ void test_server_restart_reconnect() {
     srv_a.stop();
     srv_a.destroy();
 
+    // 服务端消失：调用失败且不崩溃（断连感知有时序——send 因 peer 断开被拒
+    // 或应答超时，均返回 false）
+    {
+        nlohmann::json r;
+        CHECK(!cli.callJson("/add", {{"a", 9}, {"b", 9}}, r, 1000));
+    }
+
     // 同端口新服务端（SO_REUSEADDR 已启用，重启绑定不冲突）
     StabilityServer srv_b;
     CHECK(srv_b.initialize(0, nullptr));
     CHECK(srv_b.start());
 
+    // 显式重连后恢复
+    cli.disconnect();
+    CHECK(cli.connect(SERVER_ADDR));
     bool ok = false;
     for (int i = 0; i < 5 && !ok; ++i) {
         nlohmann::json r;

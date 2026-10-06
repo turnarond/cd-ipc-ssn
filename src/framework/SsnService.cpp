@@ -5,19 +5,23 @@
  * SsnService 通信服务基类实现
  */
 // 文件: src/framework/SsnService.cpp
-// 功能: SsnService 通信服务基类实现——OnInit 创建服务节点并注册方法
-//       （内置端点 /urls /health /version + 用户方法 + "/" 兜底命令），
-//       svc() 运行 poll 事件循环；handleRpc 分发 JSON 请求并应答
-//       （框架错误码 1001 方法不存在 / 1002 JSON 解析失败 / 1003 handler 异常）；
-//       publish 走节点发布通道。
+// 功能: SsnService 通信服务基类实现——OnInit 创建 ssn::Node、监听
+//       tcp://host:port 并启动后台事件线程（svc 仅作生命周期守护等待停止
+//       信号）；事件分发：req 信封按 URL 路由到方法表并回 rep 信封
+//       （框架错误码 1001 方法不存在 / 1002 JSON 解析失败 / 1003 handler
+//       异常），sub/unsub 信封维护订阅表并回 suback/unsuback，发布向订阅
+//       者定向投递 pub 信封。
 #include "ssn/framework/SsnService.hpp"
 
+#include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <exception>
 #include <thread>
-#include <vector>
+#include <utility>
 
+#include "ssn/node/Node.hpp"
+
+#include "NodeBus.hpp"
 #include "util/ssn_log.h"
 #include "version/ssn_version.h"
 
@@ -29,15 +33,13 @@ namespace {
 constexpr int kErrMethodNotFound = 1001;
 constexpr int kErrJsonParse = 1002;
 constexpr int kErrHandlerException = 1003;
-// 应答头部 status：0 成功，非 0 失败（C 层语义）
-constexpr uint32_t kStatusOk = 0;
-constexpr uint32_t kStatusFail = 1;
 
 // 内置端点保留前缀（registerJson 拒绝用户注册）
 constexpr const char* kBuiltinUrls = "/urls";
 constexpr const char* kBuiltinHealth = "/health";
 constexpr const char* kBuiltinVersion = "/version";
-// "/" 为 C 层默认命令（兜底：未注册 URL 也进入 handleRpc，返回 1001），同样保留
+// "/" 保留端点（旧 C 层兜底命令路径；信封协议下未注册 URL 由框架直接返回
+// 1001，无需注册兜底方法，但保留拒绝语义以防误用）
 constexpr const char* kCatchAllUrl = "/";
 
 // 构造错误应答体 {"error": {"code": ..., "message": "..."}}
@@ -45,22 +47,9 @@ nlohmann::json make_error(int code, const char* message) {
     return {{"error", {{"code", code}, {"message", message}}}};
 }
 
-// 应答失败：状态码置 1（失败）并携带框架错误体（handleRpc 四个错误分支共用）
-void reply_error(ssn_server_t* server, ssn_peer_id_t id, uint16_t seqno, int code, const char* message) {
-    nlohmann::json err = make_error(code, message);
-    std::string body = err.dump();
-    ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-    ssn_server_response(server, id, kStatusFail, seqno, &resp);
-}
-
-// 从方法表收集全部 URL（调用方持有 methods_mutex_ 语义：先拷贝后释放锁）
-std::vector<std::string> collect_urls(const std::map<std::string, SsnService::JsonHandler>& methods) {
-    std::vector<std::string> urls;
-    urls.reserve(methods.size() + 1);
-    for (const auto& kv : methods) {
-        urls.push_back(kv.first);
-    }
-    return urls;
+// std::string → MESSAGE 帧字节视图
+ByteView to_byte_view(const std::string& bytes) {
+    return ByteView{reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()};
 }
 
 }  // namespace
@@ -69,13 +58,13 @@ SsnService::SsnService() = default;
 
 SsnService::~SsnService() {
     // 兜底清理：未显式 stop/destroy 时回收节点资源。
-    // 先 destroy() 走正常停机（Started 状态经 OnShutdown 停线程），
-    // 再处理 Initialized 未 start 残留的节点（此时无线程运行，直接回收）。
+    // 先 destroy() 走正常停机（Started 状态经 OnShutdown 停守护线程），
+    // 再处理 Initialized 未 start 残留的节点（此时无事件运行，直接回收）。
     destroy();
     if (node_) {
-        ssn_node_stop(node_);
-        ssn_node_destroy(node_);
-        node_ = nullptr;
+        (void)node_->stop();
+        (void)node_->waitStopped();
+        node_.reset();
     }
 }
 
@@ -89,14 +78,13 @@ bool SsnService::registerJson(const std::string& url, JsonHandler handler) {
         LOG_ERROR("SsnService: registerJson 参数非法: %s", url.c_str());
         return false;
     }
-    // 尾斜杠 URL（长度 > 1）拒绝（Issue #5-3）：C 层把 "/foo/" 注册为前缀规则，
-    // 而框架 handleRpc 为精确匹配，注册后永不命中（语义缝隙）；"/" 兜底命令
-    //（长度 1）不受此限制
+    // 尾斜杠 URL（长度 > 1）拒绝（Issue #5-3 语义保留）：框架分发为精确匹配，
+    // 尾斜杠 URL 语义含糊，注册后易生误解；"/" 保留端点（长度 1）不受此限制
     if (url.size() > 1 && url.back() == '/') {
-        LOG_WARN("SsnService: %s 为尾斜杠 URL（C 层前缀规则，框架精确匹配不可达），拒绝注册", url.c_str());
+        LOG_WARN("SsnService: %s 为尾斜杠 URL（框架精确匹配语义含糊），拒绝注册", url.c_str());
         return false;
     }
-    // 内置端点与 "/" 兜底命令为保留路径，拒绝用户注册
+    // 内置端点与 "/" 保留路径，拒绝用户注册
     if (url == kCatchAllUrl || url == kBuiltinUrls || url == kBuiltinHealth || url == kBuiltinVersion) {
         LOG_WARN("SsnService: %s 为保留端点，拒绝注册", url.c_str());
         return false;
@@ -125,12 +113,23 @@ bool SsnService::publish(const std::string& topic, const nlohmann::json& data) {
         LOG_ERROR("SsnService: 节点未初始化，无法发布");
         return false;
     }
-    std::string body = data.dump();
-    ssn_url_ref_t url = {const_cast<char*>(topic.data()), topic.size()};
-    ssn_data_ref_t d = {const_cast<char*>(body.data()), body.size()};
-    if (!ssn_node_publish(node_, &url, &d)) {
-        LOG_ERROR("SsnService: 发布主题失败: %s", topic.c_str());
-        return false;
+    // 快照订阅者后投递（尽力而为语义：无订阅者视为成功；个别投递失败仅告警，
+    // 不改变 publish 返回值——与旧 C 层广播语义的返回值口径一致）
+    std::vector<PeerId> targets;
+    {
+        std::lock_guard<std::mutex> lock(subs_mutex_);
+        auto it = subs_.find(topic);
+        if (it == subs_.end()) {
+            return true;
+        }
+        targets = it->second;
+    }
+    const std::string bytes = bus::encode_pub(topic, data.dump());
+    for (const PeerId pid : targets) {
+        if (!node_->send(pid, to_byte_view(bytes))) {
+            LOG_WARN("SsnService: 主题 %s 投递至 peer 失败（尽力而为，继续其余订阅者）",
+                     topic.c_str());
+        }
     }
     return true;
 }
@@ -149,8 +148,8 @@ nlohmann::json SsnService::builtinHealth() const {
         LOG_WARN("SsnService: 节点未初始化，健康状态不可用");
         return {{"status", "error"}, {"connections", 0}, {"messages", 0}};
     }
-    // 读数取自框架侧原子计数（见头文件说明：RPC 分发在 node->lock 内执行，
-    // 此处不得再调用 ssn_node_get_stats，否则自锁死锁）。
+    // 读数取自框架侧原子计数（见头文件说明：分发在 Node 后台事件线程执行，
+    // 连接/消息计数由事件维护，健康查询不再触达节点内部状态）。
     // svc 线程异常退出（事件循环崩溃）后健康状态降级为 degraded（I4）
     return {{"status", failed() ? "degraded" : "ok"},
             {"connections", connections_.load()},
@@ -177,37 +176,32 @@ bool SsnService::OnInit(int argc, char** argv) {
     // OnShutdown，见 ServiceBase::destroy），重复 initialize 时旧节点仍存活，
     // 直接重建会泄漏（此态下 svc 线程从未运行，可安全直接回收）
     if (node_) {
-        ssn_node_destroy(node_);
-        node_ = nullptr;
+        (void)node_->stop();
+        (void)node_->waitStopped();
+        node_.reset();
     }
 
-    // 构造服务节点：服务端 + RPC + PubSub，监听 TCP host:port
-    ssn_node_config_t cfg = {};
-    std::strncpy(cfg.node_type, "server", sizeof(cfg.node_type) - 1);
-    if (!name_.empty()) {
-        std::strncpy(cfg.node_name, name_.c_str(), sizeof(cfg.node_name) - 1);
-    } else {
-        std::strncpy(cfg.node_name, "SsnService", sizeof(cfg.node_name) - 1);
-    }
-    std::strncpy(cfg.listen_address, listen_host_.c_str(), sizeof(cfg.listen_address) - 1);
-    cfg.listen_port = listen_port_;
-    cfg.capabilities = SSN_NODE_CAP_SERVER | SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB;
-    cfg.idle_timeout_sec = 0;   // 服务端 TCP keepalive idle 超时：0 回退默认 60s（并非禁用）
-
-    node_ = ssn_node_create(&cfg);
-    if (!node_) {
+    // 创建节点：监听必须处于 Created 态（先 listen 再启动后台线程）
+    auto created = Node::create(NodeConfig{});
+    if (!created) {
         LOG_ERROR("SsnService: 节点创建失败");
         return false;
     }
-    if (!ssn_node_start(node_)) {
-        LOG_ERROR("SsnService: 节点启动失败");
-        ssn_node_destroy(node_);
-        node_ = nullptr;
+    auto node = std::make_unique<Node>(std::move(created.value()));
+    const std::string address = "tcp://" + listen_host_ + ":" + std::to_string(listen_port_);
+    if (!node->listen(ListenAddress{address.c_str()})) {
+        // 监听失败（如 EADDRINUSE）：同步返回失败，initialize 回滚（Issue #5-6）
+        LOG_ERROR("SsnService: 监听失败: %s", address.c_str());
+        node.reset();
         return false;
     }
-
-    // 注册连接事件回调，维护健康统计（原子计数，不触碰 C 层锁）
-    ssn_node_set_connect_handler(node_, onConnectCb, this);
+    node->setEventHandler([this](const NodeEvent& event) { handleEvent(event); });
+    if (!node->startBackground()) {
+        LOG_ERROR("SsnService: 节点后台线程启动失败");
+        node.reset();
+        return false;
+    }
+    node_ = std::move(node);
 
     // 内置端点以普通 handler 注入方法表（同名 URL 已被 registerJson 拒绝，不会冲突）
     {
@@ -216,27 +210,6 @@ bool SsnService::OnInit(int argc, char** argv) {
         methods_[kBuiltinHealth] = [this](const nlohmann::json&) -> nlohmann::json { return builtinHealth(); };
         methods_[kBuiltinVersion] = [this](const nlohmann::json&) -> nlohmann::json { return builtinVersion(); };
     }
-
-    // 逐个注册到 C 层（含内置端点与 "/" 兜底）；url_len 必须为 strlen（仓库已知语义）
-    std::vector<std::string> urls;
-    {
-        std::lock_guard<std::mutex> lock(methods_mutex_);
-        urls = collect_urls(methods_);
-    }
-    urls.push_back(kCatchAllUrl);
-    for (const auto& u : urls) {
-        ssn_url_ref_t ref = {const_cast<char*>(u.data()), u.size()};
-        if (!ssn_node_add_rpc_method(node_, &ref, onRpcCb, this)) {
-            LOG_ERROR("SsnService: 方法注册失败: %s", u.c_str());
-            // 失败即回滚（Issue #5-6）：销毁已 start 的节点并置空，避免
-            // initialize 返回 false 后 node_ 悬挂（泄漏）；此时 svc 线程尚未
-            // 启动（initialize 在 start 之前），可直接 stop + destroy
-            ssn_node_stop(node_);
-            ssn_node_destroy(node_);
-            node_ = nullptr;
-            return false;
-        }
-    }
     return true;
 }
 
@@ -244,72 +217,104 @@ void SsnService::OnShutdown() {
     if (!node_) {
         return;
     }
-    // 先停 svc 线程再回收节点：svc 持有 node_ 并轮询，直接销毁会悬垂。
-    // （stopImpl 的 requestShutdown/wait 随后调用时均为幂等空操作）
+    // 先停守护线程再回收节点：svc 在 isRunning() 翻转后退出
+    //（stopImpl 的 requestShutdown/wait 随后调用时均为幂等空操作）
     requestShutdown();
     wait();
 
-    // 卸载方法（含 "/" 兜底命令），停止并销毁节点
-    std::vector<std::string> urls;
-    {
-        std::lock_guard<std::mutex> lock(methods_mutex_);
-        urls = collect_urls(methods_);
-    }
-    urls.push_back(kCatchAllUrl);
-    for (const auto& u : urls) {
-        ssn_url_ref_t ref = {const_cast<char*>(u.data()), u.size()};
-        ssn_node_remove_rpc_method(node_, &ref);
-    }
-    ssn_node_stop(node_);
-    ssn_node_destroy(node_);
-    node_ = nullptr;
+    // 停后台事件线程并销毁节点
+    (void)node_->stop();
+    (void)node_->waitStopped();
+    node_.reset();
 }
 
 int SsnService::svc() {
-    // 事件循环：poll 驱动服务节点（含服务器 accept 与 RPC 分发）
+    // 事件收发由 Node 后台线程自驱动（OnInit 的 startBackground）；svc 仅作
+    // 生命周期守护线程等待停止信号（isRunning() 由 stopImpl 翻转），使
+    // ServiceTask 的线程模型（failed()/degraded 健康降级等）保持不变
     while (isRunning()) {
-        if (!node_) {
-            break;   // 节点已清理，无事件源，直接退出
-        }
-        ssn_node_poll(node_, 100);
-        // 解锁后主动让出 1ms：node->lock 为 pthread 非公平互斥锁，svc 循环若
-        // 解锁后立即重锁，外部线程（如独立发布线程）调 publish 会锁饥饿
-        //（实测等锁数十秒）；让出后外部线程可在窗口内获得锁。代价：poll
-        // 周期增加约 1ms（对 RPC 应答延迟影响可忽略）。
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return 0;
 }
 
-void SsnService::onRpcCb(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t* hdr,
-                         ssn_url_ref_t* url, ssn_data_ref_t* data, void* arg) {
-    auto* self = static_cast<SsnService*>(arg);
-    self->handleRpc(server, id, hdr, url, data);
-}
-
-void SsnService::onConnectCb(ssn_server_t* /*server*/, ssn_peer_id_t /*id*/, bool connect, void* arg) {
-    auto* self = static_cast<SsnService*>(arg);
-    if (connect) {
-        ++self->connections_;
-    } else if (self->connections_.load() > 0) {
-        --self->connections_;
+void SsnService::handleEvent(const NodeEvent& event) {
+    switch (event.type) {
+    case NodeEventType::PeerConnected:
+        ++connections_;   // 健康统计：连接数由连接事件维护
+        break;
+    case NodeEventType::PeerDisconnected: {
+        if (connections_.load() > 0) {
+            --connections_;
+        }
+        // 清除该 peer 的全部订阅（断连后不再向其投递发布消息）
+        {
+            std::lock_guard<std::mutex> lock(subs_mutex_);
+            for (auto& kv : subs_) {
+                auto& list = kv.second;
+                list.erase(std::remove(list.begin(), list.end(), event.peer), list.end());
+            }
+        }
+        break;
+    }
+    case NodeEventType::MessageReceived: {
+        if (event.message.empty()) {
+            break;
+        }
+        std::string text(reinterpret_cast<const char*>(event.message.data()),
+                         event.message.size());
+        bus::Envelope env;
+        if (!bus::decode(text, env)) {
+            LOG_WARN("SsnService: 收到非法信封，丢弃");
+            break;
+        }
+        dispatchEnvelope(event.peer, env);
+        break;
+    }
+    default:
+        break;   // Error/Backpressure 事件由 Node 内部处理，框架不消费
     }
 }
 
-void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t* hdr,
-                           ssn_url_ref_t* url, ssn_data_ref_t* data) {
-    if (!server || !hdr || !url) {
-        LOG_ERROR("SsnService: handleRpc 参数非法");
-        return;
+void SsnService::dispatchEnvelope(PeerId peer, const bus::Envelope& env) {
+    switch (env.kind) {
+    case bus::Kind::Req:
+        handleReq(peer, env);
+        break;
+    case bus::Kind::Sub: {
+        {
+            std::lock_guard<std::mutex> lock(subs_mutex_);
+            auto& list = subs_[env.url];
+            if (std::find(list.begin(), list.end(), peer) == list.end()) {
+                list.push_back(peer);   // 重复订阅同主题幂等
+            }
+        }
+        sendEnvelope(peer, bus::encode_suback(env.url));
+        break;
     }
-    ++messages_;   // 健康统计：累计分发请求数
-    const uint16_t seqno = ssn_get_seqno(hdr);
+    case bus::Kind::Unsub: {
+        {
+            std::lock_guard<std::mutex> lock(subs_mutex_);
+            auto it = subs_.find(env.url);
+            if (it != subs_.end()) {
+                auto& list = it->second;
+                list.erase(std::remove(list.begin(), list.end(), peer), list.end());
+            }
+        }
+        sendEnvelope(peer, bus::encode_unsuback(env.url));
+        break;
+    }
+    default:
+        LOG_WARN("SsnService: 忽略不适用的信封种类（peer 仅允许 req/sub/unsub）");
+        break;
+    }
+}
+
+void SsnService::handleReq(PeerId peer, const bus::Envelope& env) {
+    ++messages_;   // 健康统计：累计分发请求数（保持旧口径：仅计 RPC 请求）
+    const std::string& key = env.url;
 
     // 查方法表（含内置端点）
-    std::string key;
-    if (url->url && url->url_len) {
-        key.assign(url->url, url->url_len);
-    }
     JsonHandler handler;
     {
         std::lock_guard<std::mutex> lock(methods_mutex_);
@@ -319,21 +324,19 @@ void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t*
         }
     }
     if (!handler) {
-        // 方法不存在（含未注册 URL 经 "/" 兜底进入此处）
         LOG_WARN("SsnService: 方法不存在: %s", key.c_str());
-        reply_error(server, id, seqno, kErrMethodNotFound, "方法不存在");
+        replyBusError(peer, env.seq, kErrMethodNotFound, "方法不存在");
         return;
     }
 
-    // 请求体 JSON 解析（无请求体视为空对象 {}）
+    // 请求体 JSON 解析（空体视为空对象 {}）
     nlohmann::json req = nlohmann::json::object();
-    if (data && data->data && data->length) {
+    if (!env.body.empty()) {
         try {
-            auto* begin = static_cast<char*>(data->data);
-            req = nlohmann::json::parse(begin, begin + data->length);
+            req = nlohmann::json::parse(env.body);
         } catch (const std::exception& e) {
             LOG_WARN("SsnService: 请求 JSON 解析失败: %s", e.what());
-            reply_error(server, id, seqno, kErrJsonParse, "请求 JSON 解析失败");
+            replyBusError(peer, env.seq, kErrJsonParse, "请求 JSON 解析失败");
             return;
         }
     }
@@ -344,18 +347,32 @@ void SsnService::handleRpc(ssn_server_t* server, ssn_peer_id_t id, ssn_header_t*
         result = handler(req);
     } catch (const std::exception& e) {
         LOG_ERROR("SsnService: 方法 %s 处理异常: %s", key.c_str(), e.what());
-        reply_error(server, id, seqno, kErrHandlerException, "handler 抛出异常");
+        replyBusError(peer, env.seq, kErrHandlerException, "handler 抛出异常");
         return;
     } catch (...) {
         LOG_ERROR("SsnService: 方法 %s 抛出未知异常", key.c_str());
-        reply_error(server, id, seqno, kErrHandlerException, "handler 抛出未知异常");
+        replyBusError(peer, env.seq, kErrHandlerException, "handler 抛出未知异常");
         return;
     }
 
     // 成功应答
-    std::string body = result.dump();
-    ssn_data_ref_t resp = {const_cast<char*>(body.data()), body.size()};
-    ssn_server_response(server, id, kStatusOk, seqno, &resp);
+    sendEnvelope(peer, bus::encode_rep(env.seq, true, result.dump()));
+}
+
+void SsnService::sendEnvelope(PeerId peer, const std::string& bytes) {
+    // 分发在 Node 后台事件线程执行，node_ 在 stop+waitStopped 前保持存活
+    //（OnShutdown 先停守护线程再停事件线程，最后才 reset），直接使用安全
+    if (!node_) {
+        LOG_ERROR("SsnService: 节点未初始化，无法应答");
+        return;
+    }
+    if (!node_->send(peer, to_byte_view(bytes))) {
+        LOG_WARN("SsnService: 信封投递失败（peer 可能已断开）");
+    }
+}
+
+void SsnService::replyBusError(PeerId peer, std::uint64_t seq, int code, const char* message) {
+    sendEnvelope(peer, bus::encode_rep(seq, false, make_error(code, message).dump()));
 }
 
 }  // namespace ssn

@@ -2,11 +2,11 @@
 // 覆盖：方法注册/重复注册拒绝/保留前缀拒绝、生命周期 start/stop、
 //       /add 往返、/boom 异常 1003、JSON 解析失败 1002、未知 URL 1001、
 //       内置端点 /urls /health /version、publish 发布（订阅客户端收消息）
+// 客户端对端：ssn::Node 直连 + 框架 JSON 信封协议（req/rep/sub/suback/pub），
+// 独立组包验证协议兼容性，不依赖 SsnClient（被测面收敛到 SsnService）
 #include "ssn/framework/SsnService.hpp"
 
-// C 层直连客户端 API（头已带 extern "C" 保护，可直接包含）
-#include "node/ssn_node.h"
-#include "ssn_frame.h"
+#include "ssn/node/Node.hpp"
 #include "version/ssn_version.h"   // M7：版本断言引用宏而非硬编码
 
 #include <atomic>
@@ -26,7 +26,6 @@ namespace {
 
 constexpr const char* SERVER_ADDR = "tcp://127.0.0.1:18901";
 constexpr uint16_t SERVER_PORT = 18901;
-constexpr uint64_t CALL_TIMEOUT_MS = 3000;
 
 // 测试服务：/add 正常求和，/boom 抛异常（验证框架错误码 1003）
 class TestServer : public ssn::SsnService {
@@ -42,40 +41,139 @@ public:
     }
 };
 
-// —— C 层直连客户端（阻塞轮询模式，验证框架服务端行为，不依赖 Task 6 SsnClient）——
-struct RpcReply {
-    bool done = false;      // 应答已返回（或超时无应答）
-    bool replied = false;   // 服务端有回应（ipc_hdr 非空）
-    uint32_t status = 0;    // 应答头部状态码
-    std::string body;       // 应答 JSON 文本
-};
+// —— ssn::Node 直连客户端（信封协议，验证框架服务端行为，不依赖 SsnClient）——
+// 信封格式（框架 NodeBus 协议，测试独立组包）：
+//   req: {"k":"req","u":url,"s":seq,"b":body}   rep: {"k":"rep","s":seq,"ok":bool,"b":body}
+//   sub: {"k":"sub","u":topic}  suback: {"k":"suback","u":topic}
+//   pub: {"k":"pub","u":topic,"b":data}
 
-// RPC 应答回调：回调内只拷贝数据（hdr/data 在回调返回后失效）
-void on_rpc_reply(ssn_client_t* /*client*/, ssn_header_t* hdr, ssn_data_ref_t* data, void* arg) {
-    auto* reply = static_cast<RpcReply*>(arg);
-    reply->done = true;
-    if (!hdr) { return; }   // hdr 为空表示服务端无回应（超时）
-    reply->replied = true;
-    reply->status = ssn_get_status(hdr);
-    if (data && data->data && data->length) {
-        reply->body.assign(static_cast<char*>(data->data), data->length);
+// rep 应答槽（事件线程写、主线程轮询 done 后读，atomic 提供 happens-before）
+struct RawReply {
+    std::atomic<bool> done{false};   // 收到 rep 信封
+    bool ok = false;                 // rep.ok（服务端处理成功与否）
+    std::string body = "{}";         // rep.b（应答 JSON 文本）；默认空对象——
+                                     // 失败路径（超时/发送失败）后续 parse 不崩，
+                                     // 红灯以 FAIL 行呈现而非 terminate
+};
+RawReply g_reply;
+
+// suback/unsuback 确认槽
+struct RawAck {
+    std::atomic<bool> done{false};
+    std::string url;
+};
+RawAck g_ack;
+
+// pub 消息槽
+struct PubMsg {
+    std::atomic<bool> done{false};
+    std::string url;
+    std::string body = "{}";   // 默认空对象：失败路径 parse 不崩（同 RawReply）
+};
+PubMsg g_msg;
+
+std::atomic<uint64_t> g_seq{1};   // 请求序号（客户端自增）
+
+// 事件处理器：按信封种类分流到各槽（无捕获，可转函数指针语义）
+void on_client_event(const ssn::NodeEvent& event) {
+    if (event.type != ssn::NodeEventType::MessageReceived) { return; }
+    if (event.message.empty()) { return; }   // 空载荷（旧协议回包等）直接忽略
+    std::string text(reinterpret_cast<const char*>(event.message.data()),
+                     event.message.size());
+    nlohmann::json env;
+    try {
+        env = nlohmann::json::parse(text);
+    } catch (...) {
+        return;
+    }
+    if (!env.is_object()) { return; }
+    const std::string kind = env.value("k", std::string());
+    if (kind == "rep") {
+        g_reply.ok = env.value("ok", false);
+        g_reply.body = env.value("b", std::string());
+        g_reply.done.store(true);
+    } else if (kind == "suback" || kind == "unsuback") {
+        g_ack.url = env.value("u", std::string());
+        g_ack.done.store(true);
+    } else if (kind == "pub") {
+        g_msg.url = env.value("u", std::string());
+        g_msg.body = env.value("b", std::string());
+        g_msg.done.store(true);
     }
 }
 
-// 同步 RPC：发起调用后轮询驱动客户端节点，直到应答或超时
-bool rpc_json(ssn_node_t* node, const char* url, const nlohmann::json& req, RpcReply& out) {
-    std::string body = req.dump();
-    ssn_url_ref_t u = {const_cast<char*>(url), static_cast<uint32_t>(std::strlen(url))};
-    ssn_data_ref_t d = {const_cast<char*>(body.data()), body.size()};
-    out = RpcReply();
-    if (ssn_node_rpc_call(node, SERVER_ADDR, &u, &d, on_rpc_reply, &out, CALL_TIMEOUT_MS) < 0) {
+// 创建客户端节点：后台驱动 + 事件槽接线；失败返回空指针
+std::unique_ptr<ssn::Node> make_client_node() {
+    auto created = ssn::Node::create(ssn::NodeConfig{});
+    if (!created) { return nullptr; }
+    auto node = std::make_unique<ssn::Node>(std::move(created.value()));
+    node->setEventHandler(on_client_event);
+    if (!node->startBackground()) { return nullptr; }
+    return node;
+}
+
+// 连接服务端：connect() 的 InProgress 路径立即返回 Connecting 态 PeerId，
+// 轮询等待握手完成（PeerState::Connected）后 out_peer 才可用于 send
+bool raw_connect(ssn::Node& node, ssn::PeerId& out_peer,
+                 uint64_t timeout_ms = 5000) {
+    auto r = node.connect(ssn::ListenAddress{SERVER_ADDR},
+                          ssn::ConnectOptions{std::chrono::milliseconds(timeout_ms)});
+    if (!r) { return false; }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto info = node.peerInfo(r.value());
+        if (info.ok() && info.value().state == ssn::PeerState::Connected) {
+            out_peer = r.value();
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return false;
+}
+
+// 发送原始字节（协议注入用：非法体/异常信封测试）
+bool raw_send(ssn::Node& node, ssn::PeerId peer, const std::string& bytes) {
+    return static_cast<bool>(node.send(
+        peer, ssn::ByteView{reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()}));
+}
+
+// 轮询等待 rep（deadline 5s），结果快照到 out
+bool wait_reply(RawReply& out) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
+    while (!g_reply.done.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    out.done.store(g_reply.done.load());
+    out.ok = g_reply.ok;
+    out.body = g_reply.body;
+    return out.done.load();
+}
+
+// 同步 RPC：发起 req 信封并等待 rep
+bool raw_call(ssn::Node& node, ssn::PeerId peer, const char* url,
+              const nlohmann::json& req, RawReply& out) {
+    std::string bytes = (nlohmann::json{{"k", "req"},
+                                        {"u", url},
+                                        {"s", g_seq.fetch_add(1)},
+                                        {"b", req.dump()}}).dump();
+    g_reply.done.store(false);
+    g_reply.ok = false;
+    g_reply.body = "{}";
+    if (!raw_send(node, peer, bytes)) { return false; }
+    return wait_reply(out);
+}
+
+// 订阅：发 sub 信封并等待 suback
+bool sub_topic(ssn::Node& node, ssn::PeerId peer, const char* topic) {
+    g_ack.done.store(false);
+    if (!raw_send(node, peer, (nlohmann::json{{"k", "sub"}, {"u", topic}}).dump())) {
         return false;
     }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-    while (!out.done && std::chrono::steady_clock::now() < deadline) {
-        ssn_node_poll(node, 20);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    while (!g_ack.done.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    return out.done;
+    return g_ack.done.load() && g_ack.url == topic;
 }
 
 // 从应答体中取框架错误码（无 error 对象返回 -1）
@@ -87,30 +185,11 @@ int error_code_of(const nlohmann::json& resp) {
     return -1;
 }
 
-ssn_node_t* make_client_node() {
-    ssn_node_config_t cfg = {};
-    std::strncpy(cfg.node_type, "client", sizeof(cfg.node_type) - 1);
-    std::strncpy(cfg.node_name, "cpp-test-client", sizeof(cfg.node_name) - 1);
-    cfg.capabilities = SSN_NODE_CAP_CLIENT | SSN_NODE_CAP_RPC | SSN_NODE_CAP_PUBSUB;
-    return ssn_node_create(&cfg);
-}
-
-// 发布消息回调（订阅后每主题一个）
-struct PubMsg {
-    std::atomic<bool> done{false};
-    std::string url;
-    std::string body;
-};
-
-void on_pub_msg(ssn_client_t* /*client*/, ssn_url_ref_t* url, ssn_data_ref_t* data, void* arg) {
-    auto* msg = static_cast<PubMsg*>(arg);
-    msg->done = true;
-    if (url && url->url && url->url_len) {
-        msg->url.assign(url->url, url->url_len);
-    }
-    if (data && data->data && data->length) {
-        msg->body.assign(static_cast<char*>(data->data), data->length);
-    }
+// 安全取值：CHECK 宏不短路，失败路径（应答为空对象）继续取值不抛异常，
+// 红灯以 FAIL 行呈现而非 terminate
+template <typename T>
+T jget(const nlohmann::json& j, const char* key, T fallback) {
+    try { return j.at(key).get<T>(); } catch (...) { return fallback; }
 }
 
 // 方法注册约束与监听配置
@@ -134,9 +213,8 @@ void test_registration() {
         return {{"sum", req.at("a").get<int>() + req.at("b").get<int>()}};
     }));
 
-    // Issue #5-3 回归：尾斜杠 URL（长度 > 1）拒绝注册/退订——C 层把 "/foo/"
-    // 注册为前缀规则而框架分发为精确匹配，注册后永不命中（语义缝隙）；
-    // "/"（长度 1）兜底命令不受影响（仍为保留端点，拒绝注册）
+    // Issue #5-3 回归：尾斜杠 URL（长度 > 1）与兜底命令 "/"（旧 C 层保留语义）
+    // 均为保留端点，拒绝注册/退订
     CHECK(!server.registerJson("/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
     CHECK(!server.registerJson("/foo/", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
     CHECK(!server.registerJson("//", [](const nlohmann::json&) -> nlohmann::json { return nullptr; }));
@@ -162,53 +240,53 @@ void test_rpc_roundtrip() {
     CHECK(server.initialize(0, nullptr));
     CHECK(server.start());
 
-    ssn_node_t* client = make_client_node();
+    std::unique_ptr<ssn::Node> client = make_client_node();
     CHECK(client != nullptr);
-    CHECK(ssn_node_start(client));
+    ssn::PeerId cpid;
+    CHECK(raw_connect(*client, cpid));
 
-    RpcReply out;
+    RawReply out;
 
     // /add 往返正确
-    CHECK(rpc_json(client, "/add", {{"a", 3}, {"b", 4}}, out));
-    CHECK(out.replied);
-    CHECK(out.status == 0);
+    CHECK(raw_call(*client, cpid, "/add", {{"a", 3}, {"b", 4}}, out));
+    CHECK(out.done.load());
+    CHECK(out.ok);
     nlohmann::json resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("sum").get<int>() == 7);
+    CHECK(jget(resp, "sum", -1) == 7);
 
     // /boom 抛异常 → 框架错误码 1003
-    CHECK(rpc_json(client, "/boom", nlohmann::json::object(), out));
-    CHECK(out.replied);
-    CHECK(out.status != 0);
+    CHECK(raw_call(*client, cpid, "/boom", nlohmann::json::object(), out));
+    CHECK(out.done.load());
+    CHECK(!out.ok);
     resp = nlohmann::json::parse(out.body);
     CHECK(error_code_of(resp) == 1003);
 
-    // 请求体非法 JSON → 框架错误码 1002
+    // 请求体非法 JSON → 框架错误码 1002（信封 b 为 JSON 文本字符串，可注入非法体）
     {
-        const char* bad = "{invalid json";
-        ssn_url_ref_t u = {const_cast<char*>("/add"), 4};
-        ssn_data_ref_t d = {const_cast<char*>(bad), std::strlen(bad)};
-        out = RpcReply();
-        CHECK(ssn_node_rpc_call(client, SERVER_ADDR, &u, &d, on_rpc_reply, &out, CALL_TIMEOUT_MS) == 0);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-        while (!out.done && std::chrono::steady_clock::now() < deadline) {
-            ssn_node_poll(client, 20);
-        }
-        CHECK(out.done && out.replied);
-        CHECK(out.status != 0);
+        std::string bytes = (nlohmann::json{{"k", "req"},
+                                            {"u", "/add"},
+                                            {"s", g_seq.fetch_add(1)},
+                                            {"b", "{invalid json"}}).dump();
+        g_reply.done.store(false);
+        g_reply.ok = false;
+        g_reply.body = "{}";
+        CHECK(raw_send(*client, cpid, bytes));
+        CHECK(wait_reply(out));
+        CHECK(!out.ok);
         resp = nlohmann::json::parse(out.body);
         CHECK(error_code_of(resp) == 1002);
     }
 
     // 未知 URL → 框架错误码 1001
-    CHECK(rpc_json(client, "/no_such_method", nlohmann::json::object(), out));
-    CHECK(out.replied);
-    CHECK(out.status != 0);
+    CHECK(raw_call(*client, cpid, "/no_such_method", nlohmann::json::object(), out));
+    CHECK(out.done.load());
+    CHECK(!out.ok);
     resp = nlohmann::json::parse(out.body);
     CHECK(error_code_of(resp) == 1001);
 
     // 内置端点 /urls：包含全部内置端点与用户方法
-    CHECK(rpc_json(client, "/urls", nlohmann::json::object(), out));
-    CHECK(out.replied && out.status == 0);
+    CHECK(raw_call(*client, cpid, "/urls", nlohmann::json::object(), out));
+    CHECK(out.done.load() && out.ok);
     resp = nlohmann::json::parse(out.body);
     CHECK(resp.contains("urls") && resp["urls"].is_array());
     const char* expected_urls[] = {"/urls", "/health", "/version", "/add", "/boom"};
@@ -221,25 +299,25 @@ void test_rpc_roundtrip() {
     }
 
     // 内置端点 /health：status ok，连接数 >= 1（本客户端已连入），消息数 >= 1（已分发多次）
-    CHECK(rpc_json(client, "/health", nlohmann::json::object(), out));
-    CHECK(out.replied && out.status == 0);
+    CHECK(raw_call(*client, cpid, "/health", nlohmann::json::object(), out));
+    CHECK(out.done.load() && out.ok);
     resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("status").get<std::string>() == "ok");
-    CHECK(resp.at("connections").get<int>() >= 1);
-    CHECK(resp.at("messages").get<uint64_t>() >= 1);
+    CHECK(jget(resp, "status", std::string()) == "ok");
+    CHECK(jget(resp, "connections", 0) >= 1);
+    CHECK(jget(resp, "messages", uint64_t{0}) >= 1);
 
     // 内置端点 /version：与 SSN_VERSION_STRING 一致（M7：引用宏，版本升级不再红）
-    CHECK(rpc_json(client, "/version", nlohmann::json::object(), out));
-    CHECK(out.replied && out.status == 0);
+    CHECK(raw_call(*client, cpid, "/version", nlohmann::json::object(), out));
+    CHECK(out.done.load() && out.ok);
     resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("version").get<std::string>() == SSN_VERSION_STRING);
+    CHECK(jget(resp, "version", std::string()) == SSN_VERSION_STRING);
 
     // 框架内置端点直接访问（非 IPC 路径）
     CHECK(server.builtinVersion().at("version").get<std::string>() == SSN_VERSION_STRING);
     CHECK(server.builtinHealth().at("status").get<std::string>() == "ok");
 
-    ssn_node_stop(client);
-    ssn_node_destroy(client);
+    (void)client->stop();
+    (void)client->waitStopped();
     server.stop();
     server.destroy();
 }
@@ -259,19 +337,20 @@ void test_reinit() {
     CHECK(server.state() == ssn::ServiceState::Started);
 
     // 功能验证：重新初始化后的实例仍可正常响应 RPC
-    ssn_node_t* client = make_client_node();
+    std::unique_ptr<ssn::Node> client = make_client_node();
     CHECK(client != nullptr);
-    CHECK(ssn_node_start(client));
+    ssn::PeerId cpid;
+    CHECK(raw_connect(*client, cpid));
 
-    RpcReply out;
-    CHECK(rpc_json(client, "/add", {{"a", 5}, {"b", 6}}, out));
-    CHECK(out.replied);
-    CHECK(out.status == 0);
+    RawReply out;
+    CHECK(raw_call(*client, cpid, "/add", {{"a", 5}, {"b", 6}}, out));
+    CHECK(out.done.load());
+    CHECK(out.ok);
     nlohmann::json resp = nlohmann::json::parse(out.body);
-    CHECK(resp.at("sum").get<int>() == 11);
+    CHECK(jget(resp, "sum", -1) == 11);
 
-    ssn_node_stop(client);
-    ssn_node_destroy(client);
+    (void)client->stop();
+    (void)client->waitStopped();
     server.stop();
     server.destroy();
     CHECK(server.state() == ssn::ServiceState::Created);
@@ -283,38 +362,31 @@ void test_publish() {
     CHECK(server.initialize(0, nullptr));
     CHECK(server.start());
 
-    ssn_node_t* client = make_client_node();
+    std::unique_ptr<ssn::Node> client = make_client_node();
     CHECK(client != nullptr);
-    CHECK(ssn_node_start(client));
+    ssn::PeerId cpid;
+    CHECK(raw_connect(*client, cpid));
 
-    PubMsg msg;
-    ssn_url_ref_t topic = {const_cast<char*>("/news"), 5};
-    CHECK(ssn_node_subscribe(client, SERVER_ADDR, &topic, on_pub_msg, &msg, CALL_TIMEOUT_MS));
-
-    // 轮询驱动订阅握手（服务端在 svc 线程 poll 中处理 SUBSCRIBE），再发布
-    for (int i = 0; i < 25; ++i) {   // 约 500ms
-        ssn_node_poll(client, 20);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
+    CHECK(sub_topic(*client, cpid, "/news"));
     CHECK(server.publish("/news", {{"title", "测试消息"}, {"seq", 1}}));
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
-    while (!msg.done && std::chrono::steady_clock::now() < deadline) {
-        ssn_node_poll(client, 20);
+    while (!g_msg.done.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    CHECK(msg.done);
-    CHECK(msg.url == "/news");
-    nlohmann::json published = nlohmann::json::parse(msg.body);
-    CHECK(published.at("title").get<std::string>() == "测试消息");
-    CHECK(published.at("seq").get<int>() == 1);
+    CHECK(g_msg.done.load());
+    CHECK(g_msg.url == "/news");
+    nlohmann::json published = nlohmann::json::parse(g_msg.body);
+    CHECK(jget(published, "title", std::string()) == "测试消息");
+    CHECK(jget(published, "seq", -1) == 1);
 
-    ssn_node_stop(client);
-    ssn_node_destroy(client);
+    (void)client->stop();
+    (void)client->waitStopped();
     server.stop();
     server.destroy();
 }
 
-// Issue #5-6 回归：OnInit 失败（监听端口冲突 → 节点 start 失败）后不得悬挂——
+// Issue #5-6 回归：OnInit 失败（监听端口冲突 → 节点监听失败）后不得悬挂——
 // initialize 返回 false 且状态归位 Created，换端口二次 initialize 可成功
 void test_init_failure_rollback() {
     // A 先占用 18903 端口
@@ -323,7 +395,7 @@ void test_init_failure_rollback() {
     CHECK(server_a.initialize(0, nullptr));
     CHECK(server_a.start());
 
-    // B 监听同端口：节点 start 失败（EADDRINUSE）→ initialize 返回 false，不悬挂
+    // B 监听同端口：节点 listen 失败（EADDRINUSE）→ initialize 返回 false，不悬挂
     TestServer server_b;
     server_b.listenTcp("127.0.0.1", 18903);
     CHECK(!server_b.initialize(0, nullptr));
