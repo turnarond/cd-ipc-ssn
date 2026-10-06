@@ -20,6 +20,12 @@
 #include "util/ssn_mutex.h"
 #include "util/ssn_hash_table.h"
 
+/* C++ 消费方守卫：本头为 C 接口，被 C++ 源码包含时必须保持 C 链接，
+ * 否则引用被名字修饰，链接期找不到库内的 C 符号。 */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define SSN_TRANSPORT_MAX_ADDRESS_LEN 256
 
 typedef enum {
@@ -157,6 +163,10 @@ SSN_API int ssn_transport_get_fd(const ssn_transport_t* transport);
 
 SSN_API const char* ssn_transport_type_to_string(ssn_transport_type_t type);
 SSN_API ssn_transport_type_t ssn_transport_type_from_string(const char* type_str);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

@@ -38,12 +38,17 @@ TESTS=(
 
 # C++ 服务框架套件（v2.4.0，自包含测试，无需外部服务端）
 CPP_TESTS=(
+    test_cpp_node_lifecycle   # Node 生命周期/事件分发（326 断言，含评审 C1 与 I1–I7 回归）
+    test_cpp_peer_registry    # Node private generational Peer registry
     test_cpp_service_base     # 生命周期状态机 + 钩子顺序（41 断言）
     test_cpp_service_task     # 线程池任务调度（21 断言）
     test_cpp_service_manager  # Run 编排 + 信号停止（10 断言）
     test_cpp_ssn_service      # 服务端基类 IPC 回环（87 断言）
     test_cpp_ssn_client       # 客户端调用/订阅（30 断言）
     test_cpp_json             # 类型安全层 DTO（11 断言）
+    test_cpp_node_backend     # Node 私有后端（非阻塞 connect + 跨线程唤醒）
+    test_cpp_node_integration # 任务 5：多监听、多 Peer、双向消息与广播（54 断言）
+    test_cpp_node_types       # Node 公共值类型、错误契约与消息所有权
     test_cpp_stability        # 稳定性套件（285 断言，回调异常/并发/超时风暴/生命周期/信号风暴）
 )
 

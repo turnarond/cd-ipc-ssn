@@ -3,6 +3,7 @@
  */
 
 #include "ssn_transport.h"
+#include "ssn_transport_async_internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -39,55 +40,99 @@ static bool tcp_transport_bind(ssn_transport_t* transport,
     return true;
 }
 
+/* 关闭构造期 socket 并重建，按配置施加通用选项；返回新 fd，失败返回 -1。
+ * tcp_transport_create 构造时已创建 socket（impl->sock_fd）；connect 重新
+ * 创建前必须先关闭旧的，否则构造 fd 永久泄漏（Issue #10：连接失败路径
+ * 实测每轮泄漏 1 个 fd）。 */
+static int tcp_reopen_socket(ssn_transport_t* transport)
+{
+    tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
+    int family = impl->ipv6_enabled ? AF_INET6 : AF_INET;
+
+    if (impl->sock_fd >= 0) {
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+    }
+
+    int fd = socket(family, SOCK_STREAM, IPPROTO_TCP);
+    if (fd < 0) {
+        LOG_ERROR("Failed to create TCP socket: %s", strerror(errno));
+        return -1;
+    }
+
+    int optval = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+    if (!transport->config.enable_nagle) {
+        optval = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+    }
+
+    if (transport->config.send_buffer_size > 0) {
+        setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+                   &transport->config.send_buffer_size,
+                   sizeof(transport->config.send_buffer_size));
+    }
+
+    if (transport->config.recv_buffer_size > 0) {
+        setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+                   &transport->config.recv_buffer_size,
+                   sizeof(transport->config.recv_buffer_size));
+    }
+
+    impl->sock_fd = fd;
+    return fd;
+}
+
+/* 记录对端地址并返回指向 impl 内 sockaddr 的指针与长度 */
+static struct sockaddr* tcp_target_addr(ssn_transport_t* transport,
+                                        const ssn_address_t* addr,
+                                        socklen_t* out_len)
+{
+    tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
+
+    if (impl->ipv6_enabled) {
+        memcpy(&impl->addr6, &addr->addr.inet6_addr,
+               sizeof(struct sockaddr_in6));
+        *out_len = sizeof(impl->addr6);
+        return (struct sockaddr*)&impl->addr6;
+    }
+    memcpy(&impl->addr, &addr->addr.inet_addr, sizeof(struct sockaddr_in));
+    *out_len = sizeof(impl->addr);
+    return (struct sockaddr*)&impl->addr;
+}
+
+/* 连接成功后统一记账与日志 */
+static void tcp_mark_connected(ssn_transport_t* transport)
+{
+    tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
+    char addr_str[INET6_ADDRSTRLEN];
+
+    impl->is_server = false;
+    impl->last_activity = time(NULL);
+    transport->stats.connection_count++;
+
+    if (impl->ipv6_enabled) {
+        inet_ntop(AF_INET6, &impl->addr6.sin6_addr, addr_str, sizeof(addr_str));
+        LOG_DEBUG("Connected to TCP server [%s]:%d",
+                  addr_str, ntohs(impl->addr6.sin6_port));
+    } else {
+        inet_ntop(AF_INET, &impl->addr.sin_addr, addr_str, sizeof(addr_str));
+        LOG_DEBUG("Connected to TCP server %s:%d",
+                  addr_str, ntohs(impl->addr.sin_port));
+    }
+}
+
 static bool tcp_transport_connect(ssn_transport_t* transport,
                                  const ssn_address_t* addr,
                                  int timeout_ms)
 {
     tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
 
-    int family;
-    if (addr->type == SSN_TRANSPORT_TCP6) {
-        family = AF_INET6;
-        impl->ipv6_enabled = true;
-    } else {
-        family = AF_INET;
-        impl->ipv6_enabled = false;
-    }
+    impl->ipv6_enabled = (addr->type == SSN_TRANSPORT_TCP6);
 
-    /* tcp_transport_create 构造时已创建 socket（impl->sock_fd）；connect 重新
-     * 创建前必须先关闭旧的，否则构造 fd 永久泄漏（Issue #10：连接失败路径
-     * 实测每轮泄漏 1 个 fd）。 */
-    if (impl->sock_fd >= 0) {
-        close(impl->sock_fd);
-        impl->sock_fd = -1;
-    }
-
-    impl->sock_fd = socket(family, SOCK_STREAM, IPPROTO_TCP);
-    if (impl->sock_fd < 0) {
-        LOG_ERROR("Failed to create TCP socket: %s", strerror(errno));
+    if (tcp_reopen_socket(transport) < 0) {
         return false;
-    }
-
-    int optval = 1;
-    setsockopt(impl->sock_fd, SOL_SOCKET, SO_REUSEADDR,
-               &optval, sizeof(optval));
-
-    if (!transport->config.enable_nagle) {
-        optval = 1;
-        setsockopt(impl->sock_fd, IPPROTO_TCP, TCP_NODELAY,
-                   &optval, sizeof(optval));
-    }
-
-    if (transport->config.send_buffer_size > 0) {
-        setsockopt(impl->sock_fd, SOL_SOCKET, SO_SNDBUF,
-                   &transport->config.send_buffer_size,
-                   sizeof(transport->config.send_buffer_size));
-    }
-
-    if (transport->config.recv_buffer_size > 0) {
-        setsockopt(impl->sock_fd, SOL_SOCKET, SO_RCVBUF,
-                   &transport->config.recv_buffer_size,
-                   sizeof(transport->config.recv_buffer_size));
     }
 
     if (impl->non_blocking) {
@@ -95,20 +140,8 @@ static bool tcp_transport_connect(ssn_transport_t* transport,
         fcntl(impl->sock_fd, F_SETFL, flags | O_NONBLOCK);
     }
 
-    struct sockaddr* sockaddr_ptr;
-    socklen_t sockaddr_len;
-
-    if (impl->ipv6_enabled) {
-        memcpy(&impl->addr6, &addr->addr.inet6_addr,
-               sizeof(struct sockaddr_in6));
-        sockaddr_ptr = (struct sockaddr*)&impl->addr6;
-        sockaddr_len = sizeof(impl->addr6);
-    } else {
-        memcpy(&impl->addr, &addr->addr.inet_addr,
-               sizeof(struct sockaddr_in));
-        sockaddr_ptr = (struct sockaddr*)&impl->addr;
-        sockaddr_len = sizeof(impl->addr);
-    }
+    socklen_t sockaddr_len = 0;
+    struct sockaddr* sockaddr_ptr = tcp_target_addr(transport, addr, &sockaddr_len);
 
     if (connect(impl->sock_fd, sockaddr_ptr, sockaddr_len) < 0) {
         if (errno != EINPROGRESS) {
@@ -152,24 +185,70 @@ static bool tcp_transport_connect(ssn_transport_t* transport,
         }
     }
 
-    impl->is_server = false;
-    impl->last_activity = time(NULL);
-    transport->stats.connection_count++;
+    tcp_mark_connected(transport);
+    return true;
+}
 
-    char addr_str[INET6_ADDRSTRLEN];
-    if (impl->ipv6_enabled) {
-        inet_ntop(AF_INET6, &impl->addr6.sin6_addr,
-                  addr_str, sizeof(addr_str));
-        LOG_DEBUG("Connected to TCP server [%s]:%d",
-                  addr_str, ntohs(impl->addr6.sin6_port));
-    } else {
-        inet_ntop(AF_INET, &impl->addr.sin_addr,
-                  addr_str, sizeof(addr_str));
-        LOG_DEBUG("Connected to TCP server %s:%d",
-                  addr_str, ntohs(impl->addr.sin_port));
+/* 非阻塞连接：置 O_NONBLOCK 并发起 connect，立即返回状态 */
+ssn_connect_state_t ssn_tcp_connect_begin(ssn_transport_t* transport,
+                                          const ssn_address_t* addr)
+{
+    tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
+
+    impl->ipv6_enabled = (addr->type == SSN_TRANSPORT_TCP6);
+
+    if (tcp_reopen_socket(transport) < 0) {
+        return SSN_CONNECT_FAILED;
     }
 
-    return true;
+    int flags = fcntl(impl->sock_fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(impl->sock_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        LOG_ERROR("Failed to set TCP socket non-blocking: %s", strerror(errno));
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+        return SSN_CONNECT_FAILED;
+    }
+
+    socklen_t sockaddr_len = 0;
+    struct sockaddr* sockaddr_ptr = tcp_target_addr(transport, addr, &sockaddr_len);
+
+    if (connect(impl->sock_fd, sockaddr_ptr, sockaddr_len) == 0) {
+        tcp_mark_connected(transport);
+        return SSN_CONNECT_CONNECTED;
+    }
+
+    if (errno == EINPROGRESS) {
+        return SSN_CONNECT_IN_PROGRESS;
+    }
+
+    LOG_ERROR("Failed to connect TCP socket: %s", strerror(errno));
+    close(impl->sock_fd);
+    impl->sock_fd = -1;
+    return SSN_CONNECT_FAILED;
+}
+
+/* 可写事件后判定连接结果：SO_ERROR 非 0 即为拒连/失败 */
+ssn_connect_state_t ssn_tcp_connect_finish(ssn_transport_t* transport)
+{
+    tcp_transport_impl_t* impl = (tcp_transport_impl_t*)transport->impl_data;
+
+    if (impl->sock_fd < 0) {
+        return SSN_CONNECT_FAILED;
+    }
+
+    int so_error = 0;
+    socklen_t err_len = sizeof(so_error);
+    if (getsockopt(impl->sock_fd, SOL_SOCKET, SO_ERROR,
+                   &so_error, &err_len) < 0 || so_error != 0) {
+        LOG_ERROR("TCP socket connect failed: %s",
+                  strerror(so_error != 0 ? so_error : errno));
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+        return SSN_CONNECT_FAILED;
+    }
+
+    tcp_mark_connected(transport);
+    return SSN_CONNECT_CONNECTED;
 }
 
 static bool tcp_transport_disconnect(ssn_transport_t* transport)

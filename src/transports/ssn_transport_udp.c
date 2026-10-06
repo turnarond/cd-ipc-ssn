@@ -5,6 +5,7 @@
 /* 限制：UDP 为无连接传输，不支持 accept/server 模式握手；仅适用于对等/客户端模式收发 */
 
 #include "ssn_transport.h"
+#include "ssn_transport_async_internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -122,6 +123,23 @@ static bool udp_transport_connect(ssn_transport_t* transport,
     }
 
     return true;
+}
+
+/* UDP 是数据报：绑定对端地址不涉及握手，begin 即同步完成 */
+ssn_connect_state_t ssn_udp_connect_begin(ssn_transport_t* transport,
+                                          const ssn_address_t* addr)
+{
+    if (!udp_transport_connect(transport, addr, 0)) {
+        return SSN_CONNECT_FAILED;
+    }
+    return SSN_CONNECT_CONNECTED;
+}
+
+ssn_connect_state_t ssn_udp_connect_finish(ssn_transport_t* transport)
+{
+    const udp_transport_impl_t* impl =
+        (const udp_transport_impl_t*)transport->impl_data;
+    return impl->sock_fd >= 0 ? SSN_CONNECT_CONNECTED : SSN_CONNECT_FAILED;
 }
 
 static bool udp_transport_disconnect(ssn_transport_t* transport)

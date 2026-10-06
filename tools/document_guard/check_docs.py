@@ -23,34 +23,43 @@ STALE_FACTS = (
     "625 例",
     "701 个断言",
     "701 例",
+    "1159 例",
+    "1159 个断言",
+    "1304 例",
+    "1304 个断言",
     "test_protocol（25",
 )
 STALE_PATTERNS = ((re.compile(r"全量测试[^\r\n]{0,40}7 套件"), "全量测试……7 套件"),)
+EXPECTED_SUITE_COUNT = 23
+EXPECTED_ASSERTION_COUNT = 1396
+EXPECTED_EXAMPLE_COUNT = 19
+EXPECTED_PROTOCOL_COUNT = 31
 TOTAL_SUITE_PATTERN = re.compile(
     r"(?:全部|全量|构建\s*\+)[^\r\n]{0,30}?(\d+)\s*个?\s*自动化套件"
 )
 KEY_FACT_PATTERNS = (
-    (re.compile(r"(?P<claim>合计[:：]?\s*自动化\s*(?P<value>\d+)\s*套件)"), 17),
+    (re.compile(r"(?P<claim>合计[:：]?\s*自动化\s*(?P<value>\d+)\s*套件)"),
+     EXPECTED_SUITE_COUNT),
     (
         re.compile(
             r"(?P<claim>(?:全部|全量|合计[:：]?\s*自动化|自动化测试)"
             r"[^。\r\n]{0,60}?(?P<value>\d+)\s*个?\s*(?:断言|例))"
         ),
-        765,
+        EXPECTED_ASSERTION_COUNT,
     ),
     (
         re.compile(
             r"(?P<claim>(?:全部|全量|合计|示例构建)"
             r"[^。\r\n]{0,60}?(?P<value>\d+)\s*个?\s*示例)"
         ),
-        19,
+        EXPECTED_EXAMPLE_COUNT,
     ),
     (
         re.compile(
             r"(?P<claim>test_protocol(?!_)[^\r\n]{0,30}?[（(]"
             r"(?P<value>\d+))"
         ),
-        31,
+        EXPECTED_PROTOCOL_COUNT,
     ),
 )
 PROHIBITED_REFERENCES = ("CLAUDE.md", ".claude", ".remember", "superpowers")
@@ -93,29 +102,43 @@ def _strip_code(text: str) -> str:
     return re.sub(r"`[^`\r\n]*`", "", text)
 
 
+def _is_acceptance_snapshot(root: Path, path: Path) -> bool:
+    """发布验收报告是发布时点快照：豁免事实扫描。
+
+    双条件必须同时满足：位于部署手册目录、文件名含“发布验收报告”。
+    治理类检查与链接检查不豁免。
+    """
+    relative = path.relative_to(root)
+    return (
+        relative.parent.as_posix() == "docs/05-部署手册"
+        and "发布验收报告" in path.name
+    )
+
+
 def _document_findings(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in _active_documents(root):
         text = _read(path)
         relative = path.relative_to(root).as_posix()
-        for stale in STALE_FACTS:
-            if stale in text:
-                findings.append(Finding("事实", relative, f"包含过期口径：{stale}"))
-        for pattern, label in STALE_PATTERNS:
-            if pattern.search(text):
-                findings.append(Finding("事实", relative, f"包含过期口径：{label}"))
-        for match in TOTAL_SUITE_PATTERN.finditer(text):
-            if int(match.group(1)) != 17:
-                findings.append(Finding("事实", relative, f"包含过期口径：{match.group(0)}"))
-        for pattern, expected in KEY_FACT_PATTERNS:
-            for match in pattern.finditer(text):
-                if int(match.group("value")) != expected:
-                    findings.append(Finding("事实", relative, f"包含过期口径：{match.group('claim')}"))
+        if not _is_acceptance_snapshot(root, path):
+            for stale in STALE_FACTS:
+                if stale in text:
+                    findings.append(Finding("事实", relative, f"包含过期口径：{stale}"))
+            for pattern, label in STALE_PATTERNS:
+                if pattern.search(text):
+                    findings.append(Finding("事实", relative, f"包含过期口径：{label}"))
+            for match in TOTAL_SUITE_PATTERN.finditer(text):
+                if int(match.group(1)) != EXPECTED_SUITE_COUNT:
+                    findings.append(Finding("事实", relative, f"包含过期口径：{match.group(0)}"))
+            for pattern, expected in KEY_FACT_PATTERNS:
+                for match in pattern.finditer(text):
+                    if int(match.group("value")) != expected:
+                        findings.append(Finding("事实", relative, f"包含过期口径：{match.group('claim')}"))
+            if "driver-sdk" in text.lower():
+                findings.append(Finding("事实", relative, "包含其他项目的 driver-sdk 历史"))
         for reference in PROHIBITED_REFERENCES:
             if reference.lower() in text.lower():
                 findings.append(Finding("治理", relative, f"引用 AI/插件中间接口：{reference}"))
-        if "driver-sdk" in text.lower():
-            findings.append(Finding("事实", relative, "包含其他项目的 driver-sdk 历史"))
 
         link_text = _strip_code(text)
         for match in re.finditer(r"\[[^\]\r\n]*\]\(([^)\r\n]+)\)", link_text):
@@ -131,9 +154,9 @@ def _document_findings(root: Path) -> list[Finding]:
 def _test_findings(root: Path) -> list[Finding]:
     script = _read(root / "test/run_tests.sh")
     suite_count = len(re.findall(r"^\s+(?:test_|example_)[a-z0-9_]+\s*(?:#.*)?$", script, re.MULTILINE))
-    if suite_count == 17:
+    if suite_count == EXPECTED_SUITE_COUNT:
         return []
-    return [Finding("事实", "test/run_tests.sh", f"自动化套件应为 17，实际解析为 {suite_count}")]
+    return [Finding("事实", "test/run_tests.sh", f"自动化套件应为 {EXPECTED_SUITE_COUNT}，实际解析为 {suite_count}")]
 
 
 def inspect_repository(root: Path) -> list[Finding]:

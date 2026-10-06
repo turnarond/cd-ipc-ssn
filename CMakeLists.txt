@@ -14,6 +14,7 @@ set(TRANSPORT_SOURCES
     src/transports/ssn_transport_tcp.c
     src/transports/ssn_transport_udp.c
     src/transports/ssn_transport_factory.c
+    src/transports/ssn_transport_async_internal.c
     src/protocol/ssn_protocol.c
     src/protocol/rpc/ssn_rpc.c
     src/protocol/pubsub/ssn_pubsub.c
@@ -182,6 +183,16 @@ add_library(ssn_framework SHARED
     src/framework/ServiceManager.cpp
     src/framework/SsnService.cpp
     src/framework/SsnClient.cpp
+    src/node/Message.cpp
+    src/node/Node.cpp
+    src/node/NodeBackend.cpp
+    src/node/NodeImpl.cpp
+    src/node/PollDriver.cpp
+    src/node/EventQueue.cpp
+    src/node/PeerRegistry.cpp
+    src/node/PeerSession.cpp
+    src/node/Status.cpp
+    src/node/Types.cpp
 )
 
 target_compile_features(ssn_framework PUBLIC cxx_std_17)
@@ -214,6 +225,10 @@ install(TARGETS ssn_framework
 
 install(DIRECTORY include/ssn/framework/
     DESTINATION include/ssn/framework
+)
+
+install(DIRECTORY include/ssn/node/
+    DESTINATION include/ssn/node
 )
 
 # nlohmann/json 为单头文件 vendor（框架公共头依赖 <nlohmann/json.hpp>），随安装分发
@@ -278,6 +293,42 @@ target_link_libraries(test_cpp_ssn_client ssn_framework pthread)
 # C++ 服务框架测试（批次 2 任务 7：类型安全层——RegisterMethod/Call + DTO 全链路）
 add_executable(test_cpp_json test/test_cpp_json.cpp)
 target_link_libraries(test_cpp_json ssn_framework pthread)
+
+# C++ Node 公共值类型、错误契约与消息所有权测试
+add_executable(test_cpp_node_types test/test_cpp_node_types.cpp)
+target_link_libraries(test_cpp_node_types ssn_framework pthread)
+
+# C++ Node private generational peer registry tests
+add_executable(test_cpp_peer_registry test/test_cpp_peer_registry.cpp)
+target_include_directories(test_cpp_peer_registry PRIVATE src)
+target_sources(test_cpp_peer_registry PRIVATE
+    src/node/NodeBackend.cpp
+    src/node/PeerRegistry.cpp
+    src/node/PeerSession.cpp
+)
+target_link_libraries(test_cpp_peer_registry ssn_framework pthread)
+
+# C++ Node lifecycle and private in-memory event dispatch tests
+add_executable(test_cpp_node_lifecycle test/test_cpp_node_lifecycle.cpp)
+target_include_directories(test_cpp_node_lifecycle PRIVATE src)
+target_sources(test_cpp_node_lifecycle PRIVATE
+    src/node/Node.cpp
+    src/node/NodeBackend.cpp
+    src/node/NodeImpl.cpp
+    src/node/PollDriver.cpp
+    src/node/EventQueue.cpp
+    src/node/PeerRegistry.cpp
+    src/node/PeerSession.cpp
+)
+target_link_libraries(test_cpp_node_lifecycle ssn_framework pthread)
+
+# C++ Node 私有后端：非阻塞 connect 立即返回 + 跨线程 poll 唤醒
+add_executable(test_cpp_node_backend test/test_cpp_node_backend.cpp)
+target_link_libraries(test_cpp_node_backend ssn_framework pthread)
+
+# 任务 5：多监听、多 Peer 与双向原始消息集成测试
+add_executable(test_cpp_node_integration test/test_cpp_node_integration.cpp)
+target_link_libraries(test_cpp_node_integration ssn_framework pthread)
 
 # C++ 服务框架测试（稳定性加固批次：T1-T13 回调异常/并发/超时风暴/生命周期泄漏/信号风暴）
 add_executable(test_cpp_stability test/test_cpp_stability.cpp)

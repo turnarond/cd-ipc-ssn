@@ -62,9 +62,43 @@ for sym in "${REQUIRED[@]}"; do
     fi
 done
 
+# 内部符号白名单：跨 .so 使用的私有接口（见 src/transports/ssn_transport_async_internal.h）。
+# 这些符号必须导出才能被 libssn_framework 解析，但不属于公开 C API；
+# 白名单外出现任何 *_internal 导出符号按内部接口泄漏回归处理。
+INTERNAL_ALLOWED=(
+    ssn_transport_connect_begin_internal
+    ssn_transport_connect_finish_internal
+)
+for sym in $(nm -D --defined-only "$LIB" 2>/dev/null | awk '{print $3}' | \
+        grep '_internal$' | sort -u); do
+    allowed=0
+    for known in "${INTERNAL_ALLOWED[@]}"; do
+        [ "$sym" = "$known" ] && allowed=1
+    done
+    if [ "$allowed" -eq 0 ]; then
+        echo "FAIL: 内部符号 $sym 不在白名单（新增内部接口需同步 INTERNAL_ALLOWED 与文档口径）"
+        missing=$((missing + 1))
+    fi
+done
+
+# 反向校验：私有实现符号不得出现在 libssn_framework 动态符号表。
+# 缺陷背景：给含嵌套私有 Impl 的公开类整类标注 SSN_FRAMEWORK_API，可见性会
+# 传递给嵌套类，Node::Impl 的成员函数全部落进 .dynsym（实测 11 个）。
+FW_LIB="$BUILD_DIR/libssn_framework.so"
+if [ -f "$FW_LIB" ]; then
+    leaked=$(nm -D -C "$FW_LIB" 2>/dev/null | \
+        grep -cE 'ssn::Node::Impl|ssn::detail::(EventQueue|PeerRegistry|PeerSession)')
+    if [ "$leaked" -ne 0 ]; then
+        echo "FAIL: libssn_framework 导出了 $leaked 个私有实现符号"
+        nm -D -C "$FW_LIB" | \
+            grep -E 'ssn::Node::Impl|ssn::detail::(EventQueue|PeerRegistry|PeerSession)' | head -5
+        missing=$((missing + 1))
+    fi
+fi
+
 if [ "$missing" -eq 0 ]; then
     echo "导出符号校验通过：$(echo "$exported" | wc -l) 个 ssn_ 符号，${#REQUIRED[@]} 个关键 API 全部导出"
     exit 0
 fi
-echo "共 $missing 个关键符号缺失"
+echo "共 $missing 项符号校验失败（关键符号缺失或私有实现泄漏）"
 exit 1

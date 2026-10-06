@@ -3,6 +3,7 @@
  */
 
 #include "ssn_transport.h"
+#include "ssn_transport_async_internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -33,22 +34,46 @@ static bool unix_transport_bind(ssn_transport_t* transport,
     return true;
 }
 
+/* 关闭构造期 socket 并重建（Issue #10 同源：不关旧 fd 会泄漏）；返回新 fd */
+static int unix_reopen_socket(ssn_transport_t* transport)
+{
+    unix_transport_impl_t* impl = (unix_transport_impl_t*)transport->impl_data;
+
+    if (impl->sock_fd >= 0) {
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+    }
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        LOG_ERROR("Failed to create Unix socket: %s", strerror(errno));
+        return -1;
+    }
+
+    impl->sock_fd = fd;
+    return fd;
+}
+
+/* 连接成功后统一记账与日志 */
+static void unix_mark_connected(ssn_transport_t* transport,
+                                const ssn_address_t* addr)
+{
+    unix_transport_impl_t* impl = (unix_transport_impl_t*)transport->impl_data;
+
+    impl->is_server = false;
+    impl->last_activity = time(NULL);
+    strncpy(impl->socket_path, addr->addr.unix_addr.sun_path, 107);
+    impl->socket_path[107] = '\0';
+    LOG_DEBUG("Connected to Unix socket: %s", impl->socket_path);
+}
+
 static bool unix_transport_connect(ssn_transport_t* transport,
                                    const ssn_address_t* addr,
                                    int timeout_ms)
 {
     unix_transport_impl_t* impl = (unix_transport_impl_t*)transport->impl_data;
 
-    /* unix_transport_create 构造时已创建 socket（impl->sock_fd）；connect 重新
-     * 创建前必须先关闭旧的，否则构造 fd 永久泄漏（Issue #10，与 tcp 同源）。 */
-    if (impl->sock_fd >= 0) {
-        close(impl->sock_fd);
-        impl->sock_fd = -1;
-    }
-
-    impl->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (impl->sock_fd < 0) {
-        LOG_ERROR("Failed to create Unix socket: %s", strerror(errno));
+    if (unix_reopen_socket(transport) < 0) {
         return false;
     }
 
@@ -86,15 +111,85 @@ static bool unix_transport_connect(ssn_transport_t* transport,
                 return false;
             }
         }
+
+        /* select 写就绪不保证连接成功（同 tcp）：必须查 SO_ERROR */
+        int so_error = 0;
+        socklen_t err_len = sizeof(so_error);
+        if (getsockopt(impl->sock_fd, SOL_SOCKET, SO_ERROR,
+                       &so_error, &err_len) < 0 || so_error != 0) {
+            LOG_ERROR("Unix socket connect failed: %s",
+                      strerror(so_error != 0 ? so_error : errno));
+            close(impl->sock_fd);
+            impl->sock_fd = -1;
+            return false;
+        }
+    }
+
+    unix_mark_connected(transport, addr);
+    return true;
+}
+
+/* 非阻塞连接：置 O_NONBLOCK 并发起 connect，立即返回状态 */
+ssn_connect_state_t ssn_unix_connect_begin(ssn_transport_t* transport,
+                                           const ssn_address_t* addr)
+{
+    unix_transport_impl_t* impl = (unix_transport_impl_t*)transport->impl_data;
+
+    if (unix_reopen_socket(transport) < 0) {
+        return SSN_CONNECT_FAILED;
+    }
+
+    int flags = fcntl(impl->sock_fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(impl->sock_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        LOG_ERROR("Failed to set Unix socket non-blocking: %s", strerror(errno));
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+        return SSN_CONNECT_FAILED;
+    }
+
+    memcpy(&impl->addr, &addr->addr.unix_addr, sizeof(struct sockaddr_un));
+
+    if (connect(impl->sock_fd, (struct sockaddr*)&impl->addr,
+                sizeof(struct sockaddr_un)) == 0) {
+        unix_mark_connected(transport, addr);
+        return SSN_CONNECT_CONNECTED;
+    }
+
+    if (errno == EINPROGRESS) {
+        return SSN_CONNECT_IN_PROGRESS;
+    }
+
+    LOG_ERROR("Failed to connect Unix socket '%s': %s",
+              impl->addr.sun_path, strerror(errno));
+    close(impl->sock_fd);
+    impl->sock_fd = -1;
+    return SSN_CONNECT_FAILED;
+}
+
+/* 可写事件后判定连接结果 */
+ssn_connect_state_t ssn_unix_connect_finish(ssn_transport_t* transport)
+{
+    unix_transport_impl_t* impl = (unix_transport_impl_t*)transport->impl_data;
+
+    if (impl->sock_fd < 0) {
+        return SSN_CONNECT_FAILED;
+    }
+
+    int so_error = 0;
+    socklen_t err_len = sizeof(so_error);
+    if (getsockopt(impl->sock_fd, SOL_SOCKET, SO_ERROR,
+                   &so_error, &err_len) < 0 || so_error != 0) {
+        LOG_ERROR("Unix socket connect failed: %s",
+                  strerror(so_error != 0 ? so_error : errno));
+        close(impl->sock_fd);
+        impl->sock_fd = -1;
+        return SSN_CONNECT_FAILED;
     }
 
     impl->is_server = false;
     impl->last_activity = time(NULL);
-    strncpy(impl->socket_path, addr->addr.unix_addr.sun_path, 107);
-    impl->socket_path[107] = '\0';
     LOG_DEBUG("Connected to Unix socket: %s", impl->socket_path);
-
-    return true;
+    return SSN_CONNECT_CONNECTED;
 }
 
 static bool unix_transport_disconnect(ssn_transport_t* transport)

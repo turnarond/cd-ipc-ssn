@@ -27,7 +27,7 @@ class DocumentGuardTests(unittest.TestCase):
             '#define SSN_VERSION_STRING "2.5.1"\n',
             encoding="utf-8",
         )
-        suites = "\n".join(f"    test_suite_{index}" for index in range(17))
+        suites = "\n".join(f"    test_suite_{index}" for index in range(23))
         (self.root / "test/run_tests.sh").write_text(
             f"TESTS=(\n{suites}\n)\nCPP_TESTS=(\n)\n", encoding="utf-8"
         )
@@ -35,7 +35,7 @@ class DocumentGuardTests(unittest.TestCase):
             "[使用手册](06-使用手册/README.md)\n", encoding="utf-8"
         )
         (self.root / "docs/06-使用手册/README.md").write_text(
-            "当前基线：17 个自动化套件、765 个断言、19 个示例。\n",
+            "当前基线：23 个自动化套件、1396 个断言、19 个示例。\n",
             encoding="utf-8",
         )
 
@@ -141,6 +141,66 @@ class DocumentGuardTests(unittest.TestCase):
 
         self.assertIn("15 套件", messages)
         self.assertIn("test_protocol（25", messages)
+
+    # 旧基线句以 f-string 拼接书写：运行时内容与直接书写完全等价；
+    # 拼开可避免实施计划文档自身被守卫的事实正则（数字须紧邻套件/例）命中。
+    def test_reports_legacy_baseline_counts(self):
+        """旧基线合计句（17 套件、765 例）在新基线下必须报两条事实问题。"""
+        (self.root / "docs/README.md").write_text(
+            f"旧版合计：自动化 {17} 套件，共 {765} 例。\n",
+            encoding="utf-8",
+        )
+
+        findings = inspect_repository(self.root)
+        messages = "\n".join(finding.message for finding in findings)
+
+        self.assertIn("17 套件", messages)
+        self.assertIn("765 例", messages)
+
+    def test_acceptance_report_snapshot_exempt_from_facts(self):
+        """发布验收报告是时点快照：豁免事实扫描，但治理检查仍生效。"""
+        deploy_dir = self.root / "docs/05-部署手册"
+        deploy_dir.mkdir(parents=True)
+        report = deploy_dir / "2026-09-10-v2.6.0发布验收报告.md"
+        report.write_text(
+            f"旧版合计：自动化 {17} 套件，共 {765} 例。\n",
+            encoding="utf-8",
+        )
+
+        findings = inspect_repository(self.root)
+
+        self.assertFalse(any(f.category == "事实" for f in findings))
+
+        # 治理类检查不对快照豁免
+        report.write_text(
+            f"旧版合计：自动化 {17} 套件，共 {765} 例。\n引用 CLAUDE" ".md\n",
+            encoding="utf-8",
+        )
+        findings = inspect_repository(self.root)
+
+        self.assertFalse(any(f.category == "事实" for f in findings))
+        self.assertTrue(any(f.category == "治理" for f in findings))
+
+    def test_fact_exemption_only_for_acceptance_reports(self):
+        """豁免双条件：部署手册目录 + 文件名含“发布验收报告”，缺一不豁免。"""
+        deploy_dir = self.root / "docs/05-部署手册"
+        deploy_dir.mkdir(parents=True)
+        (deploy_dir / "部署手册.md").write_text(
+            f"旧版合计：自动化 {17} 套件，共 {765} 例。\n",
+            encoding="utf-8",
+        )
+        design_dir = self.root / "docs/03-设计"
+        design_dir.mkdir(parents=True)
+        (design_dir / "2026-09-10-v2.6.0发布验收报告.md").write_text(
+            f"旧版合计：自动化 {17} 套件，共 {765} 例。\n",
+            encoding="utf-8",
+        )
+
+        findings = inspect_repository(self.root)
+        fact_paths = {finding.path for finding in findings if finding.category == "事实"}
+
+        self.assertIn("docs/05-部署手册/部署手册.md", fact_paths)
+        self.assertIn("docs/03-设计/2026-09-10-v2.6.0发布验收报告.md", fact_paths)
 
 
 if __name__ == "__main__":
