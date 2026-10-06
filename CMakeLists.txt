@@ -330,6 +330,20 @@ target_link_libraries(test_cpp_node_backend ssn_framework pthread)
 add_executable(test_cpp_node_integration test/test_cpp_node_integration.cpp)
 target_link_libraries(test_cpp_node_integration ssn_framework pthread)
 
+# 任务 6：发送队列、背压与慢 Peer 隔离测试
+add_executable(test_cpp_node_backpressure test/test_cpp_node_backpressure.cpp)
+target_include_directories(test_cpp_node_backpressure PRIVATE src)
+target_sources(test_cpp_node_backpressure PRIVATE
+    src/node/Node.cpp
+    src/node/NodeBackend.cpp
+    src/node/NodeImpl.cpp
+    src/node/PollDriver.cpp
+    src/node/EventQueue.cpp
+    src/node/PeerRegistry.cpp
+    src/node/PeerSession.cpp
+)
+target_link_libraries(test_cpp_node_backpressure ssn_framework pthread)
+
 # C++ 服务框架测试（稳定性加固批次：T1-T13 回调异常/并发/超时风暴/生命周期泄漏/信号风暴）
 add_executable(test_cpp_stability test/test_cpp_stability.cpp)
 target_link_libraries(test_cpp_stability ssn_framework pthread)

@@ -48,6 +48,7 @@ CPP_TESTS=(
     test_cpp_json             # 类型安全层 DTO（11 断言）
     test_cpp_node_backend     # Node 私有后端（非阻塞 connect + 跨线程唤醒）
     test_cpp_node_integration # 任务 5：多监听、多 Peer、双向消息与广播（54 断言）
+    test_cpp_node_backpressure # 任务 6：发送队列、背压与慢 Peer 隔离（92 断言）
     test_cpp_node_types       # Node 公共值类型、错误契约与消息所有权
     test_cpp_stability        # 稳定性套件（285 断言，回调异常/并发/超时风暴/生命周期/信号风暴）
 )
